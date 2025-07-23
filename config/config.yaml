@@ -1,0 +1,223 @@
+# Shyvr RLTE Configuration
+# Environment-specific settings with production defaults
+
+app:
+  name: "shyvr-rlte"
+  version: "0.1.0"
+  environment: "${ENVIRONMENT:development}"  # development, staging, production
+  log_level: "${LOG_LEVEL:INFO}"
+  debug: false
+  
+database:
+  host: "${DB_HOST:localhost}"
+  port: ${DB_PORT:5432}
+  database: "${DB_NAME:shyvr_rlte}"
+  username: "${DB_USER:rlte_user}"
+  password: "${DB_PASSWORD}"
+  pool_size: ${DB_POOL_SIZE:10}
+  max_overflow: ${DB_MAX_OVERFLOW:20}
+  echo: false  # Set to true for SQL query logging
+  
+redis:
+  host: "${REDIS_HOST:localhost}"
+  port: ${REDIS_PORT:6379}
+  db: ${REDIS_DB:0}
+  password: "${REDIS_PASSWORD:}"
+  
+apis:
+  helius:
+    api_key: "${HELIUS_API_KEY}"
+    base_url: "https://api.helius.xyz"
+    rate_limit: 100  # requests per minute
+    timeout: 30      # seconds
+    
+  etherscan:
+    api_key: "${ETHERSCAN_API_KEY}"
+    base_url: "https://api.etherscan.io"
+    rate_limit: 5    # requests per second
+    timeout: 30
+    
+  birdeye:
+    api_key: "${BIRDEYE_API_KEY}"
+    base_url: "https://public-api.birdeye.so"
+    rate_limit: 60   # requests per minute
+    timeout: 30
+    
+  x_api:
+    bearer_token: "${X_BEARER_TOKEN}"
+    api_key: "${X_API_KEY}"
+    api_secret: "${X_API_SECRET}"
+    base_url: "https://api.x.com"
+    rate_limit: 300  # requests per 15 minutes (Basic tier)
+    timeout: 30
+    
+  basescan:
+    api_key: "${BASESCAN_API_KEY}"
+    base_url: "https://api.basescan.org"
+    rate_limit: 5    # requests per second
+    timeout: 30
+
+telegram:
+  token: "${TELEGRAM_TOKEN}"
+  webhook_secret: "${TELEGRAM_WEBHOOK_SECRET}"
+  admin_users: "${TELEGRAM_ADMIN_USERS:}"  # Comma-separated list
+  rate_limit: 30  # messages per minute per user
+  
+agent:
+  model_type: "${AGENT_MODEL_TYPE:local}"  # local, openai, xai
+  model_name: "${AGENT_MODEL_NAME:gpt-4o-mini}"  # for OpenAI models
+  api_key: "${AGENT_API_KEY:}"  # for cloud models
+  max_tokens: 1000
+  temperature: 0.1
+  max_active_rules: 10
+  rule_expiry_hours: 24  # Rules expire after 24 hours
+  
+trading:
+  modes:
+    analysis: true
+    simulation: true
+    live: false  # Disabled by default for safety
+    
+  risk_management:
+    max_position_size_pct: 1.0    # 1% of portfolio max
+    max_daily_loss_pct: 5.0       # 5% daily loss limit
+    max_drawdown_pct: 15.0        # 15% maximum drawdown
+    stop_loss_pct: 8.0            # 8% stop loss
+    take_profit_pct: 40.0         # 40% take profit
+    max_open_positions: 5         # Maximum concurrent positions
+    min_trade_amount_usd: 10      # Minimum trade size
+    
+  simulation:
+    initial_balance: 10000        # Starting balance for simulation
+    leverage: 1.0                 # No leverage by default
+    slippage_pct: 0.1            # 0.1% slippage simulation
+    commission_pct: 0.075        # 0.075% commission (typical DEX fee)
+
+ml:
+  models:
+    lstm:
+      hidden_size: 64
+      num_layers: 2
+      dropout: 0.2
+      sequence_length: 60
+      lookback_hours: 24
+      
+    transformer:
+      d_model: 128
+      nhead: 8
+      num_layers: 4
+      dropout: 0.1
+      
+    ensemble:
+      weights:
+        lstm: 0.4
+        transformer: 0.3
+        xgboost: 0.3
+      
+  training:
+    batch_size: 32
+    learning_rate: 0.001
+    epochs: 100
+    validation_split: 0.2
+    early_stopping_patience: 10
+    save_best_model: true
+    
+  features:
+    technical_indicators: true
+    onchain_metrics: true
+    social_sentiment: true
+    timeframes: ["5m", "1h", "4h", "1d"]
+    lookback_periods: [14, 30, 60]
+
+rl:
+  algorithm: "DQN"           # DQN, PPO, A2C
+  training_episodes: 10000
+  epsilon_start: 1.0
+  epsilon_end: 0.01
+  epsilon_decay: 0.995
+  learning_rate: 0.0001
+  gamma: 0.99
+  batch_size: 64
+  memory_size: 50000
+  target_update_freq: 1000
+  
+  reward_function:
+    profit_weight: 1.0
+    risk_penalty: 0.1
+    agent_bonus: 0.05
+    transaction_cost: 0.001
+    
+  training_schedule:
+    retrain_frequency_hours: 24
+    min_experiences: 1000
+    validation_episodes: 100
+
+discovery:
+  chains: ["ethereum", "solana", "base"]
+  scan_interval_seconds: 60
+  max_tokens_per_scan: 100
+  
+  filters:
+    min_liquidity_usd: 10000
+    min_holders: 10
+    max_dev_wallet_pct: 10.0
+    require_verified: false
+    blacklisted_names: ["test", "scam", "fake", "pump"]
+    
+  telegram:
+    channels: []  # Add channel IDs to monitor
+    keywords: ["launch", "new", "token", "contract"]
+
+evaluation:
+  fundamental_metrics:
+    - "liquidity_usd"
+    - "holder_count"
+    - "volume_24h"
+    - "market_cap"
+    - "price_change_24h"
+    - "dev_wallet_pct"
+    - "liquidity_locked_pct"
+    
+  honeypot_checks:
+    enabled: true
+    apis: ["honeypot.is", "tokensniffer"]
+    confidence_threshold: 0.8
+    
+  social_metrics:
+    x_mentions: true
+    telegram_members: true
+    reddit_posts: false  # Disabled for now
+    
+cache:
+  default_ttl: 300  # 5 minutes
+  token_data_ttl: 180  # 3 minutes for token data
+  ml_predictions_ttl: 600  # 10 minutes for ML predictions
+  user_data_ttl: 3600  # 1 hour for user data
+  
+monitoring:
+  sentry_dsn: "${SENTRY_DSN:}"
+  prometheus_enabled: false
+  health_check_interval: 30
+  
+  alerts:
+    email: "${ALERT_EMAIL:}"
+    telegram_channel: "${ALERT_TELEGRAM_CHANNEL:}"
+    thresholds:
+      error_rate: 0.05      # 5% error rate
+      response_time: 5.0    # 5 seconds
+      memory_usage: 0.8     # 80% memory usage
+      
+logging:
+  level: "${LOG_LEVEL:INFO}"
+  format: "json"  # json or text
+  file_enabled: true
+  file_path: "logs/rlte.log"
+  max_file_size_mb: 100
+  backup_count: 5
+  
+security:
+  secret_key: "${SECRET_KEY:dev-key-change-in-prod}"
+  jwt_algorithm: "HS256"
+  jwt_expiry_hours: 24
+  api_key_length: 32
+  rate_limit_storage: "redis"  # redis or memory
