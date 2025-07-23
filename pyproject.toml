@@ -1,7 +1,132 @@
 [project]
-name = "shyvr-bot1"
+name = "shyvr-rlte"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-augmented cryptocurrency trading bot with reinforcement learning"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # ML/RL Stack
+    "torch>=2.3.0",
+    "stable-baselines3>=2.6.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.5.0",
+    "gymnasium>=0.29.0",  # Updated from gym
+    
+    # Agent/LLM Framework
+    "langchain>=0.3.0",
+    "langchain-openai>=0.1.0",
+    "pydantic>=2.9.0",
+    
+    # Crypto APIs (Reuse Shyvr patterns)
+    "solana>=0.34.0",
+    "web3>=6.15.0",
+    "aiohttp>=3.9.0",
+    "requests>=2.31.0",
+    
+    # Trading & Simulation
+    "backtrader>=1.9.76",
+    "ccxt>=4.3.0",
+    
+    # Infrastructure (Reuse from Shyvr)
+    "fastapi>=0.110.0",
+    "asyncpg>=0.28.0",
+    "structlog>=23.0.0",
+    "python-telegram-bot>=21.0",
+    "uvicorn>=0.30.0",
+    
+    # Configuration & Utilities
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.1.0",
+    
+    # Data Processing
+    "scipy>=1.11.0",
+    # Note: TA-Lib can be added later with system dependencies
+    
+    # Async utilities
+    "asyncio-throttle>=1.0.0",
+    
+    # Security
+    "cryptography>=41.0.0",
+    "keyring>=24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Development & Testing
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    
+    # Code Quality
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "mypy>=1.11.0",
+    "ruff>=0.7.0",
+    
+    # Documentation
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+]
+
+production = [
+    # Production monitoring
+    "sentry-sdk>=2.17.0",
+    "prometheus-client>=0.21.0",
+    
+    # Performance
+    "orjson>=3.10.0",  # Faster JSON
+    "uvloop>=0.21.0",  # Faster event loop
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--cov=src --cov-report=html --cov-report=term-missing"
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "N", "UP"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.1",
+    "mypy>=1.17.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.1",
+    "ruff>=0.12.4",
+]
