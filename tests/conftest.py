@@ -6,15 +6,15 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
-from typing import Generator, Dict, Any
+from typing import Any, Dict, Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
 
+from src.utils.base import AgentRule, Chain, TokenInfo
 from src.utils.config import ConfigManager, RLTEConfig
-from src.utils.base import TokenInfo, Chain, AgentRule
 
 
 @pytest.fixture(scope="session")
@@ -92,13 +92,13 @@ apis:
     rate_limit: 10
     timeout: 5
 """
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_content)
         temp_path = Path(f.name)
-    
+
     yield temp_path
-    
+
     # Cleanup
     if temp_path.exists():
         temp_path.unlink()
@@ -141,7 +141,7 @@ def sample_token_info() -> TokenInfo:
         symbol="PEPE",
         name="Pepe",
         chain=Chain.ETHEREUM,
-        decimals=18
+        decimals=18,
     )
 
 
@@ -157,10 +157,10 @@ def sample_agent_rule() -> AgentRule:
             "threshold": 0.50,
             "action": "buy",
             "amount": 0.1,
-            "asset": "ETH"
+            "asset": "ETH",
         },
         active=True,
-        priority=1
+        priority=1,
     )
 
 
@@ -172,7 +172,7 @@ def mock_api_responses() -> Dict[str, Any]:
             "symbol": "TEST",
             "name": "Test Token",
             "decimals": 9,
-            "supply": 1000000000
+            "supply": 1000000000,
         },
         "etherscan_token_info": {
             "status": "1",
@@ -182,9 +182,9 @@ def mock_api_responses() -> Dict[str, Any]:
                     "contractAddress": "0x123",
                     "tokenName": "Test Token",
                     "tokenSymbol": "TEST",
-                    "tokenDecimal": "18"
+                    "tokenDecimal": "18",
                 }
-            ]
+            ],
         },
         "birdeye_token_overview": {
             "data": {
@@ -194,7 +194,7 @@ def mock_api_responses() -> Dict[str, Any]:
                 "liquidity": 50000,
                 "holder": 150,
                 "v24hChangePercent": 5.5,
-                "priceUsd": 0.00123
+                "priceUsd": 0.00123,
             }
         },
         "x_api_tweets": {
@@ -203,17 +203,11 @@ def mock_api_responses() -> Dict[str, Any]:
                     "id": "1234567890",
                     "text": "Just bought some TEST token! Going to the moon! 🚀",
                     "created_at": "2025-01-01T12:00:00.000Z",
-                    "public_metrics": {
-                        "retweet_count": 5,
-                        "like_count": 25,
-                        "reply_count": 3
-                    }
+                    "public_metrics": {"retweet_count": 5, "like_count": 25, "reply_count": 3},
                 }
             ],
-            "meta": {
-                "result_count": 1
-            }
-        }
+            "meta": {"result_count": 1},
+        },
     }
 
 
@@ -255,7 +249,7 @@ def sample_token_features() -> Dict[str, Any]:
         "ema_26": 0.00118,
         "whale_transactions": 3,
         "social_mentions": 25,
-        "sentiment_score": 0.65
+        "sentiment_score": 0.65,
     }
 
 
@@ -272,7 +266,7 @@ def sample_trade_outcome() -> Dict[str, Any]:
         "profit_usd": 25.50,
         "execution_latency_ms": 1500,
         "gas_fee_usd": 2.50,
-        "slippage_pct": 0.1
+        "slippage_pct": 0.1,
     }
 
 
@@ -296,7 +290,7 @@ def mock_wallet():
         "tx_hash": "0xabc123",
         "status": "success",
         "gas_used": 21000,
-        "gas_price": 20
+        "gas_price": 20,
     }
     mock_wallet.sign_transaction.return_value = "0xsignature"
     return mock_wallet
@@ -307,18 +301,15 @@ def clean_environment():
     """Clean environment variables for testing"""
     # Store original env vars
     original_env = os.environ.copy()
-    
+
     # Clear relevant env vars
-    test_env_vars = [
-        "DB_HOST", "DB_PASSWORD", "TELEGRAM_TOKEN", 
-        "HELIUS_API_KEY", "X_BEARER_TOKEN"
-    ]
-    
+    test_env_vars = ["DB_HOST", "DB_PASSWORD", "TELEGRAM_TOKEN", "HELIUS_API_KEY", "X_BEARER_TOKEN"]
+
     for var in test_env_vars:
         os.environ.pop(var, None)
-    
+
     yield
-    
+
     # Restore original env vars
     os.environ.clear()
     os.environ.update(original_env)
@@ -340,24 +331,24 @@ async def async_mock_response():
 def performance_threshold():
     """Performance thresholds for testing"""
     return {
-        "response_time_ms": 2000,    # 2 seconds max
-        "memory_usage_mb": 500,      # 500MB max
-        "cpu_usage_pct": 80,         # 80% max
-        "database_query_ms": 100,    # 100ms max per query
-        "ml_prediction_ms": 1000,    # 1 second max for ML predictions
-        "api_call_ms": 5000         # 5 seconds max for API calls
+        "response_time_ms": 2000,  # 2 seconds max
+        "memory_usage_mb": 500,  # 500MB max
+        "cpu_usage_pct": 80,  # 80% max
+        "database_query_ms": 100,  # 100ms max per query
+        "ml_prediction_ms": 1000,  # 1 second max for ML predictions
+        "api_call_ms": 5000,  # 5 seconds max for API calls
     }
 
 
 # Test data generation utilities
 class TestDataGenerator:
     """Generate test data for various scenarios"""
-    
+
     @staticmethod
     def generate_market_data(volatility: float = 0.1) -> Dict[str, Any]:
         """Generate realistic market data"""
         import random
-        
+
         base_price = random.uniform(0.0001, 1.0)
         return {
             "price_usd": base_price,
@@ -366,19 +357,19 @@ class TestDataGenerator:
             "price_change_24h": random.uniform(-volatility, volatility) * 100,
             "volume_change_24h": random.uniform(-50, 200),
             "holder_count": random.randint(50, 5000),
-            "liquidity_usd": random.randint(5000, 500000)
+            "liquidity_usd": random.randint(5000, 500000),
         }
-    
+
     @staticmethod
     def generate_social_data() -> Dict[str, Any]:
         """Generate social media data"""
         import random
-        
+
         return {
             "x_mentions": random.randint(0, 100),
             "telegram_members": random.randint(100, 10000),
             "sentiment_score": random.uniform(-1.0, 1.0),
-            "influence_score": random.uniform(0.0, 1.0)
+            "influence_score": random.uniform(0.0, 1.0),
         }
 
 
