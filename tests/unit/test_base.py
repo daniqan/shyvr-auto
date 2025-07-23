@@ -36,7 +36,7 @@ class TestEnums:
 
         # Test enum membership
         assert "ethereum" in [chain.value for chain in Chain]
-        assert len(Chain) == 3
+        assert len(Chain) == 9
 
     def test_trading_mode_enum(self):
         """Test TradingMode enum values"""
