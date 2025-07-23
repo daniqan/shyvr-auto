@@ -10,6 +10,10 @@ from .base import (
     RewardMetrics, AgentConfig, ModelType as RLModelType
 )
 from .dqn_agent import DQNTradingAgent, DQNTrainingError
+from .reward_engineering import (
+    RiskMetrics, RewardConfig, AdvancedRewardCalculator,
+    create_reward_calculator
+)
 
 __all__ = [
     # Base classes and enums
@@ -23,5 +27,11 @@ __all__ = [
     
     # Implementation classes
     'DQNTradingAgent',
-    'DQNTrainingError'
+    'DQNTrainingError',
+    
+    # Reward engineering
+    'RiskMetrics',
+    'RewardConfig',
+    'AdvancedRewardCalculator',
+    'create_reward_calculator'
 ]
