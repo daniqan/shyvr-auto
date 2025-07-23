@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shyvr_rlte
+      POSTGRES_USER: rlte_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dev_password_change_in_prod}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rlte_user -d shyvr_rlte"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rlte_network
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rlte_network
+
+  # Main RLTE application
+  rlte:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      # Database configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shyvr_rlte
+      DB_USER: rlte_user
+      DB_PASSWORD: ${DB_PASSWORD:-dev_password_change_in_prod}
+      
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Application configuration
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      
+      # API Keys (set in .env file)
+      HELIUS_API_KEY: ${HELIUS_API_KEY:-}
+      ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:-}
+      BIRDEYE_API_KEY: ${BIRDEYE_API_KEY:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+      
+      # Agent configuration
+      AGENT_MODEL_TYPE: ${AGENT_MODEL_TYPE:-local}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../models:/app/models
+      - ../config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - rlte_network
+
+  # ML model training service (optional, for isolated training)
+  ml_trainer:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shyvr_rlte
+      DB_USER: rlte_user
+      DB_PASSWORD: ${DB_PASSWORD:-dev_password_change_in_prod}
+      ENVIRONMENT: development
+      SERVICE_MODE: ml_training
+    volumes:
+      - ../data:/app/data
+      - ../models:/app/models
+      - ../config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "src.ml_analysis.trainer"]
+    profiles:
+      - training
+    networks:
+      - rlte_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  rlte_network:
+    driver: bridge
