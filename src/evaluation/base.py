@@ -138,7 +138,7 @@ class FundamentalMetrics:
             score += min(self.social_score, 25)
             factors += 1
         
-        return score / max(factors, 1) if factors > 0 else 0.0
+        return score if factors > 0 else 0.0
 
 
 @dataclass

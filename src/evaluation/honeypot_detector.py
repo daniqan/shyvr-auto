@@ -81,19 +81,21 @@ class HoneypotDetector(TokenEvaluatorBase):
         # Extract key security information
         is_honeypot = data.get("IsHoneypot", False)
         
+        # Extract tax information
+        buy_tax = float(data.get("BuyTax", 0))
+        sell_tax = float(data.get("SellTax", 0))
+        
         # Calculate honeypot probability based on multiple factors
         honeypot_probability = 0.0
         if is_honeypot:
             honeypot_probability = 0.9
         else:
             # Check for suspicious patterns
-            buy_tax = float(data.get("BuyTax", 0))
-            sell_tax = float(data.get("SellTax", 0))
             
             if sell_tax > 50:  # >50% sell tax is very suspicious
                 honeypot_probability += 0.6
             elif sell_tax > 20:  # >20% sell tax is suspicious
-                honeypot_probability += 0.3
+                honeypot_probability += 0.4
             
             if buy_tax > 20:  # High buy tax
                 honeypot_probability += 0.2
@@ -121,10 +123,10 @@ class HoneypotDetector(TokenEvaluatorBase):
         
         # Calculate overall security score (0-100)
         security_score = 100.0
-        security_score -= honeypot_probability * 50  # Honeypot risk penalty
-        security_score -= rugpull_probability * 30   # Rug pull risk penalty
-        security_score -= max(buy_tax - 5, 0) * 2    # High tax penalty
-        security_score -= max(sell_tax - 5, 0) * 2   # High tax penalty
+        security_score -= honeypot_probability * 40  # Honeypot risk penalty (reduced)
+        security_score -= rugpull_probability * 25   # Rug pull risk penalty (reduced)
+        security_score -= max(buy_tax - 5, 0) * 1.5  # High tax penalty (reduced)
+        security_score -= max(sell_tax - 5, 0) * 1.5 # High tax penalty (reduced)
         security_score = max(security_score, 0.0)
         
         # Add bonuses for good practices
@@ -244,8 +246,8 @@ class HoneypotDetector(TokenEvaluatorBase):
             
             # Create notes
             notes = []
-            buy_tax = detection_data.get("BuyTax", 0)
-            sell_tax = detection_data.get("SellTax", 0)
+            buy_tax = float(detection_data.get("BuyTax", 0))
+            sell_tax = float(detection_data.get("SellTax", 0))
             if buy_tax > 0 or sell_tax > 0:
                 notes.append(f"Trading taxes: {buy_tax}% buy, {sell_tax}% sell")
             if security_flags.contract_verified:

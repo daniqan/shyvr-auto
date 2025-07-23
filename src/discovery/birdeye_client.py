@@ -176,11 +176,11 @@ class BirdeyeTokenDiscovery(TokenDiscoveryBase):
         price_change = token_data.get("priceChange24h", 0)
         if price_change > 20:
             tags.append("pumping")
-        elif price_change > 10:
+        elif price_change > 5:  # Lowered from 10 to 5
             tags.append("rising")
         elif price_change < -20:
             tags.append("dumping")
-        elif price_change < -10:
+        elif price_change < -5:  # Lowered from -10 to -5
             tags.append("falling")
         
         return tags
@@ -220,10 +220,15 @@ class BirdeyeTokenDiscovery(TokenDiscoveryBase):
             
             data = await self._make_request(endpoint, params=params)
             
-            # Parse response
-            tokens_data = data.get("data", {}).get("tokens", [])  
-            if not tokens_data:
-                tokens_data = data.get("data", [])  # Fallback structure
+            # Parse response - handle different API response structures
+            data_section = data.get("data", {})
+            if isinstance(data_section, dict):
+                tokens_data = data_section.get("tokens", [])
+                if not tokens_data:
+                    tokens_data = data_section
+            else:
+                # data is a list directly
+                tokens_data = data_section if isinstance(data_section, list) else []
             
             tokens = []
             for token_data in tokens_data:
@@ -274,10 +279,15 @@ class BirdeyeTokenDiscovery(TokenDiscoveryBase):
             endpoint = f"/defi/tokenlist/{chain_param}"
             data = await self._make_request(endpoint, params=params)
             
-            # Parse response
-            tokens_data = data.get("data", {}).get("tokens", [])
-            if not tokens_data:
-                tokens_data = data.get("data", [])
+            # Parse response - handle different API response structures
+            data_section = data.get("data", {})
+            if isinstance(data_section, dict):
+                tokens_data = data_section.get("tokens", [])
+                if not tokens_data:
+                    tokens_data = data_section
+            else:
+                # data is a list directly
+                tokens_data = data_section if isinstance(data_section, list) else []
             
             tokens = []
             for token_data in tokens_data:
