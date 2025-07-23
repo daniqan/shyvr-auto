@@ -9,6 +9,7 @@ from .base import (
     RLAgentBase, TradeAction, MarketState, TradingResult,
     RewardMetrics, AgentConfig, ModelType as RLModelType
 )
+from .dqn_agent import DQNTradingAgent, DQNTrainingError
 
 __all__ = [
     # Base classes and enums
@@ -18,5 +19,9 @@ __all__ = [
     'TradingResult',
     'RewardMetrics',
     'AgentConfig',
-    'RLModelType'
+    'RLModelType',
+    
+    # Implementation classes
+    'DQNTradingAgent',
+    'DQNTrainingError'
 ]
