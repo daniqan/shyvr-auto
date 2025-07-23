@@ -330,9 +330,9 @@ class TestMLRLTrainingPipeline:
         
         # Should track both ML and RL performance
         ml_rl_metrics = results['ml_rl_metrics']
-        assert 'ml_accuracy' in ml_rl_metrics
-        assert 'rl_rewards' in ml_rl_metrics
-        assert 'integration_efficiency' in ml_rl_metrics
+        assert 'mean_ml_accuracy' in ml_rl_metrics
+        assert 'mean_rl_reward' in ml_rl_metrics
+        assert 'mean_integration_score' in ml_rl_metrics
 
 
 class TestMLRLConfiguration:
@@ -526,6 +526,7 @@ class TestMLRLIntegrationEndToEnd:
         )
         
         pipeline = MLRLTrainingPipeline(
+            config=training_config,
             training_config=training_config,
             ml_rl_config=ml_rl_config,
             tokens=tokens,
