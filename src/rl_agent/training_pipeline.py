@@ -49,6 +49,10 @@ class TrainingConfig:
     # Component options
     use_prioritized_replay: bool = True
     use_advanced_rewards: bool = True
+    
+    # ML-RL integration options
+    use_ml_features: bool = False
+    ml_weight: float = 0.3  # Weight for ML predictions in decisions
 
 
 class TrainingPipelineError(RLTrainingError):
