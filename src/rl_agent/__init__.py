@@ -14,6 +14,10 @@ from .reward_engineering import (
     RiskMetrics, RewardConfig, AdvancedRewardCalculator,
     create_reward_calculator
 )
+from .training_pipeline import (
+    TrainingConfig, TrainingMetrics, DQNTrainingPipeline,
+    TrainingPipelineError, HyperparameterSearch
+)
 
 __all__ = [
     # Base classes and enums
@@ -33,5 +37,12 @@ __all__ = [
     'RiskMetrics',
     'RewardConfig',
     'AdvancedRewardCalculator',
-    'create_reward_calculator'
+    'create_reward_calculator',
+    
+    # Training pipeline
+    'TrainingConfig',
+    'TrainingMetrics',
+    'DQNTrainingPipeline',
+    'TrainingPipelineError',
+    'HyperparameterSearch'
 ]
