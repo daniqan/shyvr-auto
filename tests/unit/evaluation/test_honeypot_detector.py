@@ -362,3 +362,73 @@ class TestHoneypotDetector:
 
         # Session should be closed after context
         assert honeypot_detector.session is None
+
+    @pytest.mark.asyncio
+    async def test_make_request_client_error(self, honeypot_detector):
+        """Test client error handling in _make_request (line 72)"""
+        # Use ClientError directly which is the base class for aiohttp client errors
+        with patch("aiohttp.ClientSession.get", side_effect=aiohttp.ClientError("Connection failed")):
+            with pytest.raises(SecurityEvaluationError, match="DetectHoneypot API request failed"):
+                await honeypot_detector._make_request("/test")
+
+    def test_parse_response_high_tax_scenarios(self, honeypot_detector, sample_token):
+        """Test high tax scenario parsing (lines 96, 101)"""
+        # Test very high sell tax (line 96)
+        high_sell_tax_data = {
+            "IsHoneypot": False,
+            "BuyTax": "5.0",
+            "SellTax": "60.0",  # >50% sell tax
+            "OwnershipRenounced": True,
+            "CanMint": False,
+            "CanPause": False,
+            "CanBlacklist": False,
+            "IsVerified": True,
+        }
+        
+        flags = honeypot_detector._parse_honeypot_response(high_sell_tax_data, sample_token)
+        assert flags.honeypot_probability >= 0.6  # Should add 0.6 for high sell tax
+        
+        # Test high buy tax (line 101)
+        high_buy_tax_data = {
+            "IsHoneypot": False,
+            "BuyTax": "25.0",  # >20% buy tax
+            "SellTax": "5.0",
+            "OwnershipRenounced": True,
+            "CanMint": False,
+            "CanPause": False,
+            "CanBlacklist": False,
+            "IsVerified": True,
+        }
+        
+        flags = honeypot_detector._parse_honeypot_response(high_buy_tax_data, sample_token)
+        assert flags.honeypot_probability >= 0.2  # Should add 0.2 for high buy tax
+
+    @pytest.mark.asyncio
+    async def test_detect_honeypot_generic_exception(self, honeypot_detector):
+        """Test generic exception handling in detect_honeypot (lines 183-188)"""
+        with patch.object(honeypot_detector, '_make_request', side_effect=ValueError("Unexpected error")):
+            with pytest.raises(ValueError):
+                await honeypot_detector.detect_honeypot("0x123", Chain.ETHEREUM)
+
+    @pytest.mark.asyncio
+    async def test_evaluate_token_high_risk_levels(self, honeypot_detector, sample_token):
+        """Test different risk level conditions (lines 222-224)"""
+        # Test high risk scenario (60% <= risk < 80%)
+        high_risk_data = {
+            "IsHoneypot": False,
+            "BuyTax": "15.0",
+            "SellTax": "25.0",
+            "OwnershipRenounced": False,  # Risk factor
+            "CanMint": True,             # Risk factor
+            "CanPause": True,            # Risk factor
+            "CanBlacklist": False,
+            "IsVerified": False,
+        }
+        
+        with patch.object(honeypot_detector, "detect_honeypot", return_value=high_risk_data):
+            result = await honeypot_detector.evaluate_token(sample_token)
+            
+            # Should be high risk and not approved
+            assert result.overall_risk == RiskLevel.HIGH
+            assert result.recommended_action == "AVOID"
+            assert not result.is_approved

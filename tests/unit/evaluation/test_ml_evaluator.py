@@ -469,14 +469,22 @@ class TestMLEnhancedEvaluator:
         ]
         
         for direction, confidence, description in test_cases:
-            # Create ML prediction with specific direction
+            # Create ML prediction with specific direction and required fields
             ml_prediction = PredictionResult(
                 token=sample_token,
                 analyzed_at=datetime.now(),
                 model_type=ModelType.LSTM,
                 direction=direction,
                 confidence=confidence,
-                price_prediction_24h=1.60
+                price_prediction_24h=1.60,
+                probability_up=0.75,
+                upside_potential=0.15,
+                downside_risk=0.05,
+                model_accuracy=0.85,
+                prediction_uncertainty=0.1,
+                volatility_forecast=0.2,
+                technical_indicators=TechnicalIndicators(rsi=65.0, volume_ratio=1.2),
+                market_features=MarketFeatures(fear_greed_index=75.0, market_trend="bull")
             )
             
             # Mock ML analysis
@@ -491,7 +499,7 @@ class TestMLEnhancedEvaluator:
             assert result.metadata['ml_direction'] == direction.value
             
             # Check notes mention the ML signal
-            ml_notes = [note for note in result.notes if 'ML model' in note.lower()]
+            ml_notes = [note for note in result.notes if 'ML model' in note or 'ml model' in note.lower()]
             assert len(ml_notes) > 0, f"No ML notes found for {description}"
 
 
