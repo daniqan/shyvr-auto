@@ -6,12 +6,12 @@ Handles loading and validation of configuration from YAML files and environment 
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel
 
 from .base import ConfigurationError
 
@@ -44,13 +44,13 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    password: Optional[str] = None
+    password: str | None = None
 
 
 class APIConfig(BaseModel):
     """Generic API configuration"""
 
-    api_key: Optional[str] = None
+    api_key: str | None = None
     base_url: str
     rate_limit: int = 60
     timeout: int = 30
@@ -60,7 +60,7 @@ class TelegramConfig(BaseModel):
     """Telegram bot configuration"""
 
     token: str
-    webhook_secret: Optional[str] = None
+    webhook_secret: str | None = None
     admin_users: list[int] = field(default_factory=list)
     rate_limit: int = 30
 
@@ -70,7 +70,7 @@ class AgentConfig(BaseModel):
 
     model_type: str = "local"
     model_name: str = "gpt-4o-mini"
-    api_key: Optional[str] = None
+    api_key: str | None = None
     max_tokens: int = 1000
     temperature: float = 0.1
     max_active_rules: int = 10
@@ -92,7 +92,7 @@ class RiskManagementConfig(BaseModel):
 class TradingConfig(BaseModel):
     """Trading configuration"""
 
-    modes: Dict[str, bool] = {"analysis": True, "simulation": True, "live": False}
+    modes: dict[str, bool] = {"analysis": True, "simulation": True, "live": False}
     risk_management: RiskManagementConfig = field(default_factory=RiskManagementConfig)
 
 
@@ -142,7 +142,7 @@ class RLTEConfig(BaseModel):
     trading: TradingConfig = field(default_factory=TradingConfig)
     ml: MLConfig = field(default_factory=MLConfig)
     rl: RLConfig = field(default_factory=RLConfig)
-    apis: Dict[str, APIConfig] = field(default_factory=dict)
+    apis: dict[str, APIConfig] = field(default_factory=dict)
 
     class Config:
         """Pydantic configuration"""
@@ -154,9 +154,9 @@ class RLTEConfig(BaseModel):
 class ConfigManager:
     """Configuration manager with environment variable substitution"""
 
-    def __init__(self, config_path: Optional[Union[str, Path]] = None):
+    def __init__(self, config_path: str | Path | None = None):
         self.config_path = config_path or self._find_config_file()
-        self._config: Optional[RLTEConfig] = None
+        self._config: RLTEConfig | None = None
 
     def _find_config_file(self) -> Path:
         """Find configuration file in standard locations"""
@@ -228,7 +228,7 @@ class ConfigManager:
             if not self.config_path.exists():
                 raise ConfigurationError(f"Configuration file not found: {self.config_path}")
 
-            with open(self.config_path, "r") as f:
+            with open(self.config_path) as f:
                 raw_config = yaml.safe_load(f)
 
             # Substitute environment variables
@@ -241,9 +241,9 @@ class ConfigManager:
             return self._config
 
         except yaml.YAMLError as e:
-            raise ConfigurationError(f"Invalid YAML in configuration file: {e}")
+            raise ConfigurationError(f"Invalid YAML in configuration file: {e}") from e
         except Exception as e:
-            raise ConfigurationError(f"Failed to load configuration: {e}")
+            raise ConfigurationError(f"Failed to load configuration: {e}") from e
 
     def reload(self) -> RLTEConfig:
         """Reload configuration from file"""
@@ -296,7 +296,7 @@ class ConfigManager:
 
 
 # Global configuration instance
-_config_manager: Optional[ConfigManager] = None
+_config_manager: ConfigManager | None = None
 
 
 def get_config() -> RLTEConfig:
@@ -315,7 +315,7 @@ def reload_config() -> RLTEConfig:
     return _config_manager.reload()
 
 
-def init_config(config_path: Optional[Union[str, Path]] = None) -> RLTEConfig:
+def init_config(config_path: str | Path | None = None) -> RLTEConfig:
     """Initialize configuration with custom path"""
     global _config_manager
     _config_manager = ConfigManager(config_path)
@@ -328,7 +328,7 @@ def get_database_url() -> str:
     return get_config().database.url
 
 
-def get_api_config(api_name: str) -> Optional[APIConfig]:
+def get_api_config(api_name: str) -> APIConfig | None:
     """Get API configuration by name"""
     return get_config().apis.get(api_name)
 

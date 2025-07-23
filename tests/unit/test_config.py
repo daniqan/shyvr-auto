@@ -58,7 +58,7 @@ telegram:
             config = config_manager.load()
 
             assert config.app.name == "test-app"
-            assert config.app.debug == True
+            assert config.app.debug
             # Test that database password was substituted
             assert config.database.password == "secret123"
 
@@ -109,7 +109,7 @@ app:
         assert config1.app.name == "test-rlte"
 
         # Modify the config file
-        with open(temp_config_file, "r") as f:
+        with open(temp_config_file) as f:
             config_data = yaml.safe_load(f)
 
         config_data["app"]["name"] = "modified-rlte"
@@ -135,7 +135,7 @@ app:
         config_manager = ConfigManager(temp_config_file)
 
         # Should pass validation
-        assert config_manager.validate() == True
+        assert config_manager.validate()
 
     def test_database_url_generation(self, test_config: RLTEConfig):
         """Test database URL generation"""
@@ -237,7 +237,7 @@ class TestConfigValidation:
         try:
             config_manager = ConfigManager(temp_path)
 
-            with pytest.raises(Exception):  # Should fail validation
+            with pytest.raises(ConfigurationError):  # Should fail validation
                 config_manager.load()
 
         finally:
@@ -308,11 +308,11 @@ rl:
             os.environ["LEARNING_RATE"] = "0.002"
 
             config_manager = ConfigManager(temp_path)
-            config = config_manager.load()
+            config_manager.load()
 
             # Test type conversion for different types
             assert config_manager.get("app.name") == "converted-app"
-            assert config_manager.get("app.debug") == False
+            assert not config_manager.get("app.debug")
             assert config_manager.get("database.port") == 9999
             assert config_manager.get("rl.training_episodes") == 50000
             assert config_manager.get("rl.learning_rate") == 0.002

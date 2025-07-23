@@ -5,13 +5,13 @@ Pytest configuration and shared fixtures for RLTE tests
 import asyncio
 import os
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Dict, Generator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-from pydantic import BaseModel
 
 from src.utils.base import AgentRule, Chain, TokenInfo
 from src.utils.config import ConfigManager, RLTEConfig
@@ -165,7 +165,7 @@ def sample_agent_rule() -> AgentRule:
 
 
 @pytest.fixture
-def mock_api_responses() -> Dict[str, Any]:
+def mock_api_responses() -> dict[str, Any]:
     """Mock API responses for external services"""
     return {
         "helius_token_metadata": {
@@ -233,7 +233,7 @@ def mock_rl_agent():
 
 
 @pytest.fixture
-def sample_token_features() -> Dict[str, Any]:
+def sample_token_features() -> dict[str, Any]:
     """Sample token features for ML testing"""
     return {
         "price_usd": 0.00123,
@@ -254,7 +254,7 @@ def sample_token_features() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_trade_outcome() -> Dict[str, Any]:
+def sample_trade_outcome() -> dict[str, Any]:
     """Sample trade outcome for RL testing"""
     return {
         "token_address": "0x123",
@@ -345,7 +345,7 @@ class TestDataGenerator:
     """Generate test data for various scenarios"""
 
     @staticmethod
-    def generate_market_data(volatility: float = 0.1) -> Dict[str, Any]:
+    def generate_market_data(volatility: float = 0.1) -> dict[str, Any]:
         """Generate realistic market data"""
         import random
 
@@ -361,7 +361,7 @@ class TestDataGenerator:
         }
 
     @staticmethod
-    def generate_social_data() -> Dict[str, Any]:
+    def generate_social_data() -> dict[str, Any]:
         """Generate social media data"""
         import random
 

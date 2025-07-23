@@ -3,8 +3,6 @@ Unit tests for base classes and interfaces
 Tests the abstract base classes and core data structures
 """
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from src.utils.base import (
