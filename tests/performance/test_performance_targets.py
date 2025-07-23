@@ -293,9 +293,8 @@ class TestPerformanceTargetValidation:
         market_state = MarketState(
             token=token,
             price_usd=token.price_usd,
-            volume_24h=token.volume_24h or 0.0,
-            current_position=0.0,
-            portfolio_value=10000.0
+            price_change_24h=token.price_change_24h or 0.0,
+            volume_24h=token.volume_24h or 0.0
         )
         
         rl_start = time.time()
