@@ -28,7 +28,7 @@ This project aims to create a state-of-the-art autonomous trading system that:
 ### **💰 Revenue Model**
 - **Self-Funding**: Personal trading profits fund development and expansion
 - **Scalable Architecture**: Foundation for SaaS offerings with premium agent features
-- **Cost Efficiency**: Leverages existing GCP infrastructure (~$50/month operational)
+- **Cost Efficiency**: Leverages existing GCP infrastructure (~$100/month operational with ML workloads)
 
 ## Current Architecture (Target Design)
 
@@ -38,8 +38,9 @@ This project aims to create a state-of-the-art autonomous trading system that:
 - **Agent Framework**: LangChain with local/cloud LLM integration
 - **Data**: Pandas, NumPy for processing and feature engineering
 - **APIs**: Multi-chain (Helius, Etherscan, Birdeye), X API for sentiment
-- **Infrastructure**: Google Cloud Run, Docker, PostgreSQL
+- **Infrastructure**: Google Cloud Run, Docker, PostgreSQL, uv dependency management
 - **Trading**: Non-custodial wallet integration (solana-py, web3.py)
+- **Deployment**: Automated CI/CD with manual deployment scripts
 
 ### Three-Mode Architecture
 
@@ -316,6 +317,74 @@ reward = profit_pct + agent_bonus - risk_penalty - fee_cost
 - [ ] Privacy policy and data protection
 - [ ] Regulatory compliance documentation
 - [ ] Emergency shutdown procedures
+
+## Deployment Infrastructure
+
+### **Manual Deployment System** ✅
+The project includes comprehensive manual deployment scripts that provide an alternative to GitHub Actions for production deployment:
+
+#### **Core Deployment Scripts**
+- **`deploy/deploy_latest.sh`**: Main deployment script optimized for ML workloads
+  - Enhanced Cloud Run configuration (4Gi memory, 900s timeout)
+  - Comprehensive secret management for all RLTE APIs
+  - Health checks with ML model loading considerations
+  - Detailed deployment status and verification
+
+- **`scripts/set_webhook.sh`**: Telegram webhook configuration
+  - Automated secret retrieval from Google Cloud Secret Manager
+  - Webhook verification and error handling
+  - Status monitoring and troubleshooting guidance
+
+- **`deploy/deploy_and_configure.sh`**: Complete deployment automation
+  - One-command deployment and configuration
+  - Interactive setup with user prompts
+  - Comprehensive system verification
+  - Detailed post-deployment guidance
+
+#### **Deployment Features**
+- **ML/RL Optimized**: Enhanced resource allocation for model loading and inference
+- **Secret Management**: Integration with Google Cloud Secret Manager
+- **Health Monitoring**: Comprehensive endpoint testing and verification
+- **User Guidance**: Detailed next steps and system status reporting
+- **Safety First**: Live trading disabled by default with explicit activation required
+
+#### **Required Setup**
+```bash
+# Core secrets (required)
+gcloud secrets create TELEGRAM_TOKEN --data-file=<(echo 'your_token')
+gcloud secrets create WEBHOOK_SECRET --data-file=<(echo 'your_secret')
+gcloud secrets create DB_PASSWORD --data-file=<(echo 'your_password')
+
+# Optional API keys (auto-detected)
+gcloud secrets create X_BEARER_TOKEN --data-file=<(echo 'your_token')
+gcloud secrets create HELIUS_API_KEY --data-file=<(echo 'your_key')
+# ... additional API keys as needed
+```
+
+#### **Deployment Process**
+```bash
+# Option 1: Complete automated deployment
+./deploy/deploy_and_configure.sh
+
+# Option 2: Manual step-by-step
+./deploy/deploy_latest.sh
+./scripts/set_webhook.sh https://your-service-url.run.app/webhook
+```
+
+### **Infrastructure Specifications**
+- **Cloud Run Service**: `shyvr-rlte`
+- **Memory Allocation**: 4Gi (enhanced for ML models)
+- **CPU Allocation**: 2 vCPUs
+- **Timeout**: 900 seconds (extended for ML processing)
+- **Concurrency**: 50 requests per instance
+- **Auto-scaling**: 0-5 instances
+- **Region**: us-central1
+
+### **Monitoring and Observability**
+- **Health Endpoint**: `/health` - System status and component checks
+- **Configuration Endpoint**: `/config` - Safe configuration display
+- **Logging**: Structured JSON logging via Cloud Run
+- **Metrics**: Performance and trading metrics collection
 
 ## Conclusion
 
