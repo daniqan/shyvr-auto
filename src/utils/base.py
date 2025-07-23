@@ -15,6 +15,12 @@ class Chain(Enum):
     ETHEREUM = "ethereum"
     SOLANA = "solana"
     BASE = "base"
+    POLYGON = "polygon"
+    BSC = "bsc"
+    ARBITRUM = "arbitrum"
+    AVALANCHE = "avalanche"
+    FANTOM = "fantom"
+    OPTIMISM = "optimism"
 
 
 class TradingMode(Enum):
