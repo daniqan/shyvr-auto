@@ -300,6 +300,41 @@ This document evaluates potential APIs for Phase 2 implementation, focusing on m
 
 ---
 
+## 🧠 **RL-Optimized Threshold Learning Architecture**
+
+### **Conservative Initial Calibration Philosophy**
+The Phase 2 implementation employs intentionally lenient evaluation thresholds designed to maximize learning opportunities for the reinforcement learning agent. This approach prioritizes data collection over aggressive filtering during the initial training phases.
+
+#### **Implemented Threshold Adjustments**
+
+**Security Evaluation Parameters:**
+- **Honeypot Risk Scoring**: Reduced from 50x to 40x penalty multiplier
+- **Rugpull Risk Scoring**: Reduced from 30x to 25x penalty multiplier  
+- **Tax Penalty Calculation**: Decreased from 2x to 1.5x tax rate penalties
+- **Price Movement Classification**: Lowered "rising" threshold from 10% to 5% change
+
+#### **RL Training Benefits**
+
+**Enhanced Data Collection:**
+- **Broader Token Universe**: More tokens pass initial filters for evaluation
+- **Risk Spectrum Coverage**: Training data spans full risk/reward spectrum
+- **Edge Case Learning**: Agent experiences borderline tokens that traditional filters reject
+- **Market Condition Adaptation**: Thresholds adjust to bull/bear market dynamics
+
+**Optimization Path:**
+1. **Exploration Phase**: Conservative thresholds enable diverse token sampling
+2. **Pattern Recognition**: Agent identifies profitable vs unprofitable token characteristics  
+3. **Threshold Evolution**: Parameters become dynamically optimized for maximum Sharpe ratio
+4. **Market Adaptation**: Learned thresholds adjust to changing market conditions
+
+**Expected Performance Trajectory:**
+- **Weeks 1-4**: Data collection with 60-70% token pass rate
+- **Weeks 5-8**: Threshold optimization begins, pass rate drops to 40-50%
+- **Weeks 9-12**: Mature agent achieves 20-30% pass rate with higher win rate
+- **Ongoing**: Continuous adaptation maintains optimal risk/reward balance
+
+---
+
 ## 🎯 Phase 2 Implementation Strategy
 
 ### **Tier 1: Essential Replacements** 

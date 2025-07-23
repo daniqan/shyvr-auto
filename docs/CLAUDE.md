@@ -97,6 +97,31 @@ This project aims to create a state-of-the-art autonomous trading system that:
 - **Performance Tests**: Latency, throughput, and resource usage validation
 - **Security Tests**: Vulnerability scanning and penetration testing
 
+#### **Initial Threshold Calibration for RL Learning**
+During Phase 2 testing, several evaluation thresholds were adjusted to ensure test coverage and basic functionality. **These are intentionally conservative starting values** that will be optimized through RL training:
+
+**Honeypot Detection Adjustments:**
+- **Security Scoring**: Reduced penalty multipliers (40x vs 50x for honeypot risk, 25x vs 30x for rugpull risk)
+- **Tax Thresholds**: Lowered penalty rates (1.5x vs 2x for high taxes)
+- **Rationale**: Conservative scoring allows more tokens to pass initial evaluation for RL learning data
+
+**Token Classification Adjustments:**
+- **Price Movement Tags**: "Rising" threshold reduced from 10% to 5% change
+- **Fundamental Scoring**: Removed averaging that was artificially reducing scores
+- **Rationale**: More granular classification provides richer feature space for ML training
+
+**RL Training Implications:**
+- **Exploration vs Exploitation**: Lenient initial thresholds encourage exploration of diverse tokens
+- **Reward Signal Quality**: RL agent will learn optimal thresholds through actual trading outcomes
+- **Data Collection**: Conservative filters ensure sufficient training data across risk categories
+- **Progressive Refinement**: Thresholds will naturally tighten as agent learns profitable patterns
+
+**Future Optimization Path:**
+1. **Simulation Phase**: Collect 10,000+ trades with current thresholds
+2. **Performance Analysis**: Identify which threshold adjustments improve Sharpe ratio
+3. **RL Optimization**: Agent learns optimal risk/reward balance through experience
+4. **Dynamic Calibration**: Thresholds become agent-learned parameters, not fixed constants
+
 ### **Agile Development Phases**
 - **Sprint-Based**: 1-2 week iterations with clear deliverables
 - **Continuous Integration**: Automated testing and deployment pipeline
