@@ -93,6 +93,16 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "--cov=src --cov-report=html --cov-report=term-missing"
+markers = [
+    "performance: marks tests as performance benchmarks",
+    "slow: marks tests as slow running",
+    "memory: marks tests that monitor memory usage",
+    "regression: marks tests for performance regression detection",
+    "benchmark: marks tests that use pytest-benchmark",
+    "integration: marks integration performance tests",
+    "unit: marks unit performance tests",
+    "network: marks tests that require network access"
+]
 
 [tool.black]
 line-length = 100
@@ -124,8 +134,10 @@ dev = [
     "black>=25.1.0",
     "isort>=6.0.1",
     "mypy>=1.17.0",
+    "psutil>=7.0.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
+    "pytest-benchmark>=5.1.0",
     "pytest-cov>=6.2.1",
     "pytest-mock>=3.14.1",
     "ruff>=0.12.4",

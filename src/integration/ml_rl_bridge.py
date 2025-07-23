@@ -55,7 +55,11 @@ class MLEnhancedMarketState(MarketState):
             sma_20=prediction.technical_indicators.sma_20 if prediction.technical_indicators else None,
             ema_12=prediction.technical_indicators.ema_12 if prediction.technical_indicators else None,
             bollinger_upper=prediction.technical_indicators.bollinger_upper if prediction.technical_indicators else None,
-            bollinger_lower=prediction.technical_indicators.bollinger_lower if prediction.technical_indicators else None
+            bollinger_lower=prediction.technical_indicators.bollinger_lower if prediction.technical_indicators else None,
+            # Portfolio context
+            current_position=position_size,
+            portfolio_value=current_portfolio_value,
+            cash_balance=current_portfolio_value * (1.0 - abs(position_size))  # Estimate cash based on position
         )
         
         # Create enhanced state with ML features
@@ -81,7 +85,7 @@ class MLEnhancedMarketState(MarketState):
             self.ml_prediction_1h or self.price_usd,
             self.ml_prediction_4h or self.price_usd,
             self.ml_prediction_24h or self.price_usd,
-            self.ml_confidence or 0.5,
+            min(max(self.ml_confidence or 0.5, 0.0), 1.0),  # Clamp confidence to [0,1]
             1.0 if self.ml_direction == "buy" else 0.0,
             self.volatility_forecast or 0.1
         ]
@@ -148,8 +152,11 @@ class MLRLBridge:
             if cache_age < timedelta(minutes=self.cache_ttl_minutes):
                 return self.prediction_cache[cache_key]
         
-        # Get fresh predictions
-        predictions = self.ml_analyzer.analyze_batch(self.tokens)
+        # Get fresh predictions (use correct method name and handle async)
+        if hasattr(self.ml_analyzer, 'batch_analyze'):
+            predictions = asyncio.run(self.ml_analyzer.batch_analyze(self.tokens))
+        else:
+            predictions = self.ml_analyzer.analyze_batch(self.tokens)
         
         # Update cache
         self.prediction_cache[cache_key] = predictions
@@ -173,8 +180,11 @@ class MLRLBridge:
                 position_size=position_size
             )
             
-            # Get RL action
-            rl_action = self.rl_agent.predict_action(enhanced_state)
+            # Get RL action (handle async)
+            if asyncio.iscoroutinefunction(self.rl_agent.predict_action):
+                rl_action = asyncio.run(self.rl_agent.predict_action(enhanced_state))
+            else:
+                rl_action = self.rl_agent.predict_action(enhanced_state)
             
             # Combine results
             result = {
@@ -284,14 +294,23 @@ class MLRLTrainingPipeline:
                 predictions.append(prediction)
             return predictions
         
-        mock_analyzer.analyze_batch = mock_analyze_batch
+        # Make batch_analyze async-compatible
+        async def async_mock_analyze_batch(tokens):
+            return mock_analyze_batch(tokens)
+        
+        mock_analyzer.batch_analyze = async_mock_analyze_batch
+        mock_analyzer.analyze_batch = mock_analyze_batch  # Backwards compatibility
         return mock_analyzer
     
     def _create_mock_rl_agent(self):
         """Create mock RL agent for testing"""
         import unittest.mock
         mock_agent = unittest.mock.MagicMock()
-        mock_agent.predict_action.return_value = TradeAction.BUY
+        # Make predict_action async-compatible
+        async def async_predict_action(market_state):
+            return TradeAction.BUY, 0.75  # Return action and confidence
+        
+        mock_agent.predict_action = async_predict_action
         return mock_agent
     
     def run_ml_rl_episode(self, episode_num: int) -> Dict[str, Any]:
