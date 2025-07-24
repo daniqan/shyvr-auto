@@ -134,6 +134,7 @@ class SwapResult:
     dex_name: str = ""
     quote_used: Optional[SwapQuote] = None
     actual_price_impact_bps: Optional[int] = None
+    transaction_data: Optional[Dict[str, Any]] = None  # DEX-specific transaction data
     
     @property
     def is_successful(self) -> bool:

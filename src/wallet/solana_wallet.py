@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.core import RPCException
 from solana.rpc.types import TxOpts
-from solders.transaction import Transaction
+from solders.transaction import Transaction, VersionedTransaction
 from solders.system_program import transfer, TransferParams
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -24,6 +24,7 @@ from spl.token.instructions import transfer_checked, TransferCheckedParams
 from spl.token.client import Token
 from spl.token import constants as spl_constants
 import json
+import base64
 
 from .base import (
     WalletBase,
@@ -850,3 +851,218 @@ class SolanaWallet(WalletBase):
         except Exception as e:
             logger.error(f"Failed to get token accounts: {e}")
             raise WalletError(f"Token accounts query failed: {e}")
+    
+    async def execute_dex_swap(
+        self,
+        swap_transaction_data: str,
+        last_valid_block_height: Optional[int] = None
+    ) -> TransactionResult:
+        """
+        Execute a DEX swap transaction (e.g., from Jupiter).
+        
+        This method handles pre-built transactions from DEX aggregators,
+        signs them with the wallet keypair, and submits them to the network.
+        
+        Args:
+            swap_transaction_data: Base64-encoded transaction data from DEX
+            last_valid_block_height: Last valid block height for transaction
+            
+        Returns:
+            TransactionResult with transaction details
+            
+        Raises:
+            WalletTransactionError: If transaction execution fails
+        """
+        if not self.keypair:
+            raise WalletTransactionError("Cannot execute DEX swaps in read-only mode")
+        
+        if not self.is_connected or not self.client:
+            raise WalletTransactionError("Wallet not connected")
+        
+        try:
+            # Decode the transaction data
+            try:
+                transaction_bytes = base64.b64decode(swap_transaction_data)
+                
+                # Try to parse as VersionedTransaction first (Jupiter V6 format)
+                try:
+                    transaction = VersionedTransaction.from_bytes(transaction_bytes)
+                    logger.debug("Parsed as VersionedTransaction")
+                except Exception:
+                    # Fallback to legacy Transaction
+                    transaction = Transaction.from_bytes(transaction_bytes)
+                    logger.debug("Parsed as legacy Transaction")
+                    
+            except Exception as e:
+                raise WalletTransactionError(f"Failed to decode swap transaction: {e}")
+            
+            # Sign the transaction
+            try:
+                if hasattr(transaction, 'sign'):
+                    # VersionedTransaction or legacy Transaction
+                    transaction.sign([self.keypair])
+                else:
+                    # Handle other transaction types
+                    raise WalletTransactionError("Unsupported transaction type for signing")
+                    
+                logger.info("Successfully signed DEX swap transaction")
+                
+            except Exception as e:
+                raise WalletTransactionError(f"Failed to sign swap transaction: {e}")
+            
+            # Submit transaction with appropriate options
+            try:
+                # Use different send methods based on transaction type
+                if isinstance(transaction, VersionedTransaction):
+                    # For VersionedTransaction, use send_raw_transaction
+                    serialized_tx = bytes(transaction)
+                    response = await self.client.send_raw_transaction(
+                        serialized_tx,
+                        opts=TxOpts(
+                            skip_confirmation=False,
+                            preflight_commitment="confirmed",
+                            max_retries=3
+                        )
+                    )
+                else:
+                    # For legacy Transaction, use send_transaction
+                    response = await self.client.send_transaction(
+                        transaction,
+                        opts=TxOpts(
+                            skip_confirmation=False,
+                            preflight_commitment="confirmed",
+                            max_retries=3
+                        )
+                    )
+                
+                tx_hash = str(response.value)
+                
+                logger.info(
+                    "Successfully submitted DEX swap transaction",
+                    tx_hash=tx_hash,
+                    last_valid_block_height=last_valid_block_height
+                )
+                
+                return TransactionResult(
+                    transaction_hash=tx_hash,
+                    status=TransactionStatus.PENDING
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to submit swap transaction: {e}")
+                raise WalletTransactionError(f"Swap transaction submission failed: {e}")
+                
+        except WalletTransactionError:
+            # Re-raise wallet transaction errors as-is
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during DEX swap execution: {e}")
+            raise WalletTransactionError(f"DEX swap execution failed: {e}")
+    
+    async def check_token_balance_for_swap(
+        self,
+        token_address: str,
+        required_amount: Decimal
+    ) -> bool:
+        """
+        Check if wallet has sufficient token balance for a swap.
+        
+        Args:
+            token_address: Token mint address to check
+            required_amount: Required amount for the swap
+            
+        Returns:
+            True if sufficient balance exists, False otherwise
+        """
+        try:
+            if token_address == "So11111111111111111111111111111111111111112":
+                # SOL balance check
+                current_balance = await self.get_native_balance()
+                # Reserve some SOL for transaction fees (0.01 SOL)
+                available_balance = max(Decimal(0), current_balance - Decimal("0.01"))
+                return available_balance >= required_amount
+            else:
+                # SPL token balance check
+                current_balance = await self.get_token_balance(token_address)
+                return current_balance >= required_amount
+                
+        except Exception as e:
+            logger.error(f"Failed to check token balance: {e}")
+            return False
+    
+    async def prepare_swap_accounts(
+        self,
+        input_token: str,
+        output_token: str
+    ) -> Dict[str, str]:
+        """
+        Prepare and create necessary token accounts for a swap.
+        
+        This method ensures that associated token accounts exist for both
+        input and output tokens before executing a swap.
+        
+        Args:
+            input_token: Input token mint address
+            output_token: Output token mint address
+            
+        Returns:
+            Dictionary with account addresses
+            
+        Raises:
+            WalletTransactionError: If account preparation fails
+        """
+        if not self.keypair:
+            raise WalletTransactionError("Cannot prepare accounts in read-only mode")
+        
+        try:
+            accounts = {
+                "input_account": None,
+                "output_account": None
+            }
+            
+            # Handle SOL (wrapped SOL doesn't need token accounts)
+            sol_mint = "So11111111111111111111111111111111111111112"
+            
+            if input_token != sol_mint:
+                # Check if input token account exists, create if needed
+                try:
+                    from spl.token.instructions import get_associated_token_address
+                    owner_pubkey = Pubkey.from_string(self.wallet_address)
+                    input_mint = Pubkey.from_string(input_token)
+                    
+                    input_account = get_associated_token_address(owner_pubkey, input_mint)
+                    accounts["input_account"] = str(input_account)
+                    
+                    # Check if account exists
+                    account_info = await self.client.get_account_info(input_account)
+                    if not account_info.value:
+                        logger.info(f"Creating associated token account for input token: {input_token}")
+                        await self.create_associated_token_account(input_token)
+                        
+                except Exception as e:
+                    logger.warning(f"Could not prepare input token account: {e}")
+            
+            if output_token != sol_mint:
+                # Check if output token account exists, create if needed
+                try:
+                    from spl.token.instructions import get_associated_token_address
+                    owner_pubkey = Pubkey.from_string(self.wallet_address)
+                    output_mint = Pubkey.from_string(output_token)
+                    
+                    output_account = get_associated_token_address(owner_pubkey, output_mint)
+                    accounts["output_account"] = str(output_account)
+                    
+                    # Check if account exists
+                    account_info = await self.client.get_account_info(output_account)
+                    if not account_info.value:
+                        logger.info(f"Creating associated token account for output token: {output_token}")
+                        await self.create_associated_token_account(output_token)
+                        
+                except Exception as e:
+                    logger.warning(f"Could not prepare output token account: {e}")
+            
+            return accounts
+            
+        except Exception as e:
+            logger.error(f"Failed to prepare swap accounts: {e}")
+            raise WalletTransactionError(f"Account preparation failed: {e}")

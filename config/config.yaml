@@ -141,6 +141,90 @@ dex:
     enable_routing_optimization: true    # Enable best route finding
     max_hops: 3                         # Maximum hops in routing path
 
+wallets:
+  # Solana Wallet Configuration
+  solana:
+    enabled: true
+    chain: "solana"
+    network: "${SOLANA_NETWORK:devnet}"  # mainnet-beta, devnet, testnet
+    rpc_url: "${SOLANA_RPC_URL:https://api.devnet.solana.com}"
+    private_key: "${SOLANA_PRIVATE_KEY:}"  # Base58 or hex private key
+    wallet_address: "${SOLANA_WALLET_ADDRESS:}"  # For read-only mode
+    timeout_seconds: 30
+    max_retries: 3
+    commitment: "confirmed"  # processed, confirmed, finalized
+    
+    # Fee and transaction settings
+    priority_fee_lamports: 0  # Additional priority fee (0 = no priority fee)
+    compute_unit_limit: 300000  # Max compute units per transaction
+    compute_unit_price: 0  # Micro-lamports per compute unit (0 = market price)
+    
+  # Ethereum Wallet Configuration (Future)
+  ethereum:
+    enabled: false
+    chain: "ethereum"
+    network: "${ETH_NETWORK:sepolia}"  # mainnet, sepolia, goerli
+    rpc_url: "${ETH_RPC_URL:https://sepolia.infura.io/v3/YOUR_PROJECT_ID}"
+    private_key: "${ETH_PRIVATE_KEY:}"  # Hex private key
+    wallet_address: "${ETH_WALLET_ADDRESS:}"
+    timeout_seconds: 30
+    max_retries: 3
+    
+    # Gas settings
+    max_gas_price_gwei: 100  # Maximum gas price in Gwei
+    gas_limit_multiplier: 1.2  # Safety multiplier for gas limits
+    
+  # Base Wallet Configuration (Future)
+  base:
+    enabled: false
+    chain: "base"
+    network: "${BASE_NETWORK:base-sepolia}"  # base, base-sepolia
+    rpc_url: "${BASE_RPC_URL:https://sepolia.base.org}"
+    private_key: "${BASE_PRIVATE_KEY:}"
+    wallet_address: "${BASE_WALLET_ADDRESS:}"
+    timeout_seconds: 30
+    max_retries: 3
+    
+    # Gas settings
+    max_gas_price_gwei: 50   # Base typically has lower gas fees
+    gas_limit_multiplier: 1.2
+    
+  # Global Wallet Settings
+  global:
+    enable_balance_checks: true         # Check balances before transactions
+    enable_account_preparation: true    # Auto-create token accounts if needed
+    transaction_confirmation_timeout: 60  # Seconds to wait for confirmation
+    enable_transaction_simulation: true  # Simulate before sending (if supported)
+    max_slippage_protection: true       # Enable additional slippage protection
+    retry_failed_transactions: true     # Retry failed transactions
+    transaction_retry_delay: 5          # Seconds between transaction retries
+
+# DEX-Wallet Integration Settings
+integration:
+  # Swap execution configuration
+  swap_execution:
+    max_retries: 3                     # Max retry attempts for failed swaps
+    retry_delay_seconds: 1.0           # Delay between retry attempts
+    enable_balance_checks: true        # Pre-swap balance validation
+    enable_account_preparation: true   # Auto-prepare token accounts
+    confirmation_timeout_seconds: 60   # Wait time for transaction confirmation
+    enable_slippage_protection: true   # Additional slippage validation
+    
+  # Performance and monitoring
+  monitoring:
+    log_all_swaps: true                # Log all swap attempts and results
+    track_execution_time: true         # Monitor swap execution performance
+    alert_on_failures: true           # Send alerts for swap failures
+    max_execution_time_seconds: 300    # Alert if swap takes longer than 5 minutes
+    
+  # Chain-specific integration settings
+  solana_integration:
+    enable_jupiter_integration: true   # Enable Jupiter DEX integration
+    auto_wrap_sol: true               # Auto-wrap SOL for token swaps
+    create_ata_if_missing: true       # Create associated token accounts
+    use_versioned_transactions: true   # Use Solana versioned transactions
+    compute_unit_buffer: 20000        # Extra compute units for complex swaps
+
 ml:
   models:
     lstm:
