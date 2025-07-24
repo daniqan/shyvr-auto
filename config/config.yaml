@@ -93,6 +93,54 @@ trading:
     slippage_pct: 0.1            # 0.1% slippage simulation
     commission_pct: 0.075        # 0.075% commission (typical DEX fee)
 
+dex:
+  # Jupiter DEX (Solana) - Primary DEX for Solana trading
+  jupiter:
+    enabled: true
+    chain: "solana"
+    api_key: "${JUPITER_API_KEY:}"      # Optional, not required for public endpoints
+    base_url: "https://quote-api.jup.ag"
+    max_slippage_bps: 50                # 0.5% maximum slippage
+    timeout_seconds: 30
+    rate_limit_per_second: 10
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 1000          # 10% maximum price impact
+    
+  # Hyperliquid DEX (Multi-chain) - Future implementation
+  hyperliquid:
+    enabled: false                      # Will be enabled in future phases
+    chain: "ethereum"                   # Primary chain, supports multi-chain
+    api_key: "${HYPERLIQUID_API_KEY:}"
+    base_url: "https://api.hyperliquid.xyz"
+    max_slippage_bps: 30               # 0.3% maximum slippage
+    timeout_seconds: 30
+    rate_limit_per_second: 20
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 500          # 5% maximum price impact
+    
+  # Uniswap V3 (Ethereum/Base) - Future implementation  
+  uniswap_v3:
+    enabled: false                      # Will be enabled in future phases
+    chain: "ethereum"                   # Primary chain, also supports Base
+    api_key: "${UNISWAP_API_KEY:}"     # For enhanced APIs if available
+    base_url: "https://api.uniswap.org"
+    max_slippage_bps: 50               # 0.5% maximum slippage
+    timeout_seconds: 30
+    rate_limit_per_second: 10
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 1000         # 10% maximum price impact
+    fee_tiers: [100, 500, 3000, 10000] # 0.01%, 0.05%, 0.3%, 1.0%
+    
+  # Global DEX Settings
+  global:
+    preferred_stablecoin: "USDC"        # Default stablecoin for pricing
+    quote_cache_ttl_seconds: 60         # Cache quotes for 60 seconds
+    price_cache_ttl_seconds: 300        # Cache prices for 5 minutes
+    retry_attempts: 3                   # Retry failed requests 3 times
+    retry_delay_seconds: 1              # Wait 1 second between retries
+    enable_routing_optimization: true    # Enable best route finding
+    max_hops: 3                         # Maximum hops in routing path
+
 ml:
   models:
     lstm:

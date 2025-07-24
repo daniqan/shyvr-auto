@@ -1,0 +1,3 @@
+"""
+DEX module unit tests
+"""
