@@ -171,8 +171,9 @@ class TestSolanaConnectionValidation:
             # Mock keypair creation
             with patch('src.wallet.solana_wallet.Keypair') as mock_keypair:
                 mock_keypair_instance = Mock()
-                mock_keypair_instance.pubkey.return_value = Mock()
-                mock_keypair_instance.pubkey.return_value.__str__ = lambda: "11111111111111111111111111111112"
+                mock_pubkey = Mock()
+                mock_pubkey.__str__ = lambda self: "11111111111111111111111111111112"
+                mock_keypair_instance.pubkey.return_value = mock_pubkey
                 mock_keypair.from_bytes.return_value = mock_keypair_instance
                 
                 with patch('src.wallet.solana_wallet.base58.b58decode') as mock_b58decode:
@@ -558,7 +559,9 @@ class TestSolanaAddressValidation:
                 
                 with patch('src.wallet.solana_wallet.Keypair.from_bytes') as mock_keypair:
                     mock_keypair_instance = Mock()
-                    mock_keypair_instance.pubkey.return_value.__str__ = lambda: "11111111111111111111111111111112"
+                    mock_pubkey = Mock()
+                    mock_pubkey.__str__ = lambda self: "11111111111111111111111111111112"
+                    mock_keypair_instance.pubkey.return_value = mock_pubkey
                     mock_keypair.return_value = mock_keypair_instance
                     
                     success = await wallet.connect()
@@ -591,7 +594,9 @@ class TestSolanaAddressValidation:
             
             with patch('src.wallet.solana_wallet.Keypair.from_bytes') as mock_keypair:
                 mock_keypair_instance = Mock()
-                mock_keypair_instance.pubkey.return_value.__str__ = lambda: "11111111111111111111111111111112"
+                mock_pubkey = Mock()
+                mock_pubkey.__str__ = lambda self: "11111111111111111111111111111112"
+                mock_keypair_instance.pubkey.return_value = mock_pubkey
                 mock_keypair.return_value = mock_keypair_instance
                 
                 success = await wallet.connect()
