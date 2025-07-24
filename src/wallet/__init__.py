@@ -19,6 +19,8 @@ from .base import (
 )
 
 from .config import WalletConfigManager
+from .ethereum_wallet import EthereumWallet
+from .solana_wallet import SolanaWallet
 
 __all__ = [
     # Base classes and types
@@ -34,4 +36,7 @@ __all__ = [
     "TransactionResult",
     # Configuration
     "WalletConfigManager",
+    # Wallet implementations
+    "EthereumWallet",
+    "SolanaWallet",
 ]

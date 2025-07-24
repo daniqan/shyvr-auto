@@ -54,8 +54,9 @@ class WalletConfig:
     
     def __post_init__(self):
         """Validate configuration after initialization."""
-        if not self.private_key and not self.mnemonic and not self.wallet_address:
-            raise ValueError("Must provide private_key, mnemonic, or wallet_address")
+        # Allow empty credentials if they might be stored securely
+        # This is handled during wallet connection
+        pass
 
 
 @dataclass

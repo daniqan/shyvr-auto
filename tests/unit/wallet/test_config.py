@@ -113,7 +113,15 @@ wallet:
         """Test storing and retrieving private key securely."""
         from src.wallet.config import WalletConfigManager
         
-        mock_keyring.get_password.return_value = None  # No existing encryption key
+        # Mock keyring to return None for encryption key, then encrypted data for private key
+        def mock_get_password(service, key):
+            if service == "shyvr-wallet-encryption":
+                return None  # No existing encryption key
+            elif service == "shyvr-rlte-wallets":
+                return "encrypted_private_key"  # Return encrypted data
+            return None
+        
+        mock_keyring.get_password.side_effect = mock_get_password
         mock_keyring.set_password.return_value = None
         
         with patch('src.wallet.config.Fernet') as mock_fernet:
@@ -138,7 +146,15 @@ wallet:
         """Test storing and retrieving mnemonic phrase securely."""
         from src.wallet.config import WalletConfigManager
         
-        mock_keyring.get_password.return_value = None
+        # Mock keyring to return None for encryption key, then encrypted data for mnemonic
+        def mock_get_password(service, key):
+            if service == "shyvr-wallet-encryption":
+                return None  # No existing encryption key
+            elif service == "shyvr-rlte-wallets":
+                return "encrypted_mnemonic"  # Return encrypted data
+            return None
+        
+        mock_keyring.get_password.side_effect = mock_get_password
         mock_keyring.set_password.return_value = None
         
         with patch('src.wallet.config.Fernet') as mock_fernet:
@@ -162,15 +178,24 @@ wallet:
         """Test creating wallet config with private key."""
         from src.wallet.config import WalletConfigManager
         
-        with patch('src.wallet.config.keyring'):
-            manager = WalletConfigManager()
+        with patch('src.wallet.config.keyring') as mock_keyring:
+            mock_keyring.get_password.return_value = None
+            mock_keyring.set_password.return_value = None
             
-            config = manager.create_wallet_config(
-                chain=Chain.ETHEREUM,
-                network=NetworkType.TESTNET,
-                private_key="0x" + "a" * 64,
-                api_key="test-api-key"
-            )
+            with patch('src.wallet.config.Fernet') as mock_fernet:
+                mock_fernet.generate_key.return_value = b"mock_encryption_key"
+                mock_cipher = Mock()
+                mock_cipher.encrypt.return_value = b"encrypted_private_key"
+                mock_fernet.return_value = mock_cipher
+                
+                manager = WalletConfigManager()
+                
+                config = manager.create_wallet_config(
+                    chain=Chain.ETHEREUM,
+                    network=NetworkType.TESTNET,
+                    private_key="0x" + "a" * 64,
+                    api_key="test-api-key"
+                )
             
             assert config.chain == Chain.ETHEREUM
             assert config.network == NetworkType.TESTNET
