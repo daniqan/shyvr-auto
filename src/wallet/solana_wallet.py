@@ -15,17 +15,13 @@ from dataclasses import dataclass
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.core import RPCException
 from solana.rpc.types import TxOpts
-from solana.transaction import Transaction
-from solana.system_program import TransferParams, transfer
+from solders.transaction import Transaction
+from solders.system_program import transfer, TransferParams
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solders.system_program import TransferParams as SolTransferParams
-from solders.transaction import VersionedTransaction
 from solders.signature import Signature
-from solders.rpc.responses import GetAccountInfoResp, GetBalanceResp
 from spl.token.instructions import transfer_checked, TransferCheckedParams
 from spl.token.client import Token
-from spl.token.core import _TokenCore
 import json
 
 from .base import (

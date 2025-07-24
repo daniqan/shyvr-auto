@@ -12,10 +12,6 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 
 from web3 import Web3, AsyncWeb3
-from web3.eth import AsyncEth
-from web3.net import AsyncNet
-from web3.geth import AsyncGethPersonal
-from web3.middleware import async_geth_poa_middleware
 from web3.exceptions import Web3Exception, TransactionNotFound, BlockNotFound
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
@@ -137,9 +133,8 @@ class EthereumWallet(WalletBase):
                 request_kwargs={'timeout': self.config.timeout_seconds}
             ))
             
-            # Add PoA middleware for testnets if needed
-            if self.config.network != NetworkType.MAINNET:
-                self.w3.middleware_onion.inject(async_geth_poa_middleware, layer=0)
+            # Note: PoA middleware may be needed for some testnets
+            # For now, using standard middleware setup
             
             # Test connection
             if not await self.w3.is_connected():
