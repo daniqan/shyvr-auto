@@ -86,7 +86,7 @@ class TestEthereumWalletConnection:
             # Mock Account.from_key
             with patch('src.wallet.ethereum_wallet.Account') as mock_account:
                 mock_account_instance = Mock()
-                mock_account_instance.address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb"
+                mock_account_instance.address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24"
                 mock_account.from_key.return_value = mock_account_instance
                 
                 success = await wallet.connect()
@@ -115,7 +115,7 @@ class TestEthereumWalletConnection:
         readonly_config = WalletConfig(
             chain=Chain.ETHEREUM,
             network=NetworkType.TESTNET,
-            wallet_address="0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb",
+            wallet_address="0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24",
             rpc_url="https://sepolia.infura.io/v3/test-key"
         )
         
@@ -126,11 +126,14 @@ class TestEthereumWalletConnection:
             mock_web3_instance = AsyncMock()
             mock_web3.return_value = mock_web3_instance
             mock_web3_instance.is_connected.return_value = True
+            mock_web3_instance.eth.chain_id = 11155111  # Sepolia testnet chain ID
             
             success = await wallet.connect()
             assert success == True
             assert wallet.is_connected == True
-            assert wallet.wallet_address == readonly_config.wallet_address
+            # Address should be checksummed
+            from eth_utils import to_checksum_address
+            assert wallet.wallet_address == to_checksum_address(readonly_config.wallet_address)
     
     @pytest.mark.skipif(EthereumWallet is None, reason="EthereumWallet not implemented")
     async def test_ethereum_wallet_invalid_private_key(self):
@@ -161,7 +164,7 @@ class TestEthereumWalletBalances:
         
         # Mock the connection
         wallet._connected = True
-        wallet._wallet_address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb"
+        wallet._wallet_address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24"
         wallet.w3 = AsyncMock()
         
         return wallet
@@ -252,7 +255,7 @@ class TestEthereumWalletTransactions:
         
         # Mock the connection and account
         wallet._connected = True
-        wallet._wallet_address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb"
+        wallet._wallet_address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24"
         wallet.w3 = AsyncMock()
         wallet.account = Mock()
         wallet.account.address = wallet._wallet_address
@@ -481,7 +484,7 @@ class TestEthereumWalletUtilities:
         
         # Valid Ethereum addresses
         valid_addresses = [
-            "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb",
+            "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24",
             "0x0000000000000000000000000000000000000000",
         ]
         
@@ -508,7 +511,7 @@ class TestEthereumWalletUtilities:
         readonly_config = WalletConfig(
             chain=Chain.ETHEREUM,
             network=NetworkType.TESTNET,
-            wallet_address="0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb",
+            wallet_address="0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3Bb24",
             rpc_url="https://sepolia.infura.io/v3/test-key"
         )
         
