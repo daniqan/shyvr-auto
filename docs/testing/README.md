@@ -40,6 +40,35 @@ This directory contains comprehensive documentation for the hybrid testing strat
 - Performance Target Reference
 - Common Patterns & Red Flags
 
+### 🚀 [Performance Testing Documentation](./performance/)
+**Comprehensive performance benchmarking and validation**
+
+#### 📊 [PERFORMANCE_TESTING_FRAMEWORK.md](./performance/PERFORMANCE_TESTING_FRAMEWORK.md)
+**Complete performance testing implementation guide**
+
+- **When to use**: Setting up performance testing infrastructure
+- **Content**: Test architecture, benchmarking patterns, target validation
+- **Audience**: Performance engineers, DevOps teams, technical leads
+
+**Key Sections:**
+- Performance test suite overview (17+ test classes)
+- CLAUDE.md target validation (11/11 benchmarks exceeded)
+- Real PyTorch model testing with statistical analysis
+- CI/CD integration patterns and regression detection
+
+#### ⚡ [REAL_VS_MOCK_BENCHMARKS.md](./performance/REAL_VS_MOCK_BENCHMARKS.md)
+**Benchmark comparisons and performance validation**
+
+- **When to use**: Validating real vs mock performance characteristics
+- **Content**: Detailed benchmarking results and statistical analysis
+- **Audience**: Performance engineers, ML engineers, system architects
+
+**Key Results:**
+- Real DQN models 2.5x faster than mocks in inference
+- 414,044 tokens/minute throughput (4,140x target)
+- All CLAUDE.md targets exceeded by 10-4000x margins
+- Statistical validation with P95/P99 performance guarantees
+
 ## Testing Architecture Overview
 
 ```
@@ -231,15 +260,18 @@ pytest -m "validation" --maxfail=1
 
 ### Common Questions
 - **"Should I use mocks or real models?"** → See [Decision Tree](./TESTING_DECISION_TREE.md)
-- **"How do I measure performance?"** → See benchmarking patterns in main strategy
+- **"How do I measure performance?"** → See [Performance Testing Framework](./performance/PERFORMANCE_TESTING_FRAMEWORK.md)
 - **"What's the TDD process for ML/RL?"** → See TDD methodology section
 - **"How do I detect regressions?"** → See statistical analysis patterns
+- **"How do real models compare to mocks?"** → See [Real vs Mock Benchmarks](./performance/REAL_VS_MOCK_BENCHMARKS.md)
 
 ### Resources
 - **Example tests**: `tests/integration/test_real_rl_models.py`
 - **Benchmark patterns**: `tests/performance/test_real_vs_mock_benchmarks.py`
 - **Mock examples**: All `tests/unit/` directories
 - **Performance targets**: `CLAUDE.md` project documentation
+- **Performance testing guide**: [Performance Testing Framework](./performance/PERFORMANCE_TESTING_FRAMEWORK.md)
+- **Benchmark results**: [Real vs Mock Benchmarks](./performance/REAL_VS_MOCK_BENCHMARKS.md)
 
 ### Support
 - **Architecture questions**: Review complete strategy document
