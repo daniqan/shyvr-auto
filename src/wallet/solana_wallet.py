@@ -114,26 +114,71 @@ class SolanaWallet(WalletBase):
             private_key: Private key in base58, hex, or other format
             
         Returns:
-            Private key as bytes
+            Private key as bytes (should be 64 bytes for Solana)
             
         Raises:
             ValueError: If private key format is invalid
         """
-        try:
-            # Remove common prefixes and whitespace
-            key = private_key.strip().replace('0x', '')
+        if not private_key or not isinstance(private_key, str):
+            raise ValueError("Private key must be a non-empty string")
             
-            # Try different formats
+        # Remove common prefixes and whitespace
+        key = private_key.strip().replace('0x', '')
+        
+        if not key:
+            raise ValueError("Private key cannot be empty after cleaning")
+        
+        try:
+            private_key_bytes = None
+            
+            # Try base58 decoding first (most common Solana format)
             if len(key) == 88:  # Base58 encoded (typical Solana format)
-                return base58.b58decode(key)
+                try:
+                    private_key_bytes = base58.b58decode(key)
+                except Exception:
+                    raise ValueError("Invalid base58 encoding")
             elif len(key) == 128:  # Hex encoded (64 bytes as hex string)
-                return bytes.fromhex(key)
-            elif len(key) == 64:  # Could be 32-byte key as hex
-                return bytes.fromhex(key)
+                try:
+                    private_key_bytes = bytes.fromhex(key)
+                except ValueError:
+                    raise ValueError("Invalid hex encoding")
+            elif len(key) == 64:  # Could be 32-byte key as hex (seed)
+                try:
+                    private_key_bytes = bytes.fromhex(key)
+                    # For Solana, we need 64-byte private key, if we only have 32 bytes
+                    # this might be a seed that needs to be expanded
+                    if len(private_key_bytes) == 32:
+                        # This is likely a seed, not a full private key
+                        raise ValueError("32-byte keys not supported - need full 64-byte private key")
+                except ValueError as e:
+                    raise ValueError(f"Invalid hex encoding: {e}")
             else:
-                # Try to decode as base58 anyway
-                return base58.b58decode(key)
+                # Try to decode as base58 anyway for other lengths
+                try:
+                    private_key_bytes = base58.b58decode(key)
+                except Exception:
+                    raise ValueError(f"Unsupported private key format (length: {len(key)})")
+            
+            # Validate the private key bytes
+            if private_key_bytes is None:
+                raise ValueError("Failed to decode private key")
                 
+            if len(private_key_bytes) != 64:
+                raise ValueError(f"Private key must be 64 bytes, got {len(private_key_bytes)} bytes")
+            
+            # Additional validation: check if key contains invalid characters for base58
+            if len(key) == 88:
+                # Validate base58 characters
+                base58_alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+                for char in key:
+                    if char not in base58_alphabet:
+                        raise ValueError(f"Invalid base58 character: {char}")
+            
+            return private_key_bytes
+                
+        except ValueError:
+            # Re-raise ValueError as-is
+            raise
         except Exception as e:
             raise ValueError(f"Unable to parse private key format: {e}")
         
@@ -148,26 +193,14 @@ class SolanaWallet(WalletBase):
             WalletConnectionError: If connection fails
         """
         try:
-            # Initialize Solana RPC client
+            # Validate configuration first
             if not self.config.rpc_url:
                 raise WalletConnectionError("RPC URL not configured")
             
             # Validate cluster based on RPC URL pattern
             self._validate_cluster_url(self.config.rpc_url)
             
-            self.client = AsyncClient(
-                self.config.rpc_url,
-                timeout=self.config.timeout_seconds
-            )
-            
-            # Test connection
-            try:
-                health = await self.client.get_health()
-                logger.info(f"Solana RPC health: {health}")
-            except Exception as e:
-                raise WalletConnectionError(f"Failed to connect to Solana RPC: {e}")
-            
-            # Initialize keypair if private key provided
+            # Initialize and validate keypair/address BEFORE connecting to RPC
             from .config import WalletConfigManager
             config_manager = WalletConfigManager()
             
@@ -177,13 +210,20 @@ class SolanaWallet(WalletBase):
             
             if private_key:
                 try:
+                    # Validate and parse private key BEFORE RPC connection
                     private_key_bytes = self._parse_private_key(private_key)
+                    
+                    # Test keypair creation from bytes
                     self.keypair = Keypair.from_bytes(private_key_bytes)
                     self._wallet_address = str(self.keypair.pubkey())
                     logger.info(f"Loaded Solana keypair: {self._wallet_address}")
                     
-                except Exception as e:
+                except ValueError as e:
+                    # Private key parsing/validation errors
                     raise WalletConnectionError(f"Invalid Solana private key: {e}")
+                except Exception as e:
+                    # Keypair creation errors
+                    raise WalletConnectionError(f"Invalid Solana private key: Failed to create keypair - {e}")
                     
             elif self.config.wallet_address:
                 # Read-only mode
@@ -195,6 +235,19 @@ class SolanaWallet(WalletBase):
                     raise WalletConnectionError(f"Invalid Solana address: {e}")
             else:
                 raise WalletConnectionError("No private key or wallet address provided")
+            
+            # Now initialize RPC client after successful private key validation
+            self.client = AsyncClient(
+                self.config.rpc_url,
+                timeout=self.config.timeout_seconds
+            )
+            
+            # Test RPC connection
+            try:
+                health = await self.client.get_health()
+                logger.info(f"Solana RPC health: {health}")
+            except Exception as e:
+                raise WalletConnectionError(f"Failed to connect to Solana RPC: {e}")
             
             self._connected = True
             
