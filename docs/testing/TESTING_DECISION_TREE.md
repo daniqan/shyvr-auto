@@ -21,8 +21,8 @@ flowchart TD
     H --> H4[✅ Development iteration]
     
     D --> I{Critical integration path?}
-    I -->|Yes - ML-RL Bridge<br/>Model Save/Load<br/>Training Pipeline| J[Use Real Models]
-    I -->|No - Config validation<br/>Error handling<br/>API integration| K[Use Mocks]
+    I -->|"Yes - ML-RL Bridge\nModel Save/Load\nTraining Pipeline"| J[Use Real Models]
+    I -->|"No - Config validation\nError handling\nAPI integration"| K[Use Mocks]
     
     E --> L[Use Real Models]
     L --> L1[✅ Actual hardware latency]
@@ -40,17 +40,17 @@ flowchart TD
     N -->|Stage 1 - Fast Feedback| O[Use Mocks]
     N -->|Stage 2+ - Validation| P[Use Real Models]
     
-    J --> Q[Examples:<br/>• ML-RL decision latency<br/>• Model state preservation<br/>• Training convergence<br/>• Feature vector accuracy]
+    J --> Q["Examples:\n• ML-RL decision latency\n• Model state preservation\n• Training convergence\n• Feature vector accuracy"]
     
-    K --> R[Examples:<br/>• Configuration validation<br/>• Error message testing<br/>• API response handling<br/>• Edge case scenarios]
+    K --> R["Examples:\n• Configuration validation\n• Error message testing\n• API response handling\n• Edge case scenarios"]
     
-    L --> S[Examples:<br/>• <1s decision targets<br/>• <50MB memory growth<br/>• 100+ tokens/minute<br/>• Statistical analysis]
+    L --> S["Examples:\n• <1s decision targets\n• <50MB memory growth\n• 100+ tokens/minute\n• Statistical analysis"]
     
-    M --> T[Examples:<br/>• Complete trading pipeline<br/>• Multi-token processing<br/>• Production deployment<br/>• User scenario testing]
+    M --> T["Examples:\n• Complete trading pipeline\n• Multi-token processing\n• Production deployment\n• User scenario testing"]
     
-    O --> U[Examples:<br/>• Unit test regression<br/>• Fast developer feedback<br/>• PR validation<br/>• Code quality checks]
+    O --> U["Examples:\n• Unit test regression\n• Fast developer feedback\n• PR validation\n• Code quality checks"]
     
-    P --> V[Examples:<br/>• Performance regression<br/>• Integration validation<br/>• Production readiness<br/>• Deployment verification]
+    P --> V["Examples:\n• Performance regression\n• Integration validation\n• Production readiness\n• Deployment verification"]
 ```
 
 ## Quick Decision Matrix

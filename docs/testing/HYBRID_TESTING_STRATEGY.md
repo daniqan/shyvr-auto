@@ -93,8 +93,8 @@ flowchart TD
     K --> K2[System integration]
     K --> K3[User experience validation]
     
-    H --> L[ML-RL Integration<br/>Model Save/Load<br/>Training Pipeline]
-    I --> M[Configuration Testing<br/>Error Handling<br/>API Mocking]
+    H --> L["ML-RL Integration\nModel Save/Load\nTraining Pipeline"]
+    I --> M["Configuration Testing\nError Handling\nAPI Mocking"]
 ```
 
 ### Decision Matrix
