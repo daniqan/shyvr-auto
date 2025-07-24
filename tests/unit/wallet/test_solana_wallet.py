@@ -131,14 +131,20 @@ class TestSolanaWalletConnection:
             mock_client.return_value = mock_client_instance
             mock_client_instance.get_health.return_value = "ok"
             
-            # Mock Pubkey validation
-            with patch('src.wallet.solana_wallet.Pubkey') as mock_pubkey:
-                mock_pubkey.from_string.return_value = Mock()
+            # Mock WalletConfigManager to return no private key
+            with patch('src.wallet.config.WalletConfigManager') as mock_config_manager:
+                mock_config_manager_instance = Mock()
+                mock_config_manager.return_value = mock_config_manager_instance
+                mock_config_manager_instance.get_private_key.return_value = None  # No private key for read-only
                 
-                success = await wallet.connect()
-                assert success == True
-                assert wallet.is_connected == True
-                assert wallet.wallet_address == readonly_config.wallet_address
+                # Mock Pubkey validation
+                with patch('src.wallet.solana_wallet.Pubkey') as mock_pubkey:
+                    mock_pubkey.from_string.return_value = Mock()
+                    
+                    success = await wallet.connect()
+                    assert success == True
+                    assert wallet.is_connected == True
+                    assert wallet.wallet_address == readonly_config.wallet_address
     
     @pytest.mark.skipif(SolanaWallet is None, reason="SolanaWallet not implemented")
     async def test_solana_wallet_invalid_private_key(self):
@@ -152,8 +158,20 @@ class TestSolanaWalletConnection:
         
         wallet = SolanaWallet(invalid_config)
         
-        with pytest.raises(WalletConnectionError, match="Invalid Solana private key"):
-            await wallet.connect()
+        # Mock Solana RPC client to get past connection check
+        with patch('src.wallet.solana_wallet.AsyncClient') as mock_client:
+            mock_client_instance = AsyncMock()
+            mock_client.return_value = mock_client_instance
+            mock_client_instance.get_health.return_value = "ok"
+            
+            # Mock WalletConfigManager to not return any additional keys
+            with patch('src.wallet.config.WalletConfigManager') as mock_config_manager:
+                mock_config_manager_instance = Mock()
+                mock_config_manager.return_value = mock_config_manager_instance
+                mock_config_manager_instance.get_private_key.return_value = None
+                
+                with pytest.raises(WalletConnectionError, match="Invalid Solana private key"):
+                    await wallet.connect()
 
 
 class TestSolanaWalletBalances:
