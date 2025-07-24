@@ -140,42 +140,80 @@ class EthereumWallet(WalletBase):
             if not await self.w3.is_connected():
                 raise WalletConnectionError("Failed to connect to Ethereum network")
             
-            # Initialize account if private key provided
-            from .config import WalletConfigManager
-            config_manager = WalletConfigManager()
-            
-            private_key = self.config.private_key
-            if not private_key:
-                private_key = config_manager.get_private_key(self.config.chain, self.config.network)
-            
-            if private_key:
-                try:
-                    self.account = Account.from_key(private_key)
-                    self._wallet_address = self.account.address
-                    logger.info(f"Loaded account: {self.account.address}")
-                except Exception as e:
-                    raise WalletConnectionError(f"Invalid private key: {e}")
-            elif self.config.wallet_address:
-                # Read-only mode
+            # Initialize account or set read-only mode
+            if self.config.wallet_address:
+                # Read-only mode (prioritize this over private key lookup)
                 if not is_address(self.config.wallet_address):
                     raise WalletConnectionError("Invalid wallet address")
                 self._wallet_address = to_checksum_address(self.config.wallet_address)
                 logger.info(f"Read-only mode for address: {self._wallet_address}")
             else:
-                raise WalletConnectionError("No private key or wallet address provided")
+                # Try to get private key for full wallet functionality
+                from .config import WalletConfigManager
+                config_manager = WalletConfigManager()
+                
+                private_key = self.config.private_key
+                if not private_key:
+                    private_key = config_manager.get_private_key(self.config.chain, self.config.network)
+                
+                if private_key:
+                    try:
+                        self.account = Account.from_key(private_key)
+                        self._wallet_address = self.account.address
+                        logger.info(f"Loaded account: {self.account.address}")
+                    except Exception as e:
+                        raise WalletConnectionError(f"Invalid private key: {e}")
+                else:
+                    raise WalletConnectionError("No private key or wallet address provided")
             
             self._connected = True
             
+            # Validate network chain ID
+            chain_id = self.w3.eth.chain_id
+            expected_chain_ids = self._get_expected_chain_ids()
+            
+            if expected_chain_ids and chain_id not in expected_chain_ids:
+                expected_list = ", ".join(map(str, expected_chain_ids))
+                raise WalletConnectionError(
+                    f"Network mismatch: expected chain ID {expected_list} for {self.config.chain.value} "
+                    f"{self.config.network.value}, but got {chain_id}"
+                )
+            
             # Log connection info
-            chain_id = await self.w3.eth.chain_id
-            block_number = await self.w3.eth.block_number
+            block_number = await self.w3.eth.get_block_number()
             logger.info(f"Connected to {self.config.chain.value} (Chain ID: {chain_id}, Block: {block_number})")
             
             return True
             
+        except asyncio.TimeoutError as e:
+            logger.error(f"Ethereum connection timeout: {e}")
+            raise WalletConnectionError(f"Connection timeout: {e}")
         except Exception as e:
-            logger.error(f"Failed to connect to Ethereum wallet: {e}")
-            raise WalletConnectionError(f"Connection failed: {e}")
+            error_msg = str(e).lower()
+            
+            # Handle specific RPC errors
+            if "429" in error_msg or "too many requests" in error_msg:
+                raise WalletConnectionError(f"Rate limit exceeded: {e}")
+            elif "503" in error_msg or "service unavailable" in error_msg:
+                raise WalletConnectionError(f"Service unavailable: {e}")
+            elif "401" in error_msg or "unauthorized" in error_msg:
+                raise WalletConnectionError(f"Invalid API key or unauthorized: {e}")
+            elif "timeout" in error_msg:
+                raise WalletConnectionError(f"Connection timeout: {e}")
+            else:
+                logger.error(f"Failed to connect to Ethereum wallet: {e}")
+                raise WalletConnectionError(f"Connection failed: {e}")
+    
+    def _get_expected_chain_ids(self) -> List[int]:
+        """Get expected chain IDs for the current chain and network configuration."""
+        chain_id_map = {
+            (Chain.ETHEREUM, NetworkType.MAINNET): [1],
+            (Chain.ETHEREUM, NetworkType.TESTNET): [11155111],  # Sepolia
+            (Chain.BASE, NetworkType.MAINNET): [8453],
+            (Chain.BASE, NetworkType.TESTNET): [84532],  # Base Sepolia
+        }
+        
+        return chain_id_map.get((self.config.chain, self.config.network), [])
     
     async def disconnect(self) -> None:
         """Disconnect from Ethereum network."""
