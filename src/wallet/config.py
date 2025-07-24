@@ -339,13 +339,16 @@ class WalletConfigManager:
         network_config = self.get_network_config(chain, network)
         
         # Store sensitive data securely if provided
+        has_secure_auth = False
         if private_key:
             self.store_private_key(chain, network, private_key)
             private_key = None  # Don't keep in memory
+            has_secure_auth = True
             
         if mnemonic:
             self.store_mnemonic(chain, network, mnemonic)
             mnemonic = None  # Don't keep in memory
+            has_secure_auth = True
         
         # Use custom RPC URL if provided, otherwise use network default
         final_rpc_url = rpc_url if rpc_url else network_config.rpc_url
@@ -366,7 +369,8 @@ class WalletConfigManager:
             api_key=api_key,
             gas_price_gwei=network_config.gas_price_gwei,
             max_gas_limit=network_config.max_gas_limit,
-            timeout_seconds=network_config.timeout_seconds
+            timeout_seconds=network_config.timeout_seconds,
+            _has_secure_auth=has_secure_auth
         )
     
     def get_wallet_config_from_env(

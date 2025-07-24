@@ -51,10 +51,12 @@ class WalletConfig:
     gas_price_gwei: Optional[float] = None
     max_gas_limit: Optional[int] = None
     timeout_seconds: int = 30
+    _has_secure_auth: bool = False  # Internal flag for secure storage
     
     def __post_init__(self):
         """Validate configuration after initialization."""
-        if not self.private_key and not self.mnemonic and not self.wallet_address:
+        # Allow validation to pass if keys are stored securely in keyring
+        if not self.private_key and not self.mnemonic and not self.wallet_address and not self._has_secure_auth:
             raise ValueError("Must provide private_key, mnemonic, or wallet_address")
 
 
