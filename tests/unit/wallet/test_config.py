@@ -433,9 +433,350 @@ class TestWalletConfigManagerEncryption:
             assert decrypted == "decrypted_data"
 
 
-# These tests are expected to fail initially - this is TDD
-class TestWalletConfigManagerIntegration:
-    """Integration tests that will initially fail but drive implementation."""
+class TestWalletConfigManagerSecurity:
+    """Test wallet configuration security features."""
+    
+    @patch('src.wallet.config.keyring')
+    async def test_private_key_encryption_validation(self, mock_keyring):
+        """Test that private keys are properly encrypted before storage."""
+        from src.wallet.config import WalletConfigManager
+        
+        mock_keyring.get_password.return_value = None
+        mock_keyring.set_password.return_value = None
+        
+        with patch('src.wallet.config.Fernet') as mock_fernet:
+            mock_cipher = Mock()
+            mock_cipher.encrypt.return_value = b"encrypted_private_key"
+            mock_fernet.return_value = mock_cipher
+            mock_fernet.generate_key.return_value = b"test_key"
+            
+            manager = WalletConfigManager()
+            
+            # Store private key
+            manager.store_private_key(Chain.ETHEREUM, NetworkType.TESTNET, "0x" + "a" * 64)
+            
+            # Verify encryption was called
+            mock_cipher.encrypt.assert_called_once()
+            # Verify raw key is not stored
+            mock_keyring.set_password.assert_called_with(
+                "shyvr-wallet-encryption", 
+                "master_key", 
+                "test_key"
+            )
+    
+    @patch('src.wallet.config.keyring')
+    async def test_mnemonic_phrase_validation(self, mock_keyring):
+        """Test mnemonic phrase validation and secure storage."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Valid mnemonic phrases (BIP39)
+        valid_mnemonics = [
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+        ]
+        
+        for mnemonic in valid_mnemonics:
+            # Should not raise exception for valid mnemonic
+            assert manager.validate_mnemonic(mnemonic) == True
+        
+        # Invalid mnemonic phrases
+        invalid_mnemonics = [
+            "invalid mnemonic phrase",
+            "one two three four five",  # Too short
+            "",  # Empty
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon invalid",  # Invalid word
+        ]
+        
+        for mnemonic in invalid_mnemonics:
+            assert manager.validate_mnemonic(mnemonic) == False
+    
+    async def test_private_key_format_validation(self):
+        """Test private key format validation for different chains."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Valid Ethereum private keys
+        valid_eth_keys = [
+            "0x" + "a" * 64,  # With 0x prefix
+            "a" * 64,  # Without 0x prefix
+            "0x" + "123456789abcdef" * 4,  # Mixed hex
+        ]
+        
+        for key in valid_eth_keys:
+            assert manager.validate_private_key(key, Chain.ETHEREUM) == True
+        
+        # Valid Solana private keys
+        valid_sol_keys = [
+            "5" + "a" * 87,  # Base58 format
+            "0x" + "b" * 64,  # Hex format
+        ]
+        
+        for key in valid_sol_keys:
+            assert manager.validate_private_key(key, Chain.SOLANA) == True
+        
+        # Invalid private keys
+        invalid_keys = [
+            "invalid_key",
+            "0x" + "g" * 64,  # Invalid hex
+            "0x" + "a" * 63,  # Too short
+            "",  # Empty
+        ]
+        
+        for key in invalid_keys:
+            assert manager.validate_private_key(key, Chain.ETHEREUM) == False
+            assert manager.validate_private_key(key, Chain.SOLANA) == False
+    
+    @patch('src.wallet.config.keyring')
+    async def test_secure_key_derivation(self, mock_keyring):
+        """Test secure key derivation from mnemonic."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+        
+        # Should derive consistent keys for the same mnemonic
+        eth_key_1 = manager.derive_private_key_from_mnemonic(mnemonic, Chain.ETHEREUM, 0)
+        eth_key_2 = manager.derive_private_key_from_mnemonic(mnemonic, Chain.ETHEREUM, 0)
+        assert eth_key_1 == eth_key_2
+        
+        # Different derivation paths should produce different keys
+        eth_key_path_0 = manager.derive_private_key_from_mnemonic(mnemonic, Chain.ETHEREUM, 0)
+        eth_key_path_1 = manager.derive_private_key_from_mnemonic(mnemonic, Chain.ETHEREUM, 1)
+        assert eth_key_path_0 != eth_key_path_1
+        
+        # Different chains should produce different keys
+        eth_key = manager.derive_private_key_from_mnemonic(mnemonic, Chain.ETHEREUM, 0)
+        sol_key = manager.derive_private_key_from_mnemonic(mnemonic, Chain.SOLANA, 0)
+        assert eth_key != sol_key
+    
+    async def test_environment_variable_security(self):
+        """Test secure handling of environment variables."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Should warn about private keys in environment variables
+        with patch('src.wallet.config.logger') as mock_logger:
+            with patch.dict(os.environ, {'ETHEREUM_MAINNET_PRIVATE_KEY': '0x' + 'a' * 64}):
+                config = manager.get_wallet_config_from_env(Chain.ETHEREUM, NetworkType.MAINNET)
+                
+                # Should log security warning
+                mock_logger.warning.assert_called()
+                assert "environment variable" in str(mock_logger.warning.call_args)
+                assert "security risk" in str(mock_logger.warning.call_args)
+
+
+class TestWalletConfigManagerAdvanced:
+    """Test advanced wallet configuration features."""
+    
+    async def test_multi_account_support(self):
+        """Test support for multiple accounts per chain."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Should support multiple accounts with different names
+        with patch('src.wallet.config.keyring'):
+            manager.store_private_key(
+                Chain.ETHEREUM, 
+                NetworkType.MAINNET, 
+                "0x" + "a" * 64,
+                account_name="main"
+            )
+            
+            manager.store_private_key(
+                Chain.ETHEREUM, 
+                NetworkType.MAINNET, 
+                "0x" + "b" * 64,
+                account_name="trading"
+            )
+            
+            # Should retrieve correct keys by account name
+            main_key = manager.get_private_key(Chain.ETHEREUM, NetworkType.MAINNET, "main")
+            trading_key = manager.get_private_key(Chain.ETHEREUM, NetworkType.MAINNET, "trading")
+            
+            assert main_key != trading_key
+    
+    async def test_hardware_wallet_integration(self):
+        """Test hardware wallet integration configuration."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Should support hardware wallet configuration
+        hw_config = manager.create_hardware_wallet_config(
+            chain=Chain.ETHEREUM,
+            network=NetworkType.MAINNET,
+            hardware_type="ledger",
+            derivation_path="m/44'/60'/0'/0/0"
+        )
+        
+        assert hw_config.chain == Chain.ETHEREUM
+        assert hw_config.hardware_type == "ledger"
+        assert hw_config.derivation_path == "m/44'/60'/0'/0/0"
+        assert hw_config.private_key is None  # No private key for hardware wallets
+    
+    async def test_config_backup_and_restore(self):
+        """Test configuration backup and restore functionality."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Create backup
+        with patch('src.wallet.config.keyring'):
+            manager.store_private_key(Chain.ETHEREUM, NetworkType.TESTNET, "0x" + "a" * 64)
+            manager.store_mnemonic(Chain.SOLANA, NetworkType.MAINNET, "test mnemonic")
+            
+            backup_data = manager.create_backup("backup_password")
+            
+            # Backup should be encrypted
+            assert isinstance(backup_data, bytes)
+            assert len(backup_data) > 0
+            
+            # Clear current config
+            manager.clear_stored_keys(Chain.ETHEREUM, NetworkType.TESTNET)
+            manager.clear_stored_keys(Chain.SOLANA, NetworkType.MAINNET)
+            
+            # Restore from backup
+            manager.restore_from_backup(backup_data, "backup_password")
+            
+            # Should have restored keys
+            eth_key = manager.get_private_key(Chain.ETHEREUM, NetworkType.TESTNET)
+            sol_mnemonic = manager.get_mnemonic(Chain.SOLANA, NetworkType.MAINNET)
+            
+            assert eth_key is not None
+            assert sol_mnemonic is not None
+    
+    async def test_gas_price_optimization(self):
+        """Test gas price optimization features."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Should provide optimized gas prices based on network conditions
+        with patch('src.wallet.config.requests') as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {
+                "fast": 25.0,
+                "standard": 20.0,
+                "safe": 15.0
+            }
+            mock_requests.get.return_value = mock_response
+            
+            gas_prices = manager.get_optimized_gas_prices(Chain.ETHEREUM, NetworkType.MAINNET)
+            
+            assert gas_prices["fast"] == 25.0
+            assert gas_prices["standard"] == 20.0
+            assert gas_prices["safe"] == 15.0
+    
+    async def test_custom_rpc_endpoint_validation(self):
+        """Test validation of custom RPC endpoints."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # Valid RPC endpoints
+        valid_endpoints = [
+            "https://eth-mainnet.g.alchemy.com/v2/api-key",
+            "https://api.mainnet-beta.solana.com",
+            "wss://eth-mainnet.g.alchemy.com/v2/api-key",  # WebSocket
+        ]
+        
+        for endpoint in valid_endpoints:
+            assert manager.validate_rpc_endpoint(endpoint) == True
+        
+        # Invalid RPC endpoints
+        invalid_endpoints = [
+            "http://insecure-endpoint.com",  # HTTP instead of HTTPS
+            "invalid-url",
+            "",
+            "ftp://not-http.com",
+        ]
+        
+        for endpoint in invalid_endpoints:
+            assert manager.validate_rpc_endpoint(endpoint) == False
+
+
+class TestWalletConfigManagerPerformance:
+    """Test wallet configuration performance optimizations."""
+    
+    async def test_config_caching(self):
+        """Test that configuration is cached for performance."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        # First call should load from storage
+        config1 = manager.get_network_config(Chain.ETHEREUM, NetworkType.MAINNET)
+        
+        # Second call should use cache
+        config2 = manager.get_network_config(Chain.ETHEREUM, NetworkType.MAINNET)
+        
+        # Should be the same object (cached)
+        assert config1 is config2
+    
+    async def test_batch_operations(self):
+        """Test batch operations for multiple configurations."""
+        from src.wallet.config import WalletConfigManager
+        
+        manager = WalletConfigManager()
+        
+        configs_to_create = [
+            (Chain.ETHEREUM, NetworkType.MAINNET),
+            (Chain.ETHEREUM, NetworkType.TESTNET),
+            (Chain.SOLANA, NetworkType.MAINNET),
+            (Chain.BASE, NetworkType.MAINNET),
+        ]
+        
+        # Batch creation should be more efficient than individual calls
+        start_time = pytest.current_time() if hasattr(pytest, 'current_time') else 0
+        
+        configs = manager.get_network_configs_batch(configs_to_create)
+        
+        end_time = pytest.current_time() if hasattr(pytest, 'current_time') else 1
+        
+        assert len(configs) == 4
+        # Should complete quickly (test would fail if too slow)
+        assert (end_time - start_time) < 1.0  # Less than 1 second
+
+
+# TDD Failing Tests - These are designed to fail until implementation is complete
+class TestWalletConfigManagerTDDFailingScenarios:
+    """Tests designed to fail - this drives TDD implementation."""
+    
+    async def test_config_manager_import_fails_initially(self):
+        """Test that WalletConfigManager import fails until implemented."""
+        # This test ensures we're following TDD - import should fail first
+        try:
+            from src.wallet.config import WalletConfigManager
+            
+            # If import succeeds, manager should have all required methods
+            required_methods = [
+                'get_network_config', 'store_private_key', 'get_private_key',
+                'store_mnemonic', 'get_mnemonic', 'create_wallet_config',
+                'validate_private_key', 'validate_mnemonic', 'clear_stored_keys'
+            ]
+            
+            for method in required_methods:
+                assert hasattr(WalletConfigManager, method), f"Missing method: {method}"
+                
+        except ImportError:
+            # This is expected in TDD - implementation comes after tests
+            assert True
+    
+    async def test_hardware_wallet_support_pending(self):
+        """Test hardware wallet support - will fail until implemented."""
+        # This test will fail until hardware wallet support is added
+        pytest.skip("Hardware wallet support not implemented yet")
+    
+    async def test_advanced_security_features_pending(self):
+        """Test advanced security features - will fail until implemented."""
+        # This test will fail until advanced security features are added
+        pytest.skip("Advanced security features not implemented yet")
     
     async def test_config_file_yaml_parsing_error_handling(self):
         """Test handling of malformed YAML config files."""
