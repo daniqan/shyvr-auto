@@ -21,6 +21,7 @@ class Chain(Enum):
     AVALANCHE = "avalanche"
     FANTOM = "fantom"
     OPTIMISM = "optimism"
+    HYPERLIQUID = "hyperliquid"
 
 
 class TradingMode(Enum):
