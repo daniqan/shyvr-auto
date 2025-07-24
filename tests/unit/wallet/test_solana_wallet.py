@@ -84,8 +84,9 @@ class TestSolanaWalletConnection:
             # Mock Keypair.from_bytes
             with patch('src.wallet.solana_wallet.Keypair') as mock_keypair:
                 mock_keypair_instance = Mock()
-                mock_keypair_instance.pubkey.return_value = Mock()
-                mock_keypair_instance.pubkey.return_value.__str__.return_value = "11111111111111111111111111111112"
+                mock_pubkey = Mock()
+                mock_pubkey.__str__ = Mock(return_value="11111111111111111111111111111112")
+                mock_keypair_instance.pubkey.return_value = mock_pubkey
                 mock_keypair.from_bytes.return_value = mock_keypair_instance
                 
                 # Mock base58 decode

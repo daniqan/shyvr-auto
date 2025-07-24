@@ -22,6 +22,7 @@ from solders.pubkey import Pubkey
 from solders.signature import Signature
 from spl.token.instructions import transfer_checked, TransferCheckedParams
 from spl.token.client import Token
+from spl.token import constants as spl_constants
 import json
 
 from .base import (
@@ -79,6 +80,63 @@ class SolanaWallet(WalletBase):
         # Solana uses lamports (1 SOL = 1e9 lamports)
         self.LAMPORTS_PER_SOL = 1_000_000_000
         
+    def _validate_cluster_url(self, rpc_url: str) -> None:
+        """
+        Validate Solana cluster URL format.
+        
+        Args:
+            rpc_url: RPC URL to validate
+            
+        Raises:
+            WalletConnectionError: If URL is invalid for Solana
+        """
+        valid_patterns = [
+            "mainnet-beta",
+            "devnet", 
+            "testnet",
+        ]
+        
+        # Check if URL contains a valid cluster pattern
+        if not any(pattern in rpc_url.lower() for pattern in valid_patterns):
+            # Allow localhost and custom URLs for development
+            if not ("localhost" in rpc_url or "127.0.0.1" in rpc_url or "custom" in rpc_url):
+                logger.warning(f"RPC URL may not be a valid Solana cluster: {rpc_url}")
+        
+        # Basic URL validation
+        if not rpc_url.startswith(("http://", "https://")):
+            raise WalletConnectionError(f"Invalid RPC URL format: {rpc_url}")
+    
+    def _parse_private_key(self, private_key: str) -> bytes:
+        """
+        Parse Solana private key from various formats.
+        
+        Args:
+            private_key: Private key in base58, hex, or other format
+            
+        Returns:
+            Private key as bytes
+            
+        Raises:
+            ValueError: If private key format is invalid
+        """
+        try:
+            # Remove common prefixes and whitespace
+            key = private_key.strip().replace('0x', '')
+            
+            # Try different formats
+            if len(key) == 88:  # Base58 encoded (typical Solana format)
+                return base58.b58decode(key)
+            elif len(key) == 128:  # Hex encoded (64 bytes as hex string)
+                return bytes.fromhex(key)
+            elif len(key) == 64:  # Could be 32-byte key as hex
+                return bytes.fromhex(key)
+            else:
+                # Try to decode as base58 anyway
+                return base58.b58decode(key)
+                
+        except Exception as e:
+            raise ValueError(f"Unable to parse private key format: {e}")
+        
     async def connect(self) -> bool:
         """
         Connect to Solana network and initialize wallet.
@@ -93,6 +151,9 @@ class SolanaWallet(WalletBase):
             # Initialize Solana RPC client
             if not self.config.rpc_url:
                 raise WalletConnectionError("RPC URL not configured")
+            
+            # Validate cluster based on RPC URL pattern
+            self._validate_cluster_url(self.config.rpc_url)
             
             self.client = AsyncClient(
                 self.config.rpc_url,
@@ -116,12 +177,7 @@ class SolanaWallet(WalletBase):
             
             if private_key:
                 try:
-                    # Solana private keys can be base58 encoded or raw bytes
-                    if len(private_key) == 88:  # Base58 encoded
-                        private_key_bytes = base58.b58decode(private_key)
-                    else:  # Assume hex
-                        private_key_bytes = bytes.fromhex(private_key.replace('0x', ''))
-                    
+                    private_key_bytes = self._parse_private_key(private_key)
                     self.keypair = Keypair.from_bytes(private_key_bytes)
                     self._wallet_address = str(self.keypair.pubkey())
                     logger.info(f"Loaded Solana keypair: {self._wallet_address}")
@@ -382,7 +438,7 @@ class SolanaWallet(WalletBase):
             # Create transfer instruction
             transfer_ix = transfer_checked(
                 TransferCheckedParams(
-                    program_id=spl.token.constants.TOKEN_PROGRAM_ID,
+                    program_id=spl_constants.TOKEN_PROGRAM_ID,
                     source=source_token_account,
                     mint=mint_pubkey,
                     dest=dest_token_account,
@@ -496,16 +552,25 @@ class SolanaWallet(WalletBase):
                     status=TransactionStatus.FAILED,
                     error_message=str(status_info.err)
                 )
-            elif status_info.confirmation_status == "confirmed" or status_info.confirmation_status == "finalized":
+            elif hasattr(status_info, 'confirmation_status'):
+                confirmation_status = getattr(status_info, 'confirmation_status', None)
+                if confirmation_status in ["confirmed", "finalized"]:
+                    return TransactionResult(
+                        transaction_hash=transaction_hash,
+                        status=TransactionStatus.CONFIRMED,
+                        block_number=getattr(status_info, 'slot', None)
+                    )
+                else:
+                    return TransactionResult(
+                        transaction_hash=transaction_hash,
+                        status=TransactionStatus.PENDING
+                    )
+            else:
+                # If no confirmation status, check if it exists without error
                 return TransactionResult(
                     transaction_hash=transaction_hash,
                     status=TransactionStatus.CONFIRMED,
-                    block_number=status_info.slot
-                )
-            else:
-                return TransactionResult(
-                    transaction_hash=transaction_hash,
-                    status=TransactionStatus.PENDING
+                    block_number=getattr(status_info, 'slot', None)
                 )
                 
         except Exception as e:
