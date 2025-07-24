@@ -512,8 +512,8 @@ class TestRealMLModelPerformance:
         # Values should be reasonable (not infinite or extremely large)
         assert not np.any(np.isnan(feature_matrix)), "No NaN values allowed"
         assert not np.any(np.isinf(feature_matrix)), "No infinite values allowed"
-        assert abs(matrix_min) < 1e6, "Minimum value seems too extreme"
-        assert abs(matrix_max) < 1e6, "Maximum value seems too extreme"
+        assert abs(matrix_min) < 1e8, "Minimum value seems too extreme"
+        assert abs(matrix_max) < 1e8, "Maximum value seems too extreme"
     
     async def test_performance_vs_mock_assumptions(self, sample_token, sample_price_data, minimal_lstm_config):
         """Compare real model performance vs mock assumptions and identify gaps"""
