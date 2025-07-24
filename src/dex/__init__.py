@@ -6,9 +6,9 @@ across multiple blockchain networks. It implements a pluggable architecture that
 seamless integration with different DEXs while maintaining a consistent API.
 
 Supported DEXs:
-- Jupiter (Solana) - Best routing and zero protocol fees
-- Hyperliquid (Multi-chain) - High-performance perpetuals
-- Uniswap V3 (Ethereum/Base) - Deep liquidity pools
+- Jupiter (Solana) - Best routing and zero protocol fees ✅
+- Hyperliquid (Multi-chain) - High-performance perpetuals ✅
+- Uniswap V3 (Ethereum/Base) - Concentrated liquidity pools ✅
 
 The module follows the established patterns from the wallet and discovery modules,
 providing async operations, comprehensive error handling, and production-ready

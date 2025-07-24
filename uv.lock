@@ -2629,6 +2629,7 @@ dependencies = [
     { name = "stable-baselines3" },
     { name = "structlog" },
     { name = "torch" },
+    { name = "uniswap-python" },
     { name = "uvicorn" },
     { name = "web3" },
 ]
@@ -2710,6 +2711,7 @@ requires-dist = [
     { name = "stable-baselines3", specifier = ">=2.6.0" },
     { name = "structlog", specifier = ">=23.0.0" },
     { name = "torch", specifier = ">=2.3.0" },
+    { name = "uniswap-python", specifier = ">=0.3.4" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "uvloop", marker = "extra == 'production'", specifier = ">=0.21.0" },
     { name = "web3", specifier = ">=6.0.0" },
@@ -3024,6 +3026,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/95/32/1a225d6164441be76
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/23/c7abc0ca0a1526a0774eca151daeb8de62ec457e77262b66b359c3c7679e/tzdata-2025.2-py2.py3-none-any.whl", hash = "sha256:1a403fada01ff9221ca8044d701868fa132215d84beb92242d9acd2147f667a8", size = 347839, upload-time = "2025-03-23T13:54:41.845Z" },
 ]
+
+[[package]]
+name = "uniswap-python"
+version = "0.3.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "web3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/ba/720f6bb32a7066ce6250b41ece0bce87f4f0db4f3be9e2c15e79e4938d3d/uniswap-python-0.3.4.tar.gz", hash = "sha256:aaaf7157891df38098c805898c552e951c0756ab31793151f9a82cef99ba677e", size = 13165, upload-time = "2019-09-09T18:32:48.91Z" }
 
 [[package]]
 name = "urllib3"
