@@ -541,8 +541,18 @@ class TestRPCTDDFailingScenarios:
             eth_wallet = EthereumWallet(eth_config)
             
             # Mock successful connections
-            with patch('src.wallet.ethereum_wallet.AsyncWeb3'):
-                with patch('src.wallet.ethereum_wallet.Account'):
+            with patch('src.wallet.ethereum_wallet.AsyncWeb3') as mock_web3:
+                mock_web3_instance = AsyncMock()
+                mock_web3.return_value = mock_web3_instance
+                mock_web3_instance.is_connected.return_value = True
+                mock_web3_instance.eth.chain_id = 11155111  # Sepolia testnet
+                mock_web3_instance.eth.get_block_number = AsyncMock(return_value=1000000)
+                
+                with patch('src.wallet.ethereum_wallet.Account') as mock_account:
+                    mock_account_instance = Mock()
+                    mock_account_instance.address = "0x742d35Cc6598C75327f9c5C3A3Cd9dF5e1b3BbAA"
+                    mock_account.from_key.return_value = mock_account_instance
+                    
                     # This will succeed when implementation is complete
                     success = await eth_wallet.connect()
                     assert success == True
