@@ -343,10 +343,10 @@ class WalletConfigManager:
         
         # Build RPC URL with API key if provided
         rpc_url = network_config.rpc_url
-        if api_key:
+        if api_key and api_key.strip():
             if not rpc_url.endswith('/'):
                 rpc_url += '/'
-            rpc_url += api_key
+            rpc_url += api_key.strip()
         
         return WalletConfig(
             chain=chain,
@@ -391,7 +391,12 @@ class WalletConfigManager:
         
         # Get other configuration from environment
         wallet_address = os.getenv(f"{chain_prefix}_{network_suffix}_WALLET_ADDRESS")
-        api_key = os.getenv(f"{chain_prefix}_API_KEY")
+        
+        # Try chain-specific API key first, then general Alchemy key
+        api_key = (
+            os.getenv(f"{chain_prefix}_API_KEY") or
+            os.getenv("ALCHEMY_API_KEY")
+        )
         
         return self.create_wallet_config(
             chain=chain,
