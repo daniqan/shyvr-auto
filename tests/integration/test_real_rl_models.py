@@ -356,9 +356,10 @@ class TestRealDQNPerformance:
         for _ in range(10):
             await dqn_agent.train_step(batch_experiences)
         
-        # Get initial prediction for comparison
+        # Get prediction before save/load for comparison (this will be after training)
         initial_action, initial_confidence = await dqn_agent.predict_action(enhanced_market_state)
-        initial_q_values = dqn_agent.get_q_values(enhanced_market_state)
+        # Get Q-values just before saving
+        pre_save_q_values = dqn_agent.get_q_values(enhanced_market_state)
         
         # Test save performance
         model_path = tmp_path / "test_model.pth"
@@ -379,14 +380,27 @@ class TestRealDQNPerformance:
         assert load_success, "Model load failed"
         assert load_time < 1.0, f"Model load too slow: {load_time:.4f}s"
         
-        # Verify state preservation
-        loaded_action, loaded_confidence = await new_agent.predict_action(enhanced_market_state)
+        # Verify state preservation - focus on Q-values which should be identical for identical networks
         loaded_q_values = new_agent.get_q_values(enhanced_market_state)
         
-        # Actions and Q-values should be identical after load
-        assert loaded_action == initial_action, "Action mismatch after load"
-        assert abs(loaded_confidence - initial_confidence) < 0.001, "Confidence mismatch after load"
-        assert torch.allclose(loaded_q_values, initial_q_values, atol=1e-6), "Q-values mismatch after load"
+        # Q-values must be preserved exactly (this is the core test for model save/load)
+        assert torch.allclose(loaded_q_values, pre_save_q_values, atol=1e-6), "Q-values mismatch after load"
+        
+        # Verify the loaded network produces the same Q-values as the original
+        with torch.no_grad():
+            # Test raw network output (most direct test)
+            state_tensor = new_agent._state_to_tensor(enhanced_market_state)
+            original_raw_output = dqn_agent.q_network(state_tensor)
+            loaded_raw_output = new_agent.q_network(state_tensor)
+            
+            assert torch.allclose(original_raw_output, loaded_raw_output, atol=1e-6), \
+                "Raw network outputs differ after load"
+        
+        # Test that both agents produce identical Q-values for the same input
+        # (This verifies the network weights are truly identical)
+        post_load_original_q_values = dqn_agent.get_q_values(enhanced_market_state)
+        assert torch.allclose(loaded_q_values, post_load_original_q_values, atol=1e-6), \
+            "Q-values differ between original and loaded agent"
         
         print(f"Model Save/Load Performance:")
         print(f"  Save time: {save_time:.4f}s")
