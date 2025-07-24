@@ -413,7 +413,8 @@ class TestSolanaWalletTransactionStatus:
     async def test_get_confirmed_transaction_status(self, connected_sol_wallet):
         """Test getting confirmed transaction status."""
         wallet = connected_sol_wallet
-        tx_hash = "signature123456789"
+        # Valid Solana signature format (base58 encoded, 88 characters)
+        tx_hash = "5" + "a" * 87  # Valid signature format similar to fixture format
         
         # Mock confirmed transaction status
         mock_status = Mock()
@@ -425,7 +426,11 @@ class TestSolanaWalletTransactionStatus:
         mock_response.value = [mock_status]
         wallet.client.get_signature_statuses.return_value = mock_response
         
-        result = await wallet.get_transaction_status(tx_hash)
+        # Mock Signature.from_string to avoid actual parsing
+        with patch('src.wallet.solana_wallet.Signature') as mock_signature:
+            mock_signature.from_string.return_value = Mock()
+            
+            result = await wallet.get_transaction_status(tx_hash)
         
         assert result.transaction_hash == tx_hash
         assert result.status == TransactionStatus.CONFIRMED
@@ -434,7 +439,8 @@ class TestSolanaWalletTransactionStatus:
     async def test_get_failed_transaction_status(self, connected_sol_wallet):
         """Test getting failed transaction status."""
         wallet = connected_sol_wallet
-        tx_hash = "signature123456789"
+        # Valid Solana signature format (base58 encoded, 88 characters)
+        tx_hash = "5" + "b" * 87  # Valid signature format
         
         # Mock failed transaction status
         mock_status = Mock()
@@ -445,7 +451,11 @@ class TestSolanaWalletTransactionStatus:
         mock_response.value = [mock_status]
         wallet.client.get_signature_statuses.return_value = mock_response
         
-        result = await wallet.get_transaction_status(tx_hash)
+        # Mock Signature.from_string to avoid actual parsing
+        with patch('src.wallet.solana_wallet.Signature') as mock_signature:
+            mock_signature.from_string.return_value = Mock()
+            
+            result = await wallet.get_transaction_status(tx_hash)
         
         assert result.transaction_hash == tx_hash
         assert result.status == TransactionStatus.FAILED
@@ -454,14 +464,19 @@ class TestSolanaWalletTransactionStatus:
     async def test_get_pending_transaction_status(self, connected_sol_wallet):
         """Test getting pending transaction status."""
         wallet = connected_sol_wallet
-        tx_hash = "signature123456789"
+        # Valid Solana signature format (base58 encoded, 88 characters)
+        tx_hash = "5" + "c" * 87  # Valid signature format
         
         # Mock pending transaction (no status info)
         mock_response = Mock()
         mock_response.value = [None]  # No status info means pending
         wallet.client.get_signature_statuses.return_value = mock_response
         
-        result = await wallet.get_transaction_status(tx_hash)
+        # Mock Signature.from_string to avoid actual parsing
+        with patch('src.wallet.solana_wallet.Signature') as mock_signature:
+            mock_signature.from_string.return_value = Mock()
+            
+            result = await wallet.get_transaction_status(tx_hash)
         
         assert result.transaction_hash == tx_hash
         assert result.status == TransactionStatus.PENDING

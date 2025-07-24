@@ -533,7 +533,17 @@ class SolanaWallet(WalletBase):
             raise WalletError("Wallet not connected")
         
         try:
-            signature = Signature.from_string(transaction_hash)
+            # Validate and create signature
+            try:
+                signature = Signature.from_string(transaction_hash)
+            except Exception as sig_error:
+                # Invalid signature format
+                logger.warning(f"Invalid signature format: {transaction_hash}")
+                return TransactionResult(
+                    transaction_hash=transaction_hash,
+                    status=TransactionStatus.FAILED,
+                    error_message=f"Invalid signature format: {sig_error}"
+                )
             
             # Get transaction status
             response = await self.client.get_signature_statuses([signature])
