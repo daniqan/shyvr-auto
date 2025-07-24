@@ -43,8 +43,11 @@ wallet:
 """
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
             f.write(config_content)
-            yield f.name
-        os.unlink(f.name)
+            f.flush()  # Ensure content is written to disk
+            temp_name = f.name
+        
+        yield temp_name
+        os.unlink(temp_name)
     
     async def test_config_manager_creation(self):
         """Test creating wallet config manager."""

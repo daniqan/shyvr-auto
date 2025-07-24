@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import yaml
 from cryptography.fernet import Fernet
 import keyring
+import keyring.errors
 
 from .base import WalletConfig, Chain, NetworkType, WalletError
 
@@ -128,7 +129,7 @@ class WalletConfigManager:
         if self._encryption_key is None:
             # Try to get existing key from keyring
             key_str = keyring.get_password("shyvr-wallet-encryption", "master_key")
-            if key_str:
+            if key_str and isinstance(key_str, str):
                 self._encryption_key = key_str.encode()
             else:
                 # Generate new key and store it
@@ -240,13 +241,26 @@ class WalletConfigManager:
             with open(config_path, 'r') as f:
                 config_data = yaml.safe_load(f)
             
+            if not config_data:
+                logger.warning(f"Empty config file: {config_path}")
+                return
+                
             wallet_config = config_data.get('wallet', {})
+            if not wallet_config:
+                logger.warning(f"No wallet configuration found in {config_path}")
+                return
             
             # Load custom network configurations
-            for chain_name, chain_data in wallet_config.get('networks', {}).items():
+            networks_config = wallet_config.get('networks', {})
+            if not networks_config:
+                logger.warning(f"No networks configuration found in {config_path}")
+                return
+                
+            for chain_name, chain_data in networks_config.items():
                 try:
                     chain = Chain(chain_name.lower())
-                    self._load_chain_config(chain, chain_data)
+                    if chain_data:  # Only load if chain_data is not None/empty
+                        self._load_chain_config(chain, chain_data)
                 except ValueError:
                     logger.warning(f"Unknown chain in config: {chain_name}")
                     
@@ -260,16 +274,52 @@ class WalletConfigManager:
             testnet_data = chain_data.get('testnet', {})
             devnet_data = chain_data.get('devnet', {})
             
-            mainnet = NetworkConfig(**mainnet_data) if mainnet_data else self._network_configs[chain].mainnet
-            testnet = NetworkConfig(**testnet_data) if testnet_data else self._network_configs[chain].testnet
-            devnet = NetworkConfig(**devnet_data) if devnet_data else self._network_configs[chain].devnet
+            # Get the default config for this chain
+            default_config = self._network_configs[chain]
+            
+            # Create network configs, merging custom data with defaults
+            if mainnet_data:
+                mainnet = NetworkConfig(
+                    rpc_url=mainnet_data.get('rpc_url', default_config.mainnet.rpc_url),
+                    chain_id=mainnet_data.get('chain_id', default_config.mainnet.chain_id),
+                    gas_price_gwei=mainnet_data.get('gas_price_gwei', default_config.mainnet.gas_price_gwei),
+                    max_gas_limit=mainnet_data.get('max_gas_limit', default_config.mainnet.max_gas_limit),
+                    block_explorer_url=mainnet_data.get('block_explorer_url', default_config.mainnet.block_explorer_url),
+                    timeout_seconds=mainnet_data.get('timeout_seconds', default_config.mainnet.timeout_seconds)
+                )
+            else:
+                mainnet = default_config.mainnet
+                
+            if testnet_data:
+                testnet = NetworkConfig(
+                    rpc_url=testnet_data.get('rpc_url', default_config.testnet.rpc_url),
+                    chain_id=testnet_data.get('chain_id', default_config.testnet.chain_id),
+                    gas_price_gwei=testnet_data.get('gas_price_gwei', default_config.testnet.gas_price_gwei),
+                    max_gas_limit=testnet_data.get('max_gas_limit', default_config.testnet.max_gas_limit),
+                    block_explorer_url=testnet_data.get('block_explorer_url', default_config.testnet.block_explorer_url),
+                    timeout_seconds=testnet_data.get('timeout_seconds', default_config.testnet.timeout_seconds)
+                )
+            else:
+                testnet = default_config.testnet
+                
+            if devnet_data and default_config.devnet:
+                devnet = NetworkConfig(
+                    rpc_url=devnet_data.get('rpc_url', default_config.devnet.rpc_url),
+                    chain_id=devnet_data.get('chain_id', default_config.devnet.chain_id),
+                    gas_price_gwei=devnet_data.get('gas_price_gwei', default_config.devnet.gas_price_gwei),
+                    max_gas_limit=devnet_data.get('max_gas_limit', default_config.devnet.max_gas_limit),
+                    block_explorer_url=devnet_data.get('block_explorer_url', default_config.devnet.block_explorer_url),
+                    timeout_seconds=devnet_data.get('timeout_seconds', default_config.devnet.timeout_seconds)
+                )
+            else:
+                devnet = default_config.devnet
             
             self._network_configs[chain] = ChainConfig(
                 mainnet=mainnet,
                 testnet=testnet,
                 devnet=devnet,
-                native_symbol=chain_data.get('native_symbol', self._network_configs[chain].native_symbol),
-                decimals=chain_data.get('decimals', self._network_configs[chain].decimals)
+                native_symbol=chain_data.get('native_symbol', default_config.native_symbol),
+                decimals=chain_data.get('decimals', default_config.decimals)
             )
             
         except Exception as e:
@@ -393,7 +443,12 @@ class WalletConfigManager:
         
         # Try to get private key from environment or keyring
         private_key = os.getenv(f"{chain_prefix}_{network_suffix}_PRIVATE_KEY")
-        if not private_key:
+        if private_key:
+            logger.warning(
+                f"Private key loaded from environment variable {chain_prefix}_{network_suffix}_PRIVATE_KEY. "
+                "This is a security risk in production environments."
+            )
+        else:
             private_key = self.get_private_key(chain, network)
         
         # Try to get mnemonic from environment or keyring
@@ -463,17 +518,17 @@ class WalletConfigManager:
             chain: Blockchain chain
             network: Network type
         """
-        private_key_id = f"{chain.value}_{network.value}_private_key"
+        private_key_id = f"{chain.value}_{network.value}_default_private_key"
         mnemonic_id = f"{chain.value}_{network.value}_mnemonic"
         
         try:
             keyring.delete_password("shyvr-rlte-wallets", private_key_id)
-        except keyring.errors.PasswordDeleteError:
+        except Exception:
             pass  # Key didn't exist
             
         try:
             keyring.delete_password("shyvr-rlte-wallets", mnemonic_id)
-        except keyring.errors.PasswordDeleteError:
+        except Exception:
             pass  # Key didn't exist
             
         logger.info(f"Cleared stored keys for {chain.value} {network.value}")
