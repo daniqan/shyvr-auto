@@ -76,13 +76,17 @@ class DQNNetwork(nn.Module):
 class DQNTradingAgent(RLAgentBase):
     """DQN-based trading agent with experience replay and target networks"""
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, use_enhanced_features: bool = False):
         super().__init__(config)
         
         self.logger = structlog.get_logger().bind(agent=self.__class__.__name__)
         
         # Network architecture
-        self.input_size = MarketState.get_feature_size()
+        self.use_enhanced_features = use_enhanced_features
+        if use_enhanced_features:
+            self.input_size = MarketState.get_enhanced_feature_size()
+        else:
+            self.input_size = MarketState.get_feature_size()
         self.output_size = len(TradeAction)
         
         # Create main and target networks
@@ -316,7 +320,12 @@ class DQNTradingAgent(RLAgentBase):
     
     def _state_to_tensor(self, state: MarketState) -> torch.Tensor:
         """Convert market state to tensor"""
-        state_vector = state.to_vector()
+        if self.use_enhanced_features and hasattr(state, 'to_feature_vector'):
+            # Use enhanced feature vector if available
+            state_vector = state.to_feature_vector()
+        else:
+            # Use standard feature vector
+            state_vector = state.to_vector()
         return torch.FloatTensor(state_vector).unsqueeze(0)
     
     def _action_to_index(self, action: TradeAction) -> int:

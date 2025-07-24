@@ -137,6 +137,11 @@ class MarketState:
     def get_feature_size(cls) -> int:
         """Get the size of the feature vector"""
         return 19  # Number of features in to_vector()
+    
+    @classmethod 
+    def get_enhanced_feature_size(cls) -> int:
+        """Get the size of ML-enhanced feature vector"""
+        return 25  # Base features (19) + ML features (6)
 
 
 @dataclass
