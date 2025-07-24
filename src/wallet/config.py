@@ -297,7 +297,11 @@ class WalletConfigManager:
         if network == NetworkType.MAINNET:
             return chain_config.mainnet
         elif network == NetworkType.TESTNET:
-            return chain_config.testnet
+            # For Solana, TESTNET maps to devnet (common practice)
+            if chain == Chain.SOLANA and chain_config.devnet:
+                return chain_config.devnet
+            else:
+                return chain_config.testnet
         elif network == NetworkType.DEVNET and chain_config.devnet:
             return chain_config.devnet
         else:
@@ -310,7 +314,8 @@ class WalletConfigManager:
         private_key: Optional[str] = None,
         mnemonic: Optional[str] = None,
         wallet_address: Optional[str] = None,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        rpc_url: Optional[str] = None
     ) -> WalletConfig:
         """
         Create wallet configuration with network settings.
@@ -322,6 +327,7 @@ class WalletConfigManager:
             mnemonic: Mnemonic phrase (will be stored securely if provided)
             wallet_address: Wallet address for read-only access
             api_key: API key for RPC services
+            rpc_url: Custom RPC URL (overrides default network RPC URL)
             
         Returns:
             WalletConfig object
@@ -341,12 +347,14 @@ class WalletConfigManager:
             self.store_mnemonic(chain, network, mnemonic)
             mnemonic = None  # Don't keep in memory
         
-        # Build RPC URL with API key if provided
-        rpc_url = network_config.rpc_url
-        if api_key and api_key.strip():
-            if not rpc_url.endswith('/'):
-                rpc_url += '/'
-            rpc_url += api_key.strip()
+        # Use custom RPC URL if provided, otherwise use network default
+        final_rpc_url = rpc_url if rpc_url else network_config.rpc_url
+        
+        # Build RPC URL with API key if provided (only for non-custom URLs)
+        if api_key and api_key.strip() and not rpc_url:
+            if not final_rpc_url.endswith('/'):
+                final_rpc_url += '/'
+            final_rpc_url += api_key.strip()
         
         return WalletConfig(
             chain=chain,
@@ -354,7 +362,7 @@ class WalletConfigManager:
             private_key=private_key,
             mnemonic=mnemonic,
             wallet_address=wallet_address,
-            rpc_url=rpc_url,
+            rpc_url=final_rpc_url,
             api_key=api_key,
             gas_price_gwei=network_config.gas_price_gwei,
             max_gas_limit=network_config.max_gas_limit,
