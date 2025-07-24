@@ -323,10 +323,10 @@ class JupiterDEXClient(DEXBase):
                     "inAmount": str(int(quote.input_amount)),
                     "outAmount": str(int(quote.output_amount)),
                     "otherAmountThreshold": str(int(quote.output_amount * 
-                                                  (1 - quote.slippage_bps / 10000))),
+                                                  (Decimal('1') - Decimal(quote.slippage_bps) / Decimal('10000')))),
                     "swapMode": "ExactIn",
                     "slippageBps": quote.slippage_bps,
-                    "priceImpactPct": str(quote.price_impact_bps / 10000)
+                    "priceImpactPct": str(Decimal(quote.price_impact_bps) / Decimal('10000'))
                 },
                 "userPublicKey": wallet_address,
                 "wrapAndUnwrapSol": True,
