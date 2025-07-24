@@ -106,17 +106,23 @@ dex:
     enable_price_impact_warnings: true
     max_price_impact_bps: 1000          # 10% maximum price impact
     
-  # Hyperliquid DEX (Multi-chain) - Future implementation
+  # Hyperliquid DEX - Perpetual futures trading with order book
   hyperliquid:
-    enabled: false                      # Will be enabled in future phases
-    chain: "ethereum"                   # Primary chain, supports multi-chain
-    api_key: "${HYPERLIQUID_API_KEY:}"
+    enabled: true                       # Now implemented and ready for use
+    chain: "hyperliquid"               # Hyperliquid's own L1 blockchain
+    api_key: "${HYPERLIQUID_API_KEY:}" # Required for authenticated trading
+    wallet_address: "${HYPERLIQUID_WALLET_ADDRESS:}" # Wallet address for trading
     base_url: "https://api.hyperliquid.xyz"
-    max_slippage_bps: 30               # 0.3% maximum slippage
+    testnet_url: "https://api.hyperliquid-testnet.xyz"
+    max_slippage_bps: 100              # 1.0% maximum slippage (higher for futures)
     timeout_seconds: 30
-    rate_limit_per_second: 20
+    rate_limit_per_second: 5           # Conservative rate limit for authenticated API
     enable_price_impact_warnings: true
     max_price_impact_bps: 500          # 5% maximum price impact
+    # Perpetual futures specific settings
+    max_leverage: 50                   # Maximum leverage allowed
+    default_leverage: 1                # Default leverage for new positions
+    funding_rate_threshold: 0.01       # Alert if funding rate exceeds 1%
     
   # Uniswap V3 (Ethereum/Base) - Future implementation  
   uniswap_v3:
