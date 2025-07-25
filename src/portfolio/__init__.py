@@ -50,9 +50,21 @@ except ImportError:
     PnLCalculator = None
 
 try:
-    from .portfolio_manager import PortfolioManager
+    from .portfolio_manager import (
+        PortfolioManager, 
+        PortfolioCreateResult, 
+        PortfolioOperationResult,
+        DrawdownRiskResult,
+        RebalancingCheck,
+        RebalancingSuggestions
+    )
 except ImportError:
     PortfolioManager = None
+    PortfolioCreateResult = None
+    PortfolioOperationResult = None
+    DrawdownRiskResult = None
+    RebalancingCheck = None
+    RebalancingSuggestions = None
 
 try:
     from .risk_manager import RiskManager
@@ -89,7 +101,14 @@ if PositionTracker is not None:
 if PnLCalculator is not None:
     __all__.append("PnLCalculator")
 if PortfolioManager is not None:
-    __all__.append("PortfolioManager")
+    __all__.extend([
+        "PortfolioManager", 
+        "PortfolioCreateResult", 
+        "PortfolioOperationResult",
+        "DrawdownRiskResult",
+        "RebalancingCheck",
+        "RebalancingSuggestions"
+    ])
 if RiskManager is not None:
     __all__.append("RiskManager")
 if TransactionHistory is not None:
