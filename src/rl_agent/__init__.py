@@ -18,6 +18,13 @@ from .training_pipeline import (
     TrainingConfig, TrainingMetrics, DQNTrainingPipeline,
     TrainingPipelineError, HyperparameterSearch
 )
+from .trading_environment import (
+    TradingEnvironment, Portfolio, EnvironmentConfig, TradingEnvironmentError
+)
+from .experience_replay import (
+    ExperienceReplayBuffer, PrioritizedExperienceReplayBuffer, 
+    Experience, ReplayBufferConfig, ExperienceReplayError
+)
 
 __all__ = [
     # Base classes and enums
@@ -44,5 +51,18 @@ __all__ = [
     'TrainingMetrics',
     'DQNTrainingPipeline',
     'TrainingPipelineError',
-    'HyperparameterSearch'
+    'HyperparameterSearch',
+    
+    # Trading environment
+    'TradingEnvironment',
+    'Portfolio',
+    'EnvironmentConfig',
+    'TradingEnvironmentError',
+    
+    # Experience replay
+    'ExperienceReplayBuffer',
+    'PrioritizedExperienceReplayBuffer',
+    'Experience',
+    'ReplayBufferConfig',
+    'ExperienceReplayError'
 ]
