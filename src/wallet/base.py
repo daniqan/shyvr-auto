@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Any, Union
 import logging
 
+from src.utils.base import Chain
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,14 +22,6 @@ class NetworkType(Enum):
     MAINNET = "mainnet"
     TESTNET = "testnet"
     DEVNET = "devnet"
-
-
-class Chain(Enum):
-    """Supported blockchain networks."""
-    ETHEREUM = "ethereum"
-    SOLANA = "solana"
-    BASE = "base"
-    POLYGON = "polygon"
 
 
 class TransactionStatus(Enum):
