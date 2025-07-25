@@ -728,6 +728,313 @@ class AnalysisMode(BaseAnalysisMode):
         
         return optimization_results
     
+    # Performance Reporting Methods
+    async def generate_performance_report(
+        self,
+        performance_data: Dict[str, Any],
+        report_type: str = "comprehensive"
+    ) -> Dict[str, Any]:
+        """Generate comprehensive performance report."""
+        returns = performance_data.get("returns", [])
+        positions = performance_data.get("positions", [])
+        trades = performance_data.get("trades", [])
+        
+        # Summary metrics
+        total_return = sum(returns) if returns else 0
+        avg_return = total_return / len(returns) if returns else 0
+        volatility = np.std(returns) if returns else 0
+        
+        summary_metrics = {
+            "total_return": total_return,
+            "average_return": avg_return,
+            "volatility": volatility,
+            "number_of_periods": len(returns),
+            "total_positions": len(positions),
+            "total_trades": len(trades)
+        }
+        
+        # Risk metrics
+        risk_metrics = await self.calculate_risk_adjusted_metrics(
+            returns=returns,
+            benchmark_returns=[0.01] * len(returns),  # Mock benchmark
+            risk_free_rate=0.02
+        )
+        
+        # Trade analysis
+        winning_trades = [t for t in trades if t.get("pnl", 0) > 0]
+        losing_trades = [t for t in trades if t.get("pnl", 0) <= 0]
+        
+        trade_analysis = {
+            "total_trades": len(trades),
+            "winning_trades": len(winning_trades),
+            "losing_trades": len(losing_trades),
+            "win_rate": len(winning_trades) / len(trades) if trades else 0,
+            "average_win": np.mean([t.get("pnl", 0) for t in winning_trades]) if winning_trades else 0,
+            "average_loss": np.mean([t.get("pnl", 0) for t in losing_trades]) if losing_trades else 0,
+            "largest_win": max([t.get("pnl", 0) for t in winning_trades]) if winning_trades else 0,
+            "largest_loss": min([t.get("pnl", 0) for t in losing_trades]) if losing_trades else 0
+        }
+        
+        # Position analysis
+        open_positions = [p for p in positions if p.get("pnl", 0) != 0]
+        
+        position_analysis = {
+            "total_positions": len(positions),
+            "open_positions": len(open_positions),
+            "average_position_pnl": np.mean([p.get("pnl", 0) for p in positions]) if positions else 0,
+            "position_concentration": self._calculate_position_concentration(positions),
+            "sector_exposure": self._calculate_sector_exposure(positions)
+        }
+        
+        # Benchmark comparison
+        benchmark_comparison = await self.compare_to_benchmarks(
+            portfolio_returns=returns,
+            benchmarks={
+                "BTC": [0.01] * len(returns),
+                "SPY": [0.005] * len(returns)
+            }
+        )
+        
+        performance_report = {
+            "report_type": report_type,
+            "generated_at": datetime.now().isoformat(),
+            "summary_metrics": summary_metrics,
+            "risk_metrics": risk_metrics,
+            "trade_analysis": trade_analysis,
+            "position_analysis": position_analysis,
+            "benchmark_comparison": benchmark_comparison
+        }
+        
+        self.logger.info(
+            "Generated performance report",
+            report_type=report_type,
+            total_return=total_return,
+            trades=len(trades)
+        )
+        
+        return performance_report
+    
+    async def calculate_risk_adjusted_metrics(
+        self,
+        returns: List[float],
+        benchmark_returns: List[float],
+        risk_free_rate: float = 0.02
+    ) -> Dict[str, float]:
+        """Calculate risk-adjusted performance metrics."""
+        if not returns:
+            return {
+                "sharpe_ratio": 0.0,
+                "sortino_ratio": 0.0,
+                "information_ratio": 0.0,
+                "maximum_drawdown": 0.0,
+                "value_at_risk": 0.0,
+                "conditional_var": 0.0
+            }
+        
+        returns_array = np.array(returns)
+        benchmark_array = np.array(benchmark_returns[:len(returns)])
+        
+        # Sharpe ratio
+        excess_returns = returns_array - (risk_free_rate / 252)  # Daily risk-free rate
+        sharpe_ratio = np.mean(excess_returns) / np.std(returns_array) * np.sqrt(252) if np.std(returns_array) > 0 else 0
+        
+        # Sortino ratio
+        downside_returns = returns_array[returns_array < 0]
+        downside_deviation = np.std(downside_returns) if len(downside_returns) > 0 else 0
+        sortino_ratio = np.mean(excess_returns) / downside_deviation * np.sqrt(252) if downside_deviation > 0 else 0
+        
+        # Information ratio
+        tracking_error = np.std(returns_array - benchmark_array) if len(benchmark_array) > 0 else 0
+        information_ratio = np.mean(returns_array - benchmark_array) / tracking_error if tracking_error > 0 else 0
+        
+        # Maximum drawdown
+        cumulative_returns = np.cumprod(1 + returns_array)
+        running_max = np.maximum.accumulate(cumulative_returns)
+        drawdown = (cumulative_returns - running_max) / running_max
+        maximum_drawdown = np.min(drawdown)
+        
+        # Value at Risk (95% confidence)
+        value_at_risk = np.percentile(returns_array, 5)
+        
+        # Conditional VaR (Expected Shortfall)
+        conditional_var = np.mean(returns_array[returns_array <= value_at_risk])
+        
+        risk_metrics = {
+            "sharpe_ratio": float(sharpe_ratio),
+            "sortino_ratio": float(sortino_ratio),
+            "information_ratio": float(information_ratio),
+            "maximum_drawdown": float(maximum_drawdown),
+            "value_at_risk": float(value_at_risk),
+            "conditional_var": float(conditional_var)
+        }
+        
+        self.logger.info(
+            "Calculated risk-adjusted metrics",
+            sharpe=sharpe_ratio,
+            sortino=sortino_ratio,
+            max_dd=maximum_drawdown
+        )
+        
+        return risk_metrics
+    
+    async def compare_to_benchmarks(
+        self,
+        portfolio_returns: List[float],
+        benchmarks: Dict[str, List[float]]
+    ) -> Dict[str, Any]:
+        """Compare performance to benchmarks."""
+        if not portfolio_returns:
+            return {"error": "No portfolio returns provided"}
+        
+        portfolio_array = np.array(portfolio_returns)
+        comparison_results = {}
+        
+        for benchmark_name, benchmark_returns in benchmarks.items():
+            benchmark_array = np.array(benchmark_returns[:len(portfolio_returns)])
+            
+            if len(benchmark_array) == 0:
+                continue
+            
+            # Relative performance
+            portfolio_total = np.prod(1 + portfolio_array) - 1
+            benchmark_total = np.prod(1 + benchmark_array) - 1
+            relative_performance = portfolio_total - benchmark_total
+            
+            # Tracking error
+            tracking_error = np.std(portfolio_array - benchmark_array)
+            
+            # Beta analysis
+            if np.var(benchmark_array) > 0:
+                beta = np.cov(portfolio_array, benchmark_array)[0, 1] / np.var(benchmark_array)
+            else:
+                beta = 1.0
+            
+            # Alpha generation
+            risk_free_rate = 0.02 / 252  # Daily risk-free rate
+            expected_return = risk_free_rate + beta * (np.mean(benchmark_array) - risk_free_rate)
+            alpha = np.mean(portfolio_array) - expected_return
+            
+            comparison_results[benchmark_name] = {
+                "relative_performance": float(relative_performance),
+                "tracking_error": float(tracking_error),
+                "beta": float(beta),
+                "alpha": float(alpha),
+                "correlation": float(np.corrcoef(portfolio_array, benchmark_array)[0, 1])
+            }
+        
+        self.logger.info(
+            "Completed benchmark comparison",
+            benchmarks=list(benchmarks.keys()),
+            portfolio_return=float(np.prod(1 + portfolio_array) - 1)
+        )
+        
+        return comparison_results
+    
+    async def generate_periodic_reports(
+        self,
+        periods: List[str],
+        start_date: datetime,
+        end_date: datetime
+    ) -> Dict[str, Dict[str, Any]]:
+        """Generate periodic performance reports."""
+        periodic_reports = {}
+        
+        for period in periods:
+            # Generate mock data for each period
+            if period == "daily":
+                num_periods = (end_date - start_date).days
+                returns = [np.random.normal(0.001, 0.02) for _ in range(num_periods)]
+            elif period == "weekly":
+                num_periods = (end_date - start_date).days // 7
+                returns = [np.random.normal(0.005, 0.05) for _ in range(num_periods)]
+            elif period == "monthly":
+                num_periods = (end_date - start_date).days // 30
+                returns = [np.random.normal(0.02, 0.08) for _ in range(num_periods)]
+            else:
+                returns = []
+            
+            if returns:
+                period_return = np.prod(1 + np.array(returns)) - 1
+                volatility = np.std(returns)
+                
+                # Mock best/worst performers
+                best_performers = [
+                    {"symbol": "BTC", "return": max(returns)},
+                    {"symbol": "ETH", "return": sorted(returns, reverse=True)[1] if len(returns) > 1 else 0}
+                ]
+                
+                worst_performers = [
+                    {"symbol": "DOGE", "return": min(returns)},
+                    {"symbol": "SHIB", "return": sorted(returns)[1] if len(returns) > 1 else 0}
+                ]
+                
+                periodic_reports[period] = {
+                    "period_return": float(period_return),
+                    "volatility": float(volatility),
+                    "number_of_periods": len(returns),
+                    "best_performers": best_performers,
+                    "worst_performers": worst_performers,
+                    "period_start": start_date.isoformat(),
+                    "period_end": end_date.isoformat()
+                }
+            else:
+                periodic_reports[period] = {
+                    "error": f"No data available for {period} period"
+                }
+        
+        self.logger.info(
+            "Generated periodic reports",
+            periods=periods,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat()
+        )
+        
+        return periodic_reports
+    
+    def _calculate_position_concentration(self, positions: List[Dict[str, Any]]) -> float:
+        """Calculate position concentration (Herfindahl index)."""
+        if not positions:
+            return 0.0
+        
+        total_value = sum(abs(p.get("size", 0)) for p in positions)
+        if total_value == 0:
+            return 0.0
+        
+        # Calculate Herfindahl index
+        weights = [abs(p.get("size", 0)) / total_value for p in positions]
+        herfindahl_index = sum(w**2 for w in weights)
+        
+        return float(herfindahl_index)
+    
+    def _calculate_sector_exposure(self, positions: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Calculate sector exposure from positions."""
+        sector_exposure = {}
+        total_value = sum(abs(p.get("size", 0)) for p in positions)
+        
+        if total_value == 0:
+            return sector_exposure
+        
+        # Mock sector classification
+        for position in positions:
+            symbol = position.get("symbol", "UNKNOWN")
+            
+            # Simple sector classification based on symbol
+            if "BTC" in symbol:
+                sector = "Bitcoin"
+            elif "ETH" in symbol:
+                sector = "Ethereum"
+            elif symbol in ["SOL", "SOLANA"]:
+                sector = "Solana"
+            else:
+                sector = "Other"
+            
+            if sector not in sector_exposure:
+                sector_exposure[sector] = 0.0
+            
+            sector_exposure[sector] += abs(position.get("size", 0)) / total_value
+        
+        return {k: float(v) for k, v in sector_exposure.items()}
+    
     def get_memory_usage(self) -> int:
         """Get current memory usage estimate in bytes."""
         # Simple memory usage estimation
