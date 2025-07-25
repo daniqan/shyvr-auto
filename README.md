@@ -698,6 +698,273 @@ graph TB
 
 The architecture ensures **sub-second decision making**, **comprehensive safety controls**, and **scalable microservices deployment** while maintaining **complete non-custodial security** for user funds.
 
+## 🔄 System Process Flow
+
+The following diagram illustrates the complete end-to-end trading process flow, from token discovery through execution and continuous learning. This operational flow shows how the system processes trading opportunities, makes decisions, executes trades, and continuously improves through feedback loops.
+
+```mermaid
+flowchart TD
+    %% Entry Points
+    START([System Startup]) --> MODE_SELECT{Mode Selection}
+    EXTERNAL_TRIGGER([External Trigger<br/>New Token/Market Event]) --> TOKEN_DISCOVERY
+    SCHEDULED_SCAN([Scheduled Scan]) --> TOKEN_DISCOVERY
+    USER_REQUEST([User Request<br/>Via Telegram]) --> MODE_SELECT
+
+    %% Mode Selection
+    MODE_SELECT --> ANALYSIS_FLOW[Analysis Mode Flow]
+    MODE_SELECT --> SIMULATION_FLOW[Simulation Mode Flow]
+    MODE_SELECT --> LIVE_FLOW[Live Trading Mode Flow]
+
+    %% Token Discovery Process
+    subgraph "🔍 Token Discovery Process"
+        TOKEN_DISCOVERY[Multi-Chain Token Discovery] --> BASIC_FILTER{Basic Token Filter<br/>Age, Liquidity, Volume}
+        BASIC_FILTER -->|Pass| PRELIMINARY_SCAN[Preliminary Security Scan]
+        BASIC_FILTER -->|Fail| DISCARD_TOKEN[Discard Token<br/>Log Reason]
+        PRELIMINARY_SCAN --> HONEYPOT_CHECK{Honeypot Detection}
+        HONEYPOT_CHECK -->|Safe| TOKEN_QUEUE[Add to Evaluation Queue]
+        HONEYPOT_CHECK -->|Unsafe| BLACKLIST[Add to Blacklist<br/>Alert System]
+    end
+
+    %% Fundamental Analysis
+    subgraph "📊 Fundamental Analysis Pipeline"
+        TOKEN_QUEUE --> PARALLEL_ANALYSIS[Parallel Analysis Execution]
+        PARALLEL_ANALYSIS --> SECURITY_ANALYSIS[Security Evaluation<br/>Contract Analysis]
+        PARALLEL_ANALYSIS --> LIQUIDITY_ANALYSIS[Liquidity Assessment<br/>DEX Pool Analysis]
+        PARALLEL_ANALYSIS --> HOLDER_ANALYSIS[Holder Distribution<br/>Whale Detection]
+        PARALLEL_ANALYSIS --> SOCIAL_ANALYSIS[Social Sentiment<br/>Community Analysis]
+        
+        SECURITY_ANALYSIS --> FUNDAMENTAL_SCORE[Compute Fundamental Score]
+        LIQUIDITY_ANALYSIS --> FUNDAMENTAL_SCORE
+        HOLDER_ANALYSIS --> FUNDAMENTAL_SCORE
+        SOCIAL_ANALYSIS --> FUNDAMENTAL_SCORE
+    end
+
+    %% ML Analysis Pipeline
+    subgraph "🧠 ML Analysis & Prediction"
+        FUNDAMENTAL_SCORE --> FEATURE_EXTRACTION[Technical Feature Extraction<br/>17 Indicators + Market Context]
+        FEATURE_EXTRACTION --> ML_CACHE_CHECK{ML Prediction Cache<br/>5min TTL}
+        ML_CACHE_CHECK -->|Hit| CACHED_PREDICTION[Use Cached Prediction]
+        ML_CACHE_CHECK -->|Miss| ML_ENSEMBLE[ML Ensemble Prediction]
+        
+        ML_ENSEMBLE --> LSTM_PREDICTION[LSTM Neural Network<br/>1h, 4h, 24h Forecasts]
+        LSTM_PREDICTION --> CONFIDENCE_CALC[Prediction Confidence<br/>Model Agreement Score]
+        CONFIDENCE_CALC --> ML_CACHE_STORE[Store in Cache]
+        ML_CACHE_STORE --> ML_PREDICTION_READY[ML Predictions Ready]
+        CACHED_PREDICTION --> ML_PREDICTION_READY
+    end
+
+    %% ML-RL Integration & Decision
+    subgraph "🤖 RL Decision Engine"
+        ML_PREDICTION_READY --> ML_RL_INTEGRATION[ML-RL State Integration<br/>25+ Feature Vector]
+        FUNDAMENTAL_SCORE --> ML_RL_INTEGRATION
+        
+        ML_RL_INTEGRATION --> MARKET_STATE_VECTOR[Enhanced Market State<br/>ML + Fundamental + Technical]
+        MARKET_STATE_VECTOR --> DQN_INFERENCE[DQN Neural Network<br/>Action Selection]
+        DQN_INFERENCE --> ACTION_CONFIDENCE[Action Confidence<br/>Q-Value Analysis]
+        ACTION_CONFIDENCE --> RL_DECISION[RL Trading Decision<br/>BUY/SELL/HOLD/STRONG_*]
+    end
+
+    %% Risk Assessment & Safety Checks
+    subgraph "🛡️ Risk Assessment & Safety"
+        RL_DECISION --> RISK_EVALUATION{Risk Assessment Gate}
+        RISK_EVALUATION --> POSITION_SIZE_CALC[Position Size Calculation<br/>Kelly Criterion + Risk Limits]
+        RISK_EVALUATION --> PORTFOLIO_RISK_CHECK{Portfolio Risk Check<br/>Correlation + Exposure}
+        RISK_EVALUATION --> MARKET_CONDITIONS{Market Conditions<br/>Volatility + Sentiment}
+        
+        POSITION_SIZE_CALC --> FINAL_RISK_SCORE[Final Risk Score]
+        PORTFOLIO_RISK_CHECK --> FINAL_RISK_SCORE
+        MARKET_CONDITIONS --> FINAL_RISK_SCORE
+        
+        FINAL_RISK_SCORE --> SAFETY_GATE{Safety Gate<br/>Risk Tolerance Check}
+        SAFETY_GATE -->|Pass| TRADE_APPROVAL[Trade Approved]
+        SAFETY_GATE -->|Fail| RISK_REJECTION[Trade Rejected<br/>Log Risk Reason]
+    end
+
+    %% Mode-Specific Execution Paths
+    subgraph "📈 Analysis Mode Execution"
+        ANALYSIS_FLOW --> TOKEN_DISCOVERY
+        TRADE_APPROVAL --> ANALYSIS_REPORT[Generate Analysis Report<br/>Recommendation + Confidence]
+        ANALYSIS_REPORT --> ANALYSIS_STORAGE[Store Analysis Results]
+        ANALYSIS_STORAGE --> ANALYSIS_NOTIFICATION[Send Analysis Notification]
+        ANALYSIS_NOTIFICATION --> ANALYSIS_COMPLETE[Analysis Complete]
+    end
+
+    subgraph "📊 Simulation Mode Execution"
+        SIMULATION_FLOW --> TOKEN_DISCOVERY
+        TRADE_APPROVAL --> VIRTUAL_TRADE_PREP[Virtual Trade Preparation<br/>Simulated Slippage + Fees]
+        VIRTUAL_TRADE_PREP --> VIRTUAL_EXECUTION[Execute Virtual Trade<br/>Update Virtual Portfolio]
+        VIRTUAL_EXECUTION --> VIRTUAL_PNL[Calculate Virtual P&L<br/>Performance Tracking]
+        VIRTUAL_PNL --> SIM_EXPERIENCE[Store RL Experience<br/>State-Action-Reward]
+        SIM_EXPERIENCE --> SIM_NOTIFICATION[Send Simulation Update]
+        SIM_NOTIFICATION --> SIM_COMPLETE[Simulation Complete]
+    end
+
+    subgraph "💰 Live Trading Execution"
+        LIVE_FLOW --> LIVE_SAFETY_CHECK{Live Trading Safety<br/>Additional Confirmations}
+        LIVE_SAFETY_CHECK -->|Approved| TOKEN_DISCOVERY
+        LIVE_SAFETY_CHECK -->|Denied| LIVE_REJECTED[Live Trading Denied<br/>Safety Override]
+        
+        TRADE_APPROVAL --> WALLET_PREPARATION[Wallet Preparation<br/>Key Validation + Balance]
+        WALLET_PREPARATION --> DEX_QUOTE_REQUEST[Request DEX Quotes<br/>Jupiter/Uniswap APIs]
+        DEX_QUOTE_REQUEST --> PRICE_IMPACT_ANALYSIS[Price Impact Analysis<br/>Slippage Assessment]
+        PRICE_IMPACT_ANALYSIS --> FINAL_TRADE_APPROVAL{Final Trade Approval<br/>Price + Impact Check}
+        
+        FINAL_TRADE_APPROVAL -->|Approved| TRANSACTION_BUILD[Build Transaction<br/>Optimal Route + Parameters]
+        FINAL_TRADE_APPROVAL -->|Rejected| EXECUTION_REJECTION[Execution Rejected<br/>Price/Impact Issues]
+        
+        TRANSACTION_BUILD --> TRANSACTION_SIGN[Sign Transaction<br/>Private Key Usage]
+        TRANSACTION_SIGN --> TRANSACTION_BROADCAST[Broadcast Transaction<br/>Submit to Network]
+        TRANSACTION_BROADCAST --> TX_CONFIRMATION[Transaction Confirmation<br/>Network Validation]
+        TX_CONFIRMATION --> TRADE_SETTLEMENT[Trade Settlement<br/>Update Real Portfolio]
+        TRADE_SETTLEMENT --> LIVE_PNL[Calculate Real P&L<br/>Performance Impact]
+        LIVE_PNL --> LIVE_EXPERIENCE[Store RL Experience<br/>Real Market Feedback]
+        LIVE_EXPERIENCE --> LIVE_NOTIFICATION[Send Trade Notification]
+        LIVE_NOTIFICATION --> LIVE_COMPLETE[Live Trade Complete]
+    end
+
+    %% Experience Collection & Learning
+    subgraph "📚 Experience Collection & Learning"
+        SIM_EXPERIENCE --> RL_EXPERIENCE_BUFFER[RL Experience Replay Buffer<br/>Prioritized Sampling]
+        LIVE_EXPERIENCE --> RL_EXPERIENCE_BUFFER
+        RL_EXPERIENCE_BUFFER --> TRAINING_TRIGGER{Training Trigger<br/>Buffer Size + Schedule}
+        TRAINING_TRIGGER -->|Ready| RL_TRAINING[RL Model Training<br/>DQN Updates]
+        TRAINING_TRIGGER -->|Not Ready| EXPERIENCE_ACCUMULATION[Continue Experience Accumulation]
+        
+        RL_TRAINING --> MODEL_VALIDATION[Model Validation<br/>Performance Metrics]
+        MODEL_VALIDATION --> MODEL_UPDATE{Model Update Decision<br/>Performance Improvement}
+        MODEL_UPDATE -->|Improve| DEPLOY_NEW_MODEL[Deploy Updated Model]
+        MODEL_UPDATE -->|Decline| KEEP_CURRENT_MODEL[Keep Current Model]
+        
+        DEPLOY_NEW_MODEL --> MODEL_PERFORMANCE_TRACKING[Model Performance Tracking]
+        KEEP_CURRENT_MODEL --> MODEL_PERFORMANCE_TRACKING
+    end
+
+    %% Continuous Monitoring & Health
+    subgraph "🏥 Health Monitoring & Emergency"
+        EMERGENCY_DETECTION[Emergency Detection<br/>System/Market Anomalies] --> EMERGENCY_ASSESSMENT{Emergency Assessment<br/>Severity Classification}
+        EMERGENCY_ASSESSMENT -->|Critical| EMERGENCY_STOP[Emergency Stop<br/>Halt All Trading]
+        EMERGENCY_ASSESSMENT -->|Warning| RISK_ADJUSTMENT[Risk Adjustment<br/>Reduce Position Sizes]
+        EMERGENCY_ASSESSMENT -->|Minor| CONTINUE_MONITORING[Continue Monitoring]
+        
+        EMERGENCY_STOP --> EMERGENCY_NOTIFICATION[Emergency Notifications<br/>Alerts + Logging]
+        EMERGENCY_STOP --> SYSTEM_RECOVERY[System Recovery Process]
+        SYSTEM_RECOVERY --> HEALTH_VALIDATION[Health Validation<br/>System Status Check]
+        HEALTH_VALIDATION --> RECOVERY_COMPLETE[Recovery Complete<br/>Resume Operations]
+    end
+
+    %% Feedback Loops & Optimization
+    subgraph "🔄 Feedback Loops & Optimization"
+        MODEL_PERFORMANCE_TRACKING --> PERFORMANCE_ANALYSIS[Performance Analysis<br/>Sharpe, Drawdown, Win Rate]
+        PERFORMANCE_ANALYSIS --> STRATEGY_OPTIMIZATION{Strategy Optimization<br/>Parameter Tuning}
+        STRATEGY_OPTIMIZATION -->|Optimize| HYPERPARAMETER_TUNING[Hyperparameter Tuning<br/>ML-RL Parameters]
+        STRATEGY_OPTIMIZATION -->|Maintain| CURRENT_STRATEGY[Maintain Current Strategy]
+        
+        HYPERPARAMETER_TUNING --> BACKTEST_VALIDATION[Backtest Validation<br/>Historical Performance]
+        BACKTEST_VALIDATION --> VALIDATION_RESULTS{Validation Results<br/>Performance Improvement}
+        VALIDATION_RESULTS -->|Success| DEPLOY_OPTIMIZED[Deploy Optimized Strategy]
+        VALIDATION_RESULTS -->|Failure| ROLLBACK_CHANGES[Rollback Changes]
+        
+        DEPLOY_OPTIMIZED --> OPTIMIZATION_MONITORING[Optimization Monitoring]
+        ROLLBACK_CHANGES --> OPTIMIZATION_MONITORING
+    end
+
+    %% Completion and Cycling
+    ANALYSIS_COMPLETE --> NEXT_CYCLE{Next Cycle Trigger<br/>Schedule + Events}
+    SIM_COMPLETE --> NEXT_CYCLE
+    LIVE_COMPLETE --> NEXT_CYCLE
+    OPTIMIZATION_MONITORING --> NEXT_CYCLE
+    RECOVERY_COMPLETE --> NEXT_CYCLE
+    
+    NEXT_CYCLE -->|Scheduled Scan| SCHEDULED_SCAN
+    NEXT_CYCLE -->|External Event| EXTERNAL_TRIGGER
+    NEXT_CYCLE -->|User Request| USER_REQUEST
+    NEXT_CYCLE -->|System Idle| SYSTEM_MONITORING[System Monitoring<br/>Health Checks + Metrics]
+    
+    SYSTEM_MONITORING --> MAINTENANCE_CHECK{Maintenance Required<br/>Updates + Optimization}
+    MAINTENANCE_CHECK -->|Required| SYSTEM_MAINTENANCE[System Maintenance<br/>Updates + Cleanup]
+    MAINTENANCE_CHECK -->|Not Required| IDLE_STATE[System Idle State<br/>Ready for Next Trigger]
+    
+    SYSTEM_MAINTENANCE --> IDLE_STATE
+    IDLE_STATE --> NEXT_CYCLE
+
+    %% Error Handling Paths (shown as dashed lines)
+    DISCARD_TOKEN -.-> ERROR_LOGGING[Error Logging & Analytics]
+    BLACKLIST -.-> SECURITY_ALERT[Security Alert System]
+    RISK_REJECTION -.-> REJECTED_ANALYSIS[Rejected Trade Analysis]
+    EXECUTION_REJECTION -.-> EXECUTION_ANALYSIS[Execution Failure Analysis]
+    LIVE_REJECTED -.-> SAFETY_AUDIT[Safety Audit & Review]
+    
+    ERROR_LOGGING -.-> SYSTEM_MONITORING
+    SECURITY_ALERT -.-> EMERGENCY_DETECTION
+    REJECTED_ANALYSIS -.-> PERFORMANCE_ANALYSIS
+    EXECUTION_ANALYSIS -.-> STRATEGY_OPTIMIZATION
+    SAFETY_AUDIT -.-> RISK_ADJUSTMENT
+
+    %% Styling
+    classDef startNode fill:#e1f5fe,stroke:#01579b,stroke-width:3px
+    classDef processNode fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef decisionNode fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef safetyNode fill:#ffebee,stroke:#c62828,stroke-width:2px
+    classDef completionNode fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef emergencyNode fill:#fce4ec,stroke:#ad1457,stroke-width:3px
+    classDef errorNode fill:#fafafa,stroke:#424242,stroke-width:1px,stroke-dasharray: 5 5
+
+    class START,EXTERNAL_TRIGGER,SCHEDULED_SCAN,USER_REQUEST startNode
+    class TOKEN_DISCOVERY,PRELIMINARY_SCAN,PARALLEL_ANALYSIS,FEATURE_EXTRACTION,ML_ENSEMBLE,ML_RL_INTEGRATION,DQN_INFERENCE,VIRTUAL_EXECUTION,TRANSACTION_BUILD,RL_TRAINING processNode
+    class MODE_SELECT,BASIC_FILTER,HONEYPOT_CHECK,ML_CACHE_CHECK,RISK_EVALUATION,SAFETY_GATE,PORTFOLIO_RISK_CHECK,FINAL_TRADE_APPROVAL,TRAINING_TRIGGER,MODEL_UPDATE decisionNode
+    class LIVE_SAFETY_CHECK,POSITION_SIZE_CALC,FINAL_RISK_SCORE,WALLET_PREPARATION,EMERGENCY_ASSESSMENT,HEALTH_VALIDATION safetyNode
+    class ANALYSIS_COMPLETE,SIM_COMPLETE,LIVE_COMPLETE,RECOVERY_COMPLETE,OPTIMIZATION_MONITORING completionNode
+    class EMERGENCY_STOP,EMERGENCY_DETECTION,EMERGENCY_NOTIFICATION emergencyNode
+    class ERROR_LOGGING,SECURITY_ALERT,REJECTED_ANALYSIS,EXECUTION_ANALYSIS,SAFETY_AUDIT,DISCARD_TOKEN,BLACKLIST,RISK_REJECTION errorNode
+```
+
+### Process Flow Overview
+
+The Shyvr RLTE operates through a comprehensive, safety-first process flow that handles the complete trading lifecycle:
+
+#### 🚀 **Initialization & Mode Selection**
+- **System Startup**: Initializes with health checks and configuration validation
+- **Mode Selection**: Dynamically switches between Analysis, Simulation, and Live Trading modes
+- **Trigger Processing**: Responds to scheduled scans, external events, and user requests
+
+#### 🔍 **Discovery & Analysis Pipeline** 
+- **Multi-Chain Discovery**: Scans Solana, Ethereum, and Base networks for trading opportunities
+- **Safety Filtering**: Applies honeypot detection and basic security validation
+- **Fundamental Analysis**: Parallel evaluation of security, liquidity, holders, and social sentiment
+- **ML Enhancement**: LSTM predictions with technical indicators and confidence scoring
+
+#### 🤖 **AI-Driven Decision Making**
+- **ML-RL Integration**: Combines ML predictions with RL decision-making (25+ feature vector)
+- **Risk Assessment**: Multi-layered risk evaluation with portfolio correlation analysis  
+- **Safety Gates**: Comprehensive safety checks before any trading action
+- **Mode-Specific Execution**: Tailored execution paths for each operational mode
+
+#### 💰 **Trade Execution & Settlement**
+- **DEX Integration**: Optimal routing through Jupiter (Solana) and other DEX protocols
+- **Price Impact Analysis**: Real-time slippage and market impact assessment
+- **Transaction Management**: Secure transaction building, signing, and broadcasting
+- **Settlement Processing**: Portfolio updates with real-time P&L calculation
+
+#### 📚 **Continuous Learning & Optimization**
+- **Experience Collection**: Stores trading outcomes for reinforcement learning
+- **Model Training**: Periodic DQN updates with prioritized experience replay
+- **Performance Tracking**: Comprehensive metrics analysis (Sharpe ratio, drawdown, win rate)
+- **Strategy Optimization**: Automated hyperparameter tuning and backtest validation
+
+#### 🛡️ **Safety & Emergency Procedures**
+- **Health Monitoring**: Continuous system health and performance monitoring
+- **Emergency Detection**: Automated detection of system or market anomalies
+- **Circuit Breakers**: Immediate trading halt on critical conditions
+- **Recovery Procedures**: Systematic recovery and validation processes
+
+#### 🔄 **Feedback Loops & Adaptation**
+- **Performance Analysis**: Regular evaluation of trading strategy effectiveness
+- **Model Updates**: Dynamic model improvement based on performance metrics
+- **Risk Adaptation**: Continuous risk parameter adjustment based on market conditions
+- **System Optimization**: Ongoing system maintenance and performance tuning
+
+The process flow ensures **sub-second decision making**, maintains **comprehensive safety controls**, and provides **continuous system improvement** through machine learning feedback loops. All operations include robust error handling, emergency procedures, and audit trails for complete operational transparency.
+
 ## 🎉 Complete Implementation Summary
 
 ### 📊 Project Status: 100% Complete - Production Ready
