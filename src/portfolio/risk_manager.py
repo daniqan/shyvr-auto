@@ -242,6 +242,10 @@ class VaRCalculationResult:
     calculation_method: str = "historical"  # historical, parametric, monte_carlo
     calculation_time: datetime = field(default_factory=datetime.now)
     error_message: Optional[str] = None
+    # Additional fields for comprehensive risk metrics updating
+    var_95: Optional[Decimal] = None
+    var_99: Optional[Decimal] = None
+    portfolio_volatility: Optional[Decimal] = None
 
 
 @dataclass
@@ -1126,6 +1130,8 @@ class RiskManager:
                 var_percentage=var_result.var_percentage,
                 confidence_level=self.config.var_confidence_level,
                 expected_shortfall=expected_shortfall,
+                var_95=risk_metrics.var_95,
+                var_99=risk_metrics.var_99,
                 portfolio_volatility=portfolio_volatility,
                 calculation_time=datetime.now()
             )
