@@ -60,7 +60,7 @@ apis:
 telegram:
   token: "${TELEGRAM_TOKEN}"
   webhook_secret: "${TELEGRAM_WEBHOOK_SECRET}"
-  admin_users: "${TELEGRAM_ADMIN_USERS:}"  # Comma-separated list
+  admin_users: []  # List of admin user IDs
   rate_limit: 30  # messages per minute per user
   
 agent:

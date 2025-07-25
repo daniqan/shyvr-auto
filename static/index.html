@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shyvr RLTE Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+</head>
+<body>
+    <!-- Navigation Header -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <h1>Shyvr RLTE</h1>
+                <span class="nav-subtitle">AI Trading Dashboard</span>
+            </div>
+            <div class="nav-controls">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-indicator" id="statusIndicator"></span>
+                    <span class="status-text" id="statusText">Connecting...</span>
+                </div>
+                <button class="emergency-stop-btn" id="emergencyStopBtn" title="Emergency Stop">
+                    🛑 EMERGENCY STOP
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Dashboard Tabs -->
+        <div class="tab-container">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="trading">Trading</button>
+                <button class="tab-btn" data-tab="portfolio">Portfolio</button>
+                <button class="tab-btn" data-tab="ml-rl">ML & RL</button>
+                <button class="tab-btn" data-tab="system">System</button>
+                <button class="tab-btn" data-tab="settings">Settings</button>
+            </div>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- Overview Tab -->
+            <div class="tab-panel active" id="overview">
+                <div class="dashboard-grid">
+                    <!-- System Status Card -->
+                    <div class="card system-status-card">
+                        <div class="card-header">
+                            <h3>System Status</h3>
+                            <div class="status-badge" id="systemStatusBadge">HEALTHY</div>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Uptime:</span>
+                                <span class="metric-value" id="systemUptime">0h 0m</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">CPU:</span>
+                                <span class="metric-value" id="systemCpu">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Memory:</span>
+                                <span class="metric-value" id="systemMemory">0 MB</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Active Connections:</span>
+                                <span class="metric-value" id="systemConnections">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Summary Card -->
+                    <div class="card portfolio-summary-card">
+                        <div class="card-header">
+                            <h3>Portfolio Summary</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-large">
+                                <span class="metric-label">Total Value</span>
+                                <span class="metric-value large" id="portfolioTotalValue">$0.00</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Daily P&L:</span>
+                                <span class="metric-value pnl" id="portfolioDailyPnl">$0.00 (0%)</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Unrealized P&L:</span>
+                                <span class="metric-value pnl" id="portfolioUnrealizedPnl">$0.00</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Active Positions:</span>
+                                <span class="metric-value" id="portfolioActivePositions">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trading Activity Card -->
+                    <div class="card trading-activity-card">
+                        <div class="card-header">
+                            <h3>Trading Activity</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Mode:</span>
+                                <span class="metric-value trading-mode" id="tradingMode">Analysis</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Trades Today:</span>
+                                <span class="metric-value" id="tradingTradesToday">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Volume Today:</span>
+                                <span class="metric-value" id="tradingVolumeToday">$0.00</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Win Rate:</span>
+                                <span class="metric-value" id="tradingWinRate">0%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ML/RL Status Card -->
+                    <div class="card ml-rl-status-card">
+                        <div class="card-header">
+                            <h3>ML & RL Status</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Integration:</span>
+                                <span class="metric-value" id="mlRlIntegration">Active</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">ML Accuracy:</span>
+                                <span class="metric-value" id="mlAccuracy">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">RL Success Rate:</span>
+                                <span class="metric-value" id="rlSuccessRate">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Decision Latency:</span>
+                                <span class="metric-value" id="mlRlLatency">0ms</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity Feed -->
+                    <div class="card recent-activity-card span-2">
+                        <div class="card-header">
+                            <h3>Recent Activity</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="activity-feed" id="activityFeed">
+                                <div class="activity-item">
+                                    <span class="activity-time">00:00:00</span>
+                                    <span class="activity-message">Dashboard initialized</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Chart -->
+                    <div class="card performance-chart-card span-2">
+                        <div class="card-header">
+                            <h3>Portfolio Performance</h3>
+                            <div class="chart-controls">
+                                <select id="chartTimeframe">
+                                    <option value="1h">1H</option>
+                                    <option value="4h">4H</option>
+                                    <option value="1d" selected>1D</option>
+                                    <option value="1w">1W</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="chart-container">
+                                <canvas id="performanceChart" width="800" height="300"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trading Tab -->
+            <div class="tab-panel" id="trading">
+                <div class="dashboard-grid">
+                    <!-- Trading Mode Control -->
+                    <div class="card trading-mode-card">
+                        <div class="card-header">
+                            <h3>Trading Mode</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="mode-selector">
+                                <div class="mode-option">
+                                    <input type="radio" id="modeAnalysis" name="tradingMode" value="analysis" checked>
+                                    <label for="modeAnalysis">Analysis</label>
+                                </div>
+                                <div class="mode-option">
+                                    <input type="radio" id="modeSimulation" name="tradingMode" value="simulation">
+                                    <label for="modeSimulation">Simulation</label>
+                                </div>
+                                <div class="mode-option">
+                                    <input type="radio" id="modeLive" name="tradingMode" value="live">
+                                    <label for="modeLive">Live Trading</label>
+                                </div>
+                            </div>
+                            <button class="btn-primary" id="switchModeBtn">Switch Mode</button>
+                        </div>
+                    </div>
+
+                    <!-- Trading Controls -->
+                    <div class="card trading-controls-card">
+                        <div class="card-header">
+                            <h3>Trading Controls</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="control-group">
+                                <label>Risk Limits Active:</label>
+                                <div class="toggle-switch">
+                                    <input type="checkbox" id="riskLimitsToggle" checked>
+                                    <label for="riskLimitsToggle"></label>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label>Auto Trading:</label>
+                                <div class="toggle-switch">
+                                    <input type="checkbox" id="autoTradingToggle">
+                                    <label for="autoTradingToggle"></label>
+                                </div>
+                            </div>
+                            <button class="btn-danger" id="pauseTradingBtn">Pause Trading</button>
+                        </div>
+                    </div>
+
+                    <!-- Market Signals -->
+                    <div class="card market-signals-card">
+                        <div class="card-header">
+                            <h3>Market Signals</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Tokens Analyzed:</span>
+                                <span class="metric-value" id="tokensAnalyzed">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">High Confidence:</span>
+                                <span class="metric-value" id="highConfidenceSignals">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Watchlist:</span>
+                                <span class="metric-value" id="tokensInWatchlist">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Trades Table -->
+                    <div class="card recent-trades-card span-3">
+                        <div class="card-header">
+                            <h3>Recent Trades</h3>
+                            <button class="btn-secondary" id="refreshTradesBtn">Refresh</button>
+                        </div>
+                        <div class="card-content">
+                            <div class="table-container">
+                                <table class="trades-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Symbol</th>
+                                            <th>Side</th>
+                                            <th>Size</th>
+                                            <th>Price</th>
+                                            <th>P&L</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tradesTableBody">
+                                        <tr>
+                                            <td colspan="7" class="no-data">No trades to display</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Portfolio Tab -->
+            <div class="tab-panel" id="portfolio">
+                <div class="dashboard-grid">
+                    <!-- Portfolio Overview -->
+                    <div class="card portfolio-overview-card span-2">
+                        <div class="card-header">
+                            <h3>Portfolio Overview</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="portfolio-metrics">
+                                <div class="metric-group">
+                                    <div class="metric-large">
+                                        <span class="metric-label">Total Value</span>
+                                        <span class="metric-value large" id="portfolioTotalValueDetail">$0.00</span>
+                                    </div>
+                                    <div class="metric-large">
+                                        <span class="metric-label">Available Balance</span>
+                                        <span class="metric-value large" id="portfolioAvailableBalance">$0.00</span>
+                                    </div>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Realized P&L:</span>
+                                    <span class="metric-value pnl" id="portfolioRealizedPnl">$0.00</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Unrealized P&L:</span>
+                                    <span class="metric-value pnl" id="portfolioUnrealizedPnlDetail">$0.00</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Total Return:</span>
+                                    <span class="metric-value pnl" id="portfolioTotalReturn">0%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Risk Metrics -->
+                    <div class="card risk-metrics-card">
+                        <div class="card-header">
+                            <h3>Risk Metrics</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Max Drawdown:</span>
+                                <span class="metric-value" id="maxDrawdown">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Current Drawdown:</span>
+                                <span class="metric-value" id="currentDrawdown">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Sharpe Ratio:</span>
+                                <span class="metric-value" id="sharpeRatio">0.00</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">VaR (95%):</span>
+                                <span class="metric-value" id="var95">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chain Balances -->
+                    <div class="card chain-balances-card">
+                        <div class="card-header">
+                            <h3>Chain Balances</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="chain-balance-list" id="chainBalanceList">
+                                <div class="chain-balance-item">
+                                    <span class="chain-name">Loading...</span>
+                                    <span class="chain-balance">$0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Positions -->
+                    <div class="card active-positions-card span-3">
+                        <div class="card-header">
+                            <h3>Active Positions</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="table-container">
+                                <table class="positions-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Symbol</th>
+                                            <th>Chain</th>
+                                            <th>Size</th>
+                                            <th>Entry Price</th>
+                                            <th>Current Price</th>
+                                            <th>P&L</th>
+                                            <th>P&L %</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="positionsTableBody">
+                                        <tr>
+                                            <td colspan="7" class="no-data">No active positions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ML & RL Tab -->
+            <div class="tab-panel" id="ml-rl">
+                <div class="dashboard-grid">
+                    <!-- ML Models Status -->
+                    <div class="card ml-models-card">
+                        <div class="card-header">
+                            <h3>ML Models</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="model-list" id="mlModelsList">
+                                <div class="model-item">
+                                    <div class="model-name">Loading models...</div>
+                                    <div class="model-status">Status unknown</div>
+                                    <div class="model-accuracy">Accuracy: N/A</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- RL Agents Status -->
+                    <div class="card rl-agents-card">
+                        <div class="card-header">
+                            <h3>RL Agents</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="agent-list" id="rlAgentsList">
+                                <div class="agent-item">
+                                    <div class="agent-name">Loading agents...</div>
+                                    <div class="agent-status">Status unknown</div>
+                                    <div class="agent-performance">Win Rate: N/A</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ML-RL Integration -->
+                    <div class="card integration-card">
+                        <div class="card-header">
+                            <h3>ML-RL Integration</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Integration Active:</span>
+                                <span class="metric-value" id="integrationActive">Yes</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Decision Latency:</span>
+                                <span class="metric-value" id="integrationLatency">0ms</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">ML Confidence:</span>
+                                <span class="metric-value" id="mlConfidence">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">RL Confidence:</span>
+                                <span class="metric-value" id="rlConfidence">0%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Training Status -->
+                    <div class="card training-status-card span-3">
+                        <div class="card-header">
+                            <h3>Training Status</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="training-metrics">
+                                <div class="metric-row">
+                                    <span class="metric-label">ML Training Active:</span>
+                                    <span class="metric-value" id="mlTrainingActive">No</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">RL Training Active:</span>
+                                    <span class="metric-value" id="rlTrainingActive">No</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Continuous Learning:</span>
+                                    <span class="metric-value" id="continuousLearning">Yes</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Tab -->
+            <div class="tab-panel" id="system">
+                <div class="dashboard-grid">
+                    <!-- System Health -->
+                    <div class="card system-health-card">
+                        <div class="card-header">
+                            <h3>System Health</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="health-metric">
+                                <span class="metric-label">Overall Status:</span>
+                                <span class="status-badge" id="overallHealthStatus">HEALTHY</span>
+                            </div>
+                            <div class="component-statuses" id="componentStatuses">
+                                <div class="component-status">
+                                    <span class="component-name">Database:</span>
+                                    <span class="component-status-value">HEALTHY</span>
+                                </div>
+                                <div class="component-status">
+                                    <span class="component-name">Redis:</span>
+                                    <span class="component-status-value">HEALTHY</span>
+                                </div>
+                                <div class="component-status">
+                                    <span class="component-name">ML Models:</span>
+                                    <span class="component-status-value">HEALTHY</span>
+                                </div>
+                                <div class="component-status">
+                                    <span class="component-name">RL Agent:</span>
+                                    <span class="component-status-value">HEALTHY</span>
+                                </div>
+                                <div class="component-status">
+                                    <span class="component-name">DEX Connections:</span>
+                                    <span class="component-status-value">HEALTHY</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Performance Metrics -->
+                    <div class="card performance-metrics-card">
+                        <div class="card-header">
+                            <h3>Performance Metrics</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Requests/min:</span>
+                                <span class="metric-value" id="requestsPerMinute">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Error Rate:</span>
+                                <span class="metric-value" id="errorRate">0%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Response Time:</span>
+                                <span class="metric-value" id="responseTime">0ms</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Cache Hit Rate:</span>
+                                <span class="metric-value" id="cacheHitRate">0%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Resource Usage -->
+                    <div class="card resource-usage-card">
+                        <div class="card-header">
+                            <h3>Resource Usage</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="resource-metric">
+                                <span class="metric-label">CPU Usage:</span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="cpuProgressFill"></div>
+                                    <span class="progress-text" id="cpuUsageText">0%</span>
+                                </div>
+                            </div>
+                            <div class="resource-metric">
+                                <span class="metric-label">Memory Usage:</span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="memoryProgressFill"></div>
+                                    <span class="progress-text" id="memoryUsageText">0%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Logs -->
+                    <div class="card system-logs-card span-3">
+                        <div class="card-header">
+                            <h3>System Logs</h3>
+                            <button class="btn-secondary" id="refreshLogsBtn">Refresh</button>
+                        </div>
+                        <div class="card-content">
+                            <div class="logs-container" id="logsContainer">
+                                <div class="log-entry">
+                                    <span class="log-time">00:00:00</span>
+                                    <span class="log-level info">INFO</span>
+                                    <span class="log-message">Dashboard initialized</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="tab-panel" id="settings">
+                <div class="dashboard-grid">
+                    <!-- Risk Management Settings -->
+                    <div class="card risk-settings-card">
+                        <div class="card-header">
+                            <h3>Risk Management</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="setting-group">
+                                <label for="maxPositionSize">Max Position Size (%):</label>
+                                <input type="number" id="maxPositionSize" min="1" max="100" value="10" step="0.1">
+                            </div>
+                            <div class="setting-group">
+                                <label for="maxDailyLoss">Max Daily Loss (%):</label>
+                                <input type="number" id="maxDailyLoss" min="1" max="50" value="5" step="0.1">
+                            </div>
+                            <div class="setting-group">
+                                <label for="maxDrawdown">Max Drawdown (%):</label>
+                                <input type="number" id="maxDrawdown" min="1" max="50" value="15" step="0.1">
+                            </div>
+                            <div class="setting-group">
+                                <label for="stopLoss">Stop Loss (%):</label>
+                                <input type="number" id="stopLoss" min="1" max="50" value="8" step="0.1">
+                            </div>
+                            <button class="btn-primary" id="updateRiskSettingsBtn">Update Settings</button>
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Settings -->
+                    <div class="card dashboard-settings-card">
+                        <div class="card-header">
+                            <h3>Dashboard Settings</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="setting-group">
+                                <label for="refreshInterval">Refresh Interval (seconds):</label>
+                                <select id="refreshInterval">
+                                    <option value="1">1 second</option>
+                                    <option value="2" selected>2 seconds</option>
+                                    <option value="5">5 seconds</option>
+                                    <option value="10">10 seconds</option>
+                                </select>
+                            </div>
+                            <div class="setting-group">
+                                <label>Dark Mode:</label>
+                                <div class="toggle-switch">
+                                    <input type="checkbox" id="darkModeToggle">
+                                    <label for="darkModeToggle"></label>
+                                </div>
+                            </div>
+                            <div class="setting-group">
+                                <label>Sound Notifications:</label>
+                                <div class="toggle-switch">
+                                    <input type="checkbox" id="soundNotificationsToggle" checked>
+                                    <label for="soundNotificationsToggle"></label>
+                                </div>
+                            </div>
+                            <button class="btn-primary" id="updateDashboardSettingsBtn">Update Settings</button>
+                        </div>
+                    </div>
+
+                    <!-- API Settings -->
+                    <div class="card api-settings-card">
+                        <div class="card-header">
+                            <h3>API Configuration</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="api-info">
+                                <div class="metric-row">
+                                    <span class="metric-label">API Key:</span>
+                                    <span class="metric-value api-key">••••••••••••••••</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Rate Limit:</span>
+                                    <span class="metric-value">100 req/min</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">WebSocket URL:</span>
+                                    <span class="metric-value">ws://localhost:8080/dashboard/ws/</span>
+                                </div>
+                            </div>
+                            <button class="btn-secondary" id="regenerateApiKeyBtn">Regenerate API Key</button>
+                        </div>
+                    </div>
+
+                    <!-- About -->
+                    <div class="card about-card span-3">
+                        <div class="card-header">
+                            <h3>About Shyvr RLTE</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="about-info">
+                                <p><strong>Shyvr AI Reinforcement Learning Trading Engine</strong></p>
+                                <p>AI-augmented cryptocurrency trading bot with machine learning, reinforcement learning, and natural language agent capabilities for multi-chain token analysis and automated trading.</p>
+                                <div class="version-info">
+                                    <div class="metric-row">
+                                        <span class="metric-label">Version:</span>
+                                        <span class="metric-value">0.1.0</span>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">Build:</span>
+                                        <span class="metric-value">2025.07.25</span>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span class="metric-label">Environment:</span>
+                                        <span class="metric-value">Development</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modals -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Confirm Action</h3>
+                <span class="modal-close" id="modalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p id="modalMessage">Are you sure you want to proceed?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="modalCancel">Cancel</button>
+                <button class="btn-danger" id="modalConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer" class="notification-container"></div>
+
+    <!-- Scripts -->
+    <script src="dashboard.js"></script>
+</body>
+</html>

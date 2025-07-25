@@ -10,6 +10,8 @@ from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import uvicorn
 
 # Add src to Python path
@@ -17,6 +19,8 @@ sys.path.append(str(Path(__file__).parent / "src"))
 
 from src.utils.config import init_config, get_config
 from src.utils.base import ConfigurationError
+from src.dashboard.api import dashboard_api
+from src.dashboard.service import dashboard_service
 
 # Configure structured logging
 structlog.configure(
@@ -46,6 +50,12 @@ app = FastAPI(
     version="0.1.0"
 )
 
+# Include dashboard routes
+app.include_router(dashboard_api.router)
+
+# Mount static files for dashboard
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -60,6 +70,10 @@ async def startup_event():
         
         logger.info("Shyvr RLTE starting up", version=config.app.version)
         
+        # Start dashboard service
+        await dashboard_service.start()
+        logger.info("Dashboard service started")
+        
     except ConfigurationError as e:
         logger.error("Configuration error", error=str(e))
         raise
@@ -72,11 +86,21 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on application shutdown"""
     logger.info("Shyvr RLTE shutting down")
+    
+    # Stop dashboard service
+    await dashboard_service.stop()
+    logger.info("Dashboard service stopped")
 
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint - serve dashboard"""
+    return FileResponse("static/index.html")
+
+
+@app.get("/api")
+async def api_root():
+    """API root endpoint"""
     return {"message": "Shyvr RLTE API", "status": "running"}
 
 

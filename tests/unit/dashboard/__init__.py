@@ -1,0 +1,3 @@
+"""
+Dashboard unit tests package
+"""
