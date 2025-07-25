@@ -1,0 +1,1025 @@
+"""
+Test suite for simulation mode implementation.
+
+This module contains comprehensive tests for the simulation trading mode,
+following TDD methodology with tests written before implementation.
+"""
+
+import asyncio
+import pytest
+from datetime import datetime, timedelta
+from decimal import Decimal
+from unittest.mock import Mock, AsyncMock, patch
+from uuid import uuid4
+
+from src.modes.base import ModeType, ModeStatus, ModeConfig, ModeResult
+from src.portfolio.base import (
+    Portfolio, PortfolioConfig, Position, Transaction, PositionType,
+    PositionStatus, TransactionType
+)
+from src.rl_agent.base import MarketState, TradeAction
+from src.utils.base import Chain
+from src.dex.base import SwapQuote, SwapResult, SwapStatus
+
+# Import classes that don't exist yet - these will fail until implemented
+from src.modes.simulation_mode import (
+    SimulationMode,
+    SimulationExecutor,
+    VirtualPortfolio,
+    SimulationRiskManager,
+    SimulationConfig,
+    SimulationMetrics,
+    SimulationError
+)
+
+
+def create_mock_token():
+    """Helper function to create mock DiscoveredToken."""
+    from src.discovery.base import DiscoveredToken, TokenStatus
+    from src.utils.base import Chain
+    from datetime import datetime
+    
+    return DiscoveredToken(
+        address="TEST_TOKEN_123",
+        name="Test Token",
+        symbol="TEST",
+        chain=Chain.SOLANA,
+        discovered_at=datetime.now(),
+        discovery_source="test",
+        status=TokenStatus.VALIDATED
+    )
+
+
+class TestSimulationMode:
+    """Test suite for SimulationMode base functionality."""
+    
+    @pytest.fixture
+    def portfolio_config(self):
+        """Portfolio configuration for testing."""
+        return PortfolioConfig(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC",
+            max_position_size_pct=Decimal("0.1"),
+            max_daily_loss_pct=Decimal("0.05")
+        )
+    
+    @pytest.fixture
+    def portfolio(self, portfolio_config):
+        """Portfolio instance for testing."""
+        return Portfolio(
+            portfolio_id=uuid4(),
+            name="Test Portfolio",
+            config=portfolio_config,
+            cash_balance=Decimal("10000"),
+            total_value=Decimal("10000")
+        )
+    
+    @pytest.fixture
+    def simulation_config(self):
+        """Simulation mode configuration."""
+        return ModeConfig(
+            mode_type=ModeType.SIMULATION,
+            enabled=True,
+            parameters={
+                "initial_balance": 10000,
+                "enable_fees": True,
+                "slippage_bps": 10,
+                "max_drawdown_pct": 0.15,
+                "enable_risk_management": True,
+                "market_data_frequency_ms": 1000,
+                "enable_real_time_pnl": True
+            }
+        )
+    
+    @pytest.fixture
+    def simulation_mode(self, simulation_config, portfolio):
+        """SimulationMode instance for testing."""
+        return SimulationMode(
+            mode_id=uuid4(),
+            config=simulation_config,
+            portfolio=portfolio
+        )
+    
+    async def test_simulation_mode_initialization(self, simulation_mode):
+        """Test SimulationMode initialization with simulation-specific parameters."""
+        # Should initialize with simulation parameters
+        assert simulation_mode.config.mode_type == ModeType.SIMULATION
+        assert simulation_mode.virtual_balance == Decimal("10000")
+        assert simulation_mode.enable_fees is True
+        assert simulation_mode.slippage_bps == 10
+        assert simulation_mode.status == ModeStatus.INACTIVE
+        
+        # Should have simulation-specific components
+        assert hasattr(simulation_mode, 'virtual_portfolio')
+        assert hasattr(simulation_mode, 'simulation_executor')
+        assert hasattr(simulation_mode, 'risk_manager')
+        assert hasattr(simulation_mode, 'market_data_feed')
+    
+    async def test_simulation_mode_start_stop_lifecycle(self, simulation_mode):
+        """Test simulation mode start/stop lifecycle."""
+        # Initialize first
+        await simulation_mode.initialize()
+        assert simulation_mode.status == ModeStatus.INACTIVE
+        
+        # Start simulation
+        await simulation_mode.start()
+        assert simulation_mode.status == ModeStatus.ACTIVE
+        assert simulation_mode.start_time is not None
+        
+        # Should initialize market data feed
+        assert simulation_mode.market_data_feed.is_active
+        
+        # Stop simulation
+        await simulation_mode.stop()
+        assert simulation_mode.status == ModeStatus.STOPPING
+        
+        # Cleanup
+        await simulation_mode.cleanup()
+        assert not simulation_mode.market_data_feed.is_active
+    
+    async def test_simulation_mode_pause_resume(self, simulation_mode):
+        """Test simulation mode pause/resume functionality."""
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Initial state should be active
+        assert simulation_mode.status == ModeStatus.ACTIVE
+        
+        # Pause simulation
+        await simulation_mode.pause()
+        assert simulation_mode.status == ModeStatus.PAUSED
+        
+        # Market data should still be active but trading should be paused
+        assert simulation_mode.market_data_feed.is_active
+        assert not simulation_mode.simulation_executor.is_active
+        
+        # Resume simulation
+        await simulation_mode.resume()
+        assert simulation_mode.status == ModeStatus.ACTIVE
+        assert simulation_mode.simulation_executor.is_active
+    
+    async def test_process_tick_active_mode(self, simulation_mode):
+        """Test market tick processing in active simulation mode."""
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Create mock token
+        mock_token = create_mock_token()
+        
+        # Create market state
+        market_state = MarketState(
+            token=mock_token,
+            price_usd=100.0,
+            price_change_24h=5.0,
+            volume_24h=1000000.0,
+            rsi=25.0  # Oversold condition
+        )
+        
+        # Process tick should return trading action
+        action = await simulation_mode.process_tick(market_state)
+        
+        # Should return action based on market conditions
+        assert action in [TradeAction.BUY, TradeAction.STRONG_BUY]
+        
+        # Should record simulation metrics
+        assert "last_price" in simulation_mode.metrics
+        assert "last_rsi" in simulation_mode.metrics
+        assert "simulated_trades" in simulation_mode.metrics
+    
+    async def test_process_tick_inactive_mode(self, simulation_mode):
+        """Test market tick processing returns None when inactive."""
+        # Don't start simulation mode
+        from src.discovery.base import DiscoveredToken
+        mock_token = DiscoveredToken(
+            token_address="TEST_TOKEN_123",
+            name="Test Token",
+            symbol="TEST",
+            chain="solana",
+            token_age_hours=24,
+            creator_balance_pct=5.0,
+            top_10_holder_balance_pct=15.0,
+            is_honeypot=False,
+            is_renounced=True,
+            has_trading_enabled=True
+        )
+        
+        market_state = MarketState(
+            token=mock_token,
+            price_usd=100.0,
+            price_change_24h=5.0,
+            volume_24h=1000000.0
+        )
+        
+        # Process tick should return None when inactive
+        action = await simulation_mode.process_tick(market_state)
+        assert action is None
+    
+    async def test_simulation_metrics_tracking(self, simulation_mode):
+        """Test simulation metrics are properly tracked."""
+        await simulation_mode.initialize()
+        
+        # Should track basic simulation metrics
+        assert hasattr(simulation_mode, 'simulation_metrics')
+        metrics = simulation_mode.simulation_metrics
+        
+        # Should have initial metrics
+        assert metrics.total_trades == 0
+        assert metrics.virtual_balance == Decimal("10000")
+        assert metrics.unrealized_pnl == Decimal("0")
+        assert metrics.realized_pnl == Decimal("0")
+        assert metrics.max_drawdown == Decimal("0")
+        
+        # Should track performance metrics
+        assert hasattr(metrics, 'win_rate')
+        assert hasattr(metrics, 'profit_factor')
+        assert hasattr(metrics, 'sharpe_ratio')
+    
+    async def test_get_simulation_result(self, simulation_mode):
+        """Test simulation result generation."""
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Process some ticks to generate activity
+        from src.discovery.base import DiscoveredToken
+        mock_token = DiscoveredToken(
+            token_address="TEST_TOKEN_123",
+            name="Test Token",
+            symbol="TEST",
+            chain="solana",
+            token_age_hours=24,
+            creator_balance_pct=5.0,
+            top_10_holder_balance_pct=15.0,
+            is_honeypot=False,
+            is_renounced=True,
+            has_trading_enabled=True
+        )
+        
+        market_state = MarketState(
+            token=mock_token,
+            price_usd=100.0,
+            price_change_24h=5.0,
+            volume_24h=1000000.0,
+            rsi=25.0
+        )
+        await simulation_mode.process_tick(market_state)
+        
+        # Get result
+        result = simulation_mode.get_result()
+        
+        assert isinstance(result, ModeResult)
+        assert result.mode_type == ModeType.SIMULATION
+        assert result.status == ModeStatus.ACTIVE
+        assert "virtual_balance" in result.metrics
+        assert "total_trades" in result.metrics
+        assert "simulation_duration" in result.metadata
+
+
+class TestSimulationExecutor:
+    """Test suite for SimulationExecutor paper trading functionality."""
+    
+    @pytest.fixture
+    def virtual_portfolio(self):
+        """Virtual portfolio for testing."""
+        return VirtualPortfolio(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC"
+        )
+    
+    @pytest.fixture
+    def dex_client_mock(self):
+        """Mock DEX client for market data."""
+        mock = AsyncMock()
+        mock.get_quote = AsyncMock()
+        mock.get_token_price = AsyncMock()
+        return mock
+    
+    @pytest.fixture
+    def simulation_executor(self, virtual_portfolio, dex_client_mock):
+        """SimulationExecutor instance for testing."""
+        return SimulationExecutor(
+            virtual_portfolio=virtual_portfolio,
+            dex_clients={"jupiter": dex_client_mock},
+            enable_fees=True,
+            slippage_bps=10
+        )
+    
+    async def test_simulation_executor_initialization(self, simulation_executor):
+        """Test SimulationExecutor initialization."""
+        assert simulation_executor.virtual_portfolio is not None
+        assert simulation_executor.enable_fees is True
+        assert simulation_executor.slippage_bps == 10
+        assert simulation_executor.is_active is False
+        assert len(simulation_executor.dex_clients) == 1
+    
+    async def test_execute_buy_order_simulation(self, simulation_executor):
+        """Test paper trading buy order execution."""
+        # Mock DEX quote
+        quote = SwapQuote(
+            input_token="USDC",
+            output_token="BTC",
+            input_amount=Decimal("1000"),
+            output_amount=Decimal("0.01"),
+            price=Decimal("100000"),
+            price_impact_bps=5,
+            slippage_bps=10,
+            dex_name="jupiter"
+        )
+        
+        simulation_executor.dex_clients["jupiter"].get_quote.return_value = quote
+        
+        # Execute buy order
+        result = await simulation_executor.execute_buy_order(
+            token_address="BTC_ADDRESS",
+            amount_usd=Decimal("1000"),
+            max_slippage_bps=10
+        )
+        
+        # Should return simulation result
+        assert result.is_simulated is True
+        assert result.status == SwapStatus.CONFIRMED
+        assert result.input_amount == Decimal("1000")
+        assert result.actual_output_amount is not None
+        
+        # Should update virtual portfolio
+        assert simulation_executor.virtual_portfolio.cash_balance < Decimal("10000")
+        assert len(simulation_executor.virtual_portfolio.positions) == 1
+    
+    async def test_execute_sell_order_simulation(self, simulation_executor):
+        """Test paper trading sell order execution."""
+        # First create a position to sell
+        await simulation_executor._create_virtual_position(
+            token_address="BTC_ADDRESS",
+            amount=Decimal("0.01"),
+            entry_price=Decimal("100000")
+        )
+        
+        # Mock DEX quote for sell
+        quote = SwapQuote(
+            input_token="BTC",
+            output_token="USDC",
+            input_amount=Decimal("0.01"),
+            output_amount=Decimal("1050"),  # 5% profit
+            price=Decimal("105000"),
+            price_impact_bps=5,
+            slippage_bps=10,
+            dex_name="jupiter"
+        )
+        
+        simulation_executor.dex_clients["jupiter"].get_quote.return_value = quote
+        
+        # Execute sell order
+        result = await simulation_executor.execute_sell_order(
+            token_address="BTC_ADDRESS",
+            amount=Decimal("0.01"),
+            max_slippage_bps=10
+        )
+        
+        # Should return simulation result
+        assert result.is_simulated is True
+        assert result.status == SwapStatus.CONFIRMED
+        
+        # Should update virtual portfolio with profit
+        assert simulation_executor.virtual_portfolio.cash_balance > Decimal("10000")
+        assert len(simulation_executor.virtual_portfolio.positions) == 0
+    
+    async def test_simulate_slippage_and_fees(self, simulation_executor):
+        """Test realistic simulation of slippage and trading fees."""
+        quote = SwapQuote(
+            input_token="USDC",
+            output_token="BTC",
+            input_amount=Decimal("1000"),
+            output_amount=Decimal("0.01"),
+            price=Decimal("100000"),
+            price_impact_bps=20,  # 0.2% price impact
+            slippage_bps=10,      # 0.1% slippage
+            dex_name="jupiter"
+        )
+        
+        # Apply simulation effects
+        adjusted_result = await simulation_executor._apply_simulation_effects(quote)
+        
+        # Should reduce output due to slippage and fees
+        assert adjusted_result.actual_output_amount < quote.output_amount
+        
+        # Should calculate realistic fees
+        assert adjusted_result.fees > Decimal("0")
+        
+        # Should apply price impact
+        assert adjusted_result.actual_price_impact_bps >= quote.price_impact_bps
+    
+    async def test_real_time_pnl_updates(self, simulation_executor):
+        """Test real-time P&L calculation and updates."""
+        # Create position
+        await simulation_executor._create_virtual_position(
+            token_address="BTC_ADDRESS",
+            amount=Decimal("0.01"),
+            entry_price=Decimal("100000")
+        )
+        
+        # Update market price
+        new_price = Decimal("105000")  # 5% increase
+        await simulation_executor.update_market_prices({
+            "BTC_ADDRESS": new_price
+        })
+        
+        # Should update position P&L
+        position = simulation_executor.virtual_portfolio.positions[0]
+        assert position.current_price == new_price
+        assert position.unrealized_pnl > Decimal("0")
+        
+        # Should update portfolio metrics
+        portfolio_pnl = simulation_executor.virtual_portfolio.total_unrealized_pnl
+        assert portfolio_pnl > Decimal("0")
+    
+    async def test_batch_order_execution(self, simulation_executor):
+        """Test batch execution of multiple orders."""
+        orders = [
+            {"token": "BTC_ADDRESS", "amount_usd": Decimal("500"), "action": "buy"},
+            {"token": "ETH_ADDRESS", "amount_usd": Decimal("500"), "action": "buy"}
+        ]
+        
+        # Mock quotes for both tokens
+        simulation_executor.dex_clients["jupiter"].get_quote.side_effect = [
+            SwapQuote("USDC", "BTC", Decimal("500"), Decimal("0.005"), 
+                     Decimal("100000"), 10, 10, dex_name="jupiter"),
+            SwapQuote("USDC", "ETH", Decimal("500"), Decimal("0.2"), 
+                     Decimal("2500"), 15, 10, dex_name="jupiter")
+        ]
+        
+        # Execute batch orders
+        results = await simulation_executor.execute_batch_orders(orders)
+        
+        # Should execute all orders successfully
+        assert len(results) == 2
+        assert all(result.status == SwapStatus.CONFIRMED for result in results)
+        assert len(simulation_executor.virtual_portfolio.positions) == 2
+    
+    async def test_execution_error_handling(self, simulation_executor):
+        """Test error handling in simulation execution."""
+        # Mock DEX client to raise error
+        simulation_executor.dex_clients["jupiter"].get_quote.side_effect = Exception("API Error")
+        
+        # Should handle error gracefully
+        result = await simulation_executor.execute_buy_order(
+            token_address="BTC_ADDRESS",
+            amount_usd=Decimal("1000")
+        )
+        
+        assert result.status == SwapStatus.FAILED
+        assert result.error_message is not None
+        
+        # Virtual portfolio should be unchanged
+        assert simulation_executor.virtual_portfolio.cash_balance == Decimal("10000")
+
+
+class TestVirtualPortfolio:
+    """Test suite for VirtualPortfolio simulation functionality."""
+    
+    @pytest.fixture
+    def virtual_portfolio(self):
+        """VirtualPortfolio instance for testing."""
+        return VirtualPortfolio(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC",
+            enable_fees=True
+        )
+    
+    async def test_virtual_portfolio_initialization(self, virtual_portfolio):
+        """Test VirtualPortfolio initialization."""
+        assert virtual_portfolio.cash_balance == Decimal("10000")
+        assert virtual_portfolio.base_currency == "USDC"
+        assert virtual_portfolio.enable_fees is True
+        assert len(virtual_portfolio.positions) == 0
+        assert len(virtual_portfolio.transaction_history) == 0
+    
+    async def test_add_virtual_position(self, virtual_portfolio):
+        """Test adding virtual position to portfolio."""
+        position = Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.01"),
+            entry_price=Decimal("100000"),
+            current_price=Decimal("100000"),
+            status=PositionStatus.OPEN
+        )
+        
+        # Add position
+        virtual_portfolio.add_position(position)
+        
+        assert len(virtual_portfolio.positions) == 1
+        assert virtual_portfolio.positions[position.position_id] == position
+        
+        # Should update portfolio value
+        assert virtual_portfolio.total_market_value == Decimal("1000")
+    
+    async def test_virtual_transaction_recording(self, virtual_portfolio):
+        """Test virtual transaction recording and history."""
+        transaction = Transaction(
+            transaction_id=uuid4(),
+            transaction_type=TransactionType.BUY,
+            symbol="BTC/USDC",
+            size=Decimal("0.01"),
+            price=Decimal("100000"),
+            timestamp=datetime.now(),
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            transaction_hash="SIMULATED_HASH_123",
+            fees=Decimal("1.0")
+        )
+        
+        # Record transaction
+        virtual_portfolio.record_transaction(transaction)
+        
+        assert len(virtual_portfolio.transaction_history) == 1
+        assert virtual_portfolio.transaction_history[0] == transaction
+        
+        # Should update cash balance
+        expected_balance = Decimal("10000") - Decimal("1000") - Decimal("1.0")  # cost + fees
+        assert virtual_portfolio.cash_balance == expected_balance
+    
+    async def test_portfolio_performance_calculation(self, virtual_portfolio):
+        """Test virtual portfolio performance metrics calculation."""
+        # Add some positions and transactions
+        await self._create_test_positions(virtual_portfolio)
+        
+        # Calculate performance
+        performance = virtual_portfolio.calculate_performance()
+        
+        assert hasattr(performance, 'total_pnl')
+        assert hasattr(performance, 'win_rate')
+        assert hasattr(performance, 'profit_factor')
+        assert hasattr(performance, 'max_drawdown')
+        assert hasattr(performance, 'sharpe_ratio')
+    
+    async def test_risk_metrics_calculation(self, virtual_portfolio):
+        """Test virtual portfolio risk metrics."""
+        await self._create_test_positions(virtual_portfolio)
+        
+        # Calculate risk metrics
+        risk_metrics = virtual_portfolio.calculate_risk_metrics()
+        
+        assert hasattr(risk_metrics, 'var_95')
+        assert hasattr(risk_metrics, 'var_99')
+        assert hasattr(risk_metrics, 'volatility')
+        assert hasattr(risk_metrics, 'max_position_risk')
+        assert hasattr(risk_metrics, 'concentration_risk')
+    
+    async def test_position_pnl_updates(self, virtual_portfolio):
+        """Test position P&L updates with price changes."""
+        # Add position
+        position_id = uuid4()
+        position = Position(
+            position_id=position_id,
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.01"),
+            entry_price=Decimal("100000"),
+            current_price=Decimal("100000"),
+            status=PositionStatus.OPEN
+        )
+        virtual_portfolio.add_position(position)
+        
+        # Update price
+        new_price = Decimal("105000")  # 5% increase
+        virtual_portfolio.update_position_price(position_id, new_price)
+        
+        updated_position = virtual_portfolio.positions[position_id]
+        assert updated_position.current_price == new_price
+        assert updated_position.unrealized_pnl == Decimal("50")  # 0.01 * 5000
+        assert updated_position.unrealized_pnl_pct == Decimal("0.05")
+    
+    async def test_cash_management(self, virtual_portfolio):
+        """Test virtual cash balance management."""
+        initial_balance = virtual_portfolio.cash_balance
+        
+        # Spend cash on position
+        virtual_portfolio.spend_cash(Decimal("1000"), "BTC purchase")
+        assert virtual_portfolio.cash_balance == initial_balance - Decimal("1000")
+        
+        # Add cash from position sale
+        virtual_portfolio.add_cash(Decimal("1100"), "BTC sale")
+        assert virtual_portfolio.cash_balance == initial_balance + Decimal("100")
+        
+        # Should maintain transaction history
+        assert len(virtual_portfolio.cash_transactions) == 2
+    
+    async def _create_test_positions(self, virtual_portfolio):
+        """Helper to create test positions."""
+        positions = [
+            Position(
+                position_id=uuid4(),
+                symbol="BTC/USDC",
+                position_type=PositionType.SPOT,
+                chain=Chain.SOLANA,
+                dex_name="jupiter",
+                size=Decimal("0.01"),
+                entry_price=Decimal("100000"),
+                current_price=Decimal("105000"),
+                status=PositionStatus.OPEN
+            ),
+            Position(
+                position_id=uuid4(),
+                symbol="ETH/USDC",
+                position_type=PositionType.SPOT,
+                chain=Chain.ETHEREUM,
+                dex_name="uniswap_v3",
+                size=Decimal("0.5"),
+                entry_price=Decimal("2500"),
+                current_price=Decimal("2400"),
+                status=PositionStatus.OPEN
+            )
+        ]
+        
+        for position in positions:
+            virtual_portfolio.add_position(position)
+
+
+class TestSimulationRiskManager:
+    """Test suite for SimulationRiskManager."""
+    
+    @pytest.fixture
+    def virtual_portfolio(self):
+        """Virtual portfolio for risk management testing."""
+        return VirtualPortfolio(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC"
+        )
+    
+    @pytest.fixture
+    def risk_config(self):
+        """Risk management configuration."""
+        return {
+            "max_position_size_pct": 0.1,
+            "max_daily_loss_pct": 0.05,
+            "max_drawdown_pct": 0.15,
+            "stop_loss_pct": 0.08,
+            "take_profit_pct": 0.4,
+            "max_open_positions": 10
+        }
+    
+    @pytest.fixture
+    def simulation_risk_manager(self, virtual_portfolio, risk_config):
+        """SimulationRiskManager instance for testing."""
+        return SimulationRiskManager(
+            virtual_portfolio=virtual_portfolio,
+            config=risk_config
+        )
+    
+    async def test_position_size_validation(self, simulation_risk_manager):
+        """Test position size validation against risk limits."""
+        # Valid position size (within 10% limit)
+        valid_size = Decimal("800")  # 8% of portfolio
+        result = await simulation_risk_manager.validate_position_size(
+            "BTC_ADDRESS", valid_size
+        )
+        assert result.is_valid is True
+        
+        # Invalid position size (exceeds 10% limit)
+        invalid_size = Decimal("1200")  # 12% of portfolio
+        result = await simulation_risk_manager.validate_position_size(
+            "BTC_ADDRESS", invalid_size
+        )
+        assert result.is_valid is False
+        assert "position size exceeds" in result.reason.lower()
+    
+    async def test_daily_loss_limit_check(self, simulation_risk_manager):
+        """Test daily loss limit enforcement."""
+        # Simulate daily losses
+        simulation_risk_manager.virtual_portfolio.daily_pnl = Decimal("-400")  # 4% loss
+        
+        # Should allow new trades (under 5% limit)
+        result = await simulation_risk_manager.check_daily_loss_limit()
+        assert result.is_valid is True
+        
+        # Exceed daily loss limit
+        simulation_risk_manager.virtual_portfolio.daily_pnl = Decimal("-600")  # 6% loss
+        
+        result = await simulation_risk_manager.check_daily_loss_limit()
+        assert result.is_valid is False
+        assert "daily loss limit" in result.reason.lower()
+    
+    async def test_drawdown_monitoring(self, simulation_risk_manager):
+        """Test maximum drawdown monitoring."""
+        # Set portfolio peak and current values
+        simulation_risk_manager.virtual_portfolio.peak_value = Decimal("12000")
+        simulation_risk_manager.virtual_portfolio.current_value = Decimal("10500")  # 12.5% drawdown
+        
+        # Should allow trading (under 15% limit)
+        result = await simulation_risk_manager.check_max_drawdown()
+        assert result.is_valid is True
+        
+        # Exceed drawdown limit
+        simulation_risk_manager.virtual_portfolio.current_value = Decimal("9000")  # 25% drawdown
+        
+        result = await simulation_risk_manager.check_max_drawdown()
+        assert result.is_valid is False
+        assert "maximum drawdown" in result.reason.lower()
+    
+    async def test_stop_loss_monitoring(self, simulation_risk_manager):
+        """Test stop loss monitoring for positions."""
+        # Create position with loss
+        position = Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.01"),
+            entry_price=Decimal("100000"),
+            current_price=Decimal("91000"),  # 9% loss
+            status=PositionStatus.OPEN
+        )
+        
+        simulation_risk_manager.virtual_portfolio.add_position(position)
+        
+        # Should trigger stop loss (8% limit)
+        stop_loss_positions = await simulation_risk_manager.check_stop_losses()
+        assert len(stop_loss_positions) == 1
+        assert stop_loss_positions[0].position_id == position.position_id
+    
+    async def test_take_profit_monitoring(self, simulation_risk_manager):
+        """Test take profit monitoring for positions."""
+        # Create position with profit
+        position = Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.01"),
+            entry_price=Decimal("100000"),
+            current_price=Decimal("145000"),  # 45% profit
+            status=PositionStatus.OPEN
+        )
+        
+        simulation_risk_manager.virtual_portfolio.add_position(position)
+        
+        # Should trigger take profit (40% limit)
+        take_profit_positions = await simulation_risk_manager.check_take_profits()
+        assert len(take_profit_positions) == 1
+        assert take_profit_positions[0].position_id == position.position_id
+    
+    async def test_max_positions_limit(self, simulation_risk_manager):
+        """Test maximum number of open positions limit."""
+        # Add positions up to limit
+        for i in range(10):  # Max 10 positions
+            position = Position(
+                position_id=uuid4(),
+                symbol=f"TOKEN{i}/USDC",
+                position_type=PositionType.SPOT,
+                chain=Chain.SOLANA,
+                dex_name="jupiter",
+                size=Decimal("0.01"),
+                entry_price=Decimal("100"),
+                current_price=Decimal("100"),
+                status=PositionStatus.OPEN
+            )
+            simulation_risk_manager.virtual_portfolio.add_position(position)
+        
+        # Should reject new position (exceeds limit)
+        result = await simulation_risk_manager.validate_new_position("NEW_TOKEN")
+        assert result.is_valid is False
+        assert "maximum number of positions" in result.reason.lower()
+    
+    async def test_risk_assessment_integration(self, simulation_risk_manager):
+        """Test comprehensive risk assessment."""
+        # Create scenario with multiple risk factors
+        simulation_risk_manager.virtual_portfolio.daily_pnl = Decimal("-300")  # 3% daily loss
+        
+        # Add position near size limit
+        position = Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.08"),  # 8% of portfolio
+            entry_price=Decimal("100000"),
+            current_price=Decimal("95000"),  # 5% loss
+            status=PositionStatus.OPEN
+        )
+        simulation_risk_manager.virtual_portfolio.add_position(position)
+        
+        # Comprehensive risk assessment
+        risk_assessment = await simulation_risk_manager.assess_portfolio_risk()
+        
+        assert hasattr(risk_assessment, 'overall_risk_level')
+        assert hasattr(risk_assessment, 'risk_factors')
+        assert hasattr(risk_assessment, 'recommendations')
+        assert len(risk_assessment.risk_factors) > 0
+
+
+class TestSimulationIntegration:
+    """Test suite for simulation mode integration with existing systems."""
+    
+    @pytest.fixture
+    def complete_simulation_setup(self):
+        """Complete simulation setup with all components."""
+        portfolio_config = PortfolioConfig(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC"
+        )
+        
+        portfolio = Portfolio(
+            portfolio_id=uuid4(),
+            name="Simulation Portfolio",
+            config=portfolio_config,
+            cash_balance=Decimal("10000"),
+            total_value=Decimal("10000")
+        )
+        
+        mode_config = ModeConfig(
+            mode_type=ModeType.SIMULATION,
+            enabled=True,
+            parameters={
+                "initial_balance": 10000,
+                "enable_fees": True,
+                "slippage_bps": 10,
+                "enable_real_time_data": True
+            }
+        )
+        
+        return {
+            "portfolio": portfolio,
+            "mode_config": mode_config,
+            "simulation_mode": SimulationMode(uuid4(), mode_config, portfolio)
+        }
+    
+    async def test_dex_client_integration(self, complete_simulation_setup):
+        """Test integration with existing DEX clients for market data."""
+        simulation_mode = complete_simulation_setup["simulation_mode"]
+        
+        # Mock DEX client integration
+        with patch('src.dex.jupiter_client.JupiterClient') as mock_jupiter:
+            mock_jupiter.return_value.get_token_price.return_value = Decimal("100000")
+            mock_jupiter.return_value.get_quote.return_value = SwapQuote(
+                input_token="USDC",
+                output_token="BTC",
+                input_amount=Decimal("1000"),
+                output_amount=Decimal("0.01"),
+                price=Decimal("100000"),
+                price_impact_bps=10,
+                slippage_bps=10,
+                dex_name="jupiter"
+            )
+            
+            await simulation_mode.initialize()
+            
+            # Should initialize DEX clients
+            assert hasattr(simulation_mode, 'dex_clients')
+            assert 'jupiter' in simulation_mode.dex_clients
+    
+    async def test_portfolio_manager_integration(self, complete_simulation_setup):
+        """Test integration with portfolio management system."""
+        simulation_mode = complete_simulation_setup["simulation_mode"]
+        
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Execute simulated trade  
+        from src.discovery.base import DiscoveredToken
+        mock_token = DiscoveredToken(
+            token_address="TEST_TOKEN_123",
+            name="Test Token", 
+            symbol="TEST",
+            chain="solana",
+            token_age_hours=24,
+            creator_balance_pct=5.0,
+            top_10_holder_balance_pct=15.0,
+            is_honeypot=False,
+            is_renounced=True,
+            has_trading_enabled=True
+        )
+        
+        market_state = MarketState(
+            token=mock_token,
+            price_usd=100.0,
+            price_change_24h=5.0,
+            volume_24h=1000000.0,
+            rsi=25.0  # Buy signal
+        )
+        
+        action = await simulation_mode.process_tick(market_state)
+        
+        # Should integrate with portfolio system
+        assert action in [TradeAction.BUY, TradeAction.STRONG_BUY]
+        
+        # Virtual portfolio should be updated
+        virtual_portfolio = simulation_mode.virtual_portfolio
+        assert len(virtual_portfolio.transaction_history) > 0
+    
+    async def test_ml_rl_integration(self, complete_simulation_setup):
+        """Test integration with ML/RL decision making."""
+        simulation_mode = complete_simulation_setup["simulation_mode"]
+        
+        # Mock ML/RL integration
+        with patch('src.integration.ml_rl_bridge.MLRLBridge') as mock_bridge:
+            mock_bridge.return_value.make_trading_decision.return_value = {
+                "action": TradeAction.BUY,
+                "confidence": 0.85,
+                "position_size": Decimal("1000")
+            }
+            
+            await simulation_mode.initialize()
+            
+            # Should use ML/RL for decision making
+            from src.discovery.base import DiscoveredToken
+            mock_token = DiscoveredToken(
+                token_address="TEST_TOKEN_123",
+                name="Test Token",
+                symbol="TEST", 
+                chain="solana",
+                token_age_hours=24,
+                creator_balance_pct=5.0,
+                top_10_holder_balance_pct=15.0,
+                is_honeypot=False,
+                is_renounced=True,
+                has_trading_enabled=True
+            )
+            
+            market_state = MarketState(
+                token=mock_token,
+                price_usd=100.0,
+                price_change_24h=5.0,
+                volume_24h=1000000.0
+            )
+            action = await simulation_mode.process_tick(market_state)
+            
+            assert action == TradeAction.BUY
+    
+    async def test_real_time_market_data_feed(self, complete_simulation_setup):
+        """Test real-time market data integration."""
+        simulation_mode = complete_simulation_setup["simulation_mode"]
+        
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Should have active market data feed
+        assert simulation_mode.market_data_feed.is_active
+        
+        # Should receive and process market updates
+        market_update = {
+            "BTC_ADDRESS": {
+                "price": Decimal("105000"),
+                "volume_24h": Decimal("2000000"),
+                "timestamp": datetime.now()
+            }
+        }
+        
+        await simulation_mode.process_market_update(market_update)
+        
+        # Should update virtual portfolio prices
+        positions = simulation_mode.virtual_portfolio.positions
+        if positions:
+            for position in positions.values():
+                assert position.updated_at is not None
+    
+    async def test_performance_monitoring_integration(self, complete_simulation_setup):
+        """Test integration with performance monitoring."""
+        simulation_mode = complete_simulation_setup["simulation_mode"]
+        
+        await simulation_mode.initialize()
+        await simulation_mode.start()
+        
+        # Generate some trading activity
+        from src.discovery.base import DiscoveredToken
+        mock_token = DiscoveredToken(
+            token_address="TEST_TOKEN_123",
+            name="Test Token",
+            symbol="TEST",
+            chain="solana", 
+            token_age_hours=24,
+            creator_balance_pct=5.0,
+            top_10_holder_balance_pct=15.0,
+            is_honeypot=False,
+            is_renounced=True,
+            has_trading_enabled=True
+        )
+        
+        for _ in range(5):
+            market_state = MarketState(
+                token=mock_token,
+                price_usd=100.0,
+                price_change_24h=5.0,
+                volume_24h=1000000.0,
+                rsi=30.0
+            )
+            await simulation_mode.process_tick(market_state)
+            await asyncio.sleep(0.01)  # Brief pause
+        
+        # Should track performance metrics
+        metrics = simulation_mode.simulation_metrics
+        assert metrics.total_trades >= 0
+        assert hasattr(metrics, 'execution_latency_ms')
+        assert hasattr(metrics, 'average_slippage_bps')
+        
+        # Should generate performance report
+        report = await simulation_mode.generate_performance_report()
+        assert 'total_trades' in report
+        assert 'win_rate' in report
+        assert 'profit_factor' in report

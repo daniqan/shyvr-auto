@@ -331,7 +331,7 @@ class LiveRiskManager:
     
     async def validate_position_size(self, token_address: str, amount_usd: Decimal) -> RiskValidationResult:
         """Validate position size against risk limits."""
-        portfolio_value = self.portfolio.get_total_value()
+        portfolio_value = self.portfolio.total_value
         max_position_value = portfolio_value * self.max_position_size_pct
         
         if amount_usd > max_position_value:
@@ -343,7 +343,7 @@ class LiveRiskManager:
             )
         
         # Check concentration risk
-        existing_positions = self.portfolio.get_positions()
+        existing_positions = list(self.portfolio.positions.values())
         token_exposure = sum(
             pos.market_value for pos in existing_positions 
             if pos.symbol.startswith(token_address.split('_')[0])
@@ -362,7 +362,7 @@ class LiveRiskManager:
     
     async def validate_new_position(self, token_address: str) -> RiskValidationResult:
         """Validate that a new position can be opened."""
-        current_positions = len([p for p in self.portfolio.get_positions() if p.status == PositionStatus.OPEN])
+        current_positions = len([p for p in self.portfolio.positions.values() if p.status == PositionStatus.OPEN])
         
         if current_positions >= self.config.max_open_positions:
             return RiskValidationResult(
@@ -377,10 +377,10 @@ class LiveRiskManager:
     async def check_daily_loss_limit(self, daily_pnl: Decimal = None) -> RiskValidationResult:
         """Check daily loss limit enforcement."""
         if daily_pnl is None:
-            performance = self.portfolio.get_performance_metrics()
+            performance = self.portfolio.performance_metrics
             daily_pnl = performance.total_pnl  # Simplified - would need proper daily calculation
         
-        portfolio_value = self.portfolio.get_total_value()
+        portfolio_value = self.portfolio.total_value
         daily_loss_limit = portfolio_value * self.config.max_daily_loss_pct
         
         if abs(daily_pnl) > daily_loss_limit and daily_pnl < 0:
@@ -395,7 +395,7 @@ class LiveRiskManager:
     
     async def check_emergency_conditions(self) -> EmergencyStopResult:
         """Check for emergency risk conditions."""
-        performance = self.portfolio.get_performance_metrics()
+        performance = self.portfolio.performance_metrics
         
         # Check maximum drawdown
         if performance.max_drawdown > self.config.emergency_drawdown_pct:
@@ -466,7 +466,7 @@ class RealTimePnLTracker:
         """Main P&L tracking loop."""
         while self.is_tracking:
             try:
-                performance = self.portfolio.get_performance_metrics()
+                performance = self.portfolio.performance_metrics
                 await self.update_pnl(performance.current_balance, performance.unrealized_pnl)
                 await asyncio.sleep(self.update_frequency_seconds)
             except asyncio.CancelledError:
@@ -543,7 +543,7 @@ class PortfolioSynchronizer:
         discrepancies = []
         
         try:
-            portfolio_positions = self.portfolio.get_positions()
+            portfolio_positions = list(self.portfolio.positions.values())
             
             for position in portfolio_positions:
                 if position.status == PositionStatus.OPEN:
@@ -1229,8 +1229,8 @@ class LiveMode(ModeBase):
                     success=swap_result.status == SwapStatus.CONFIRMED,
                     slippage=0.01,  # Would calculate from swap result
                     fees=float(position_size * Decimal("0.003")),  # Estimated fees
-                    portfolio_value_before=float(self.portfolio.get_total_value()),
-                    portfolio_value_after=float(self.portfolio.get_total_value()),
+                    portfolio_value_before=float(self.portfolio.total_value),
+                    portfolio_value_after=float(self.portfolio.total_value),
                     cash_change=float(-position_size),
                     position_change=float(swap_result.actual_output_amount) if swap_result.actual_output_amount else 0.0,
                     transaction_hash=swap_result.transaction_hash
@@ -1241,7 +1241,7 @@ class LiveMode(ModeBase):
             
             elif action in [TradeAction.SELL, TradeAction.STRONG_SELL]:
                 # Find positions to sell
-                open_positions = [p for p in self.portfolio.get_positions() if p.status == PositionStatus.OPEN]
+                open_positions = [p for p in self.portfolio.positions.values() if p.status == PositionStatus.OPEN]
                 if open_positions:
                     position = open_positions[0]  # Sell first position
                     
@@ -1300,7 +1300,7 @@ class LiveMode(ModeBase):
     
     async def _calculate_position_size(self, action: TradeAction, market_state: MarketState) -> Decimal:
         """Calculate position size based on action strength and risk parameters."""
-        portfolio_value = self.portfolio.get_total_value()
+        portfolio_value = self.portfolio.total_value
         base_position_pct = self.live_config.max_position_size_pct / 2  # Start with half max
         
         if action == TradeAction.STRONG_BUY:
@@ -1313,7 +1313,7 @@ class LiveMode(ModeBase):
     def _update_live_metrics(self) -> None:
         """Update live trading metrics."""
         try:
-            performance = self.portfolio.get_performance_metrics()
+            performance = self.portfolio.performance_metrics
             
             self.live_metrics.current_portfolio_value = performance.current_balance
             self.live_metrics.realized_pnl = performance.realized_pnl
@@ -1324,7 +1324,7 @@ class LiveMode(ModeBase):
             self.live_metrics.current_drawdown = performance.max_drawdown  # Simplified
             
             # Update position counts
-            positions = self.portfolio.get_positions()
+            positions = list(self.portfolio.positions.values())
             self.live_metrics.active_positions = len([p for p in positions if p.status == PositionStatus.OPEN])
             
             # Update pending orders count
@@ -1413,11 +1413,11 @@ class PositionManager:
     
     async def get_live_positions(self) -> List[Position]:
         """Get current live positions with real-time updates."""
-        return self.portfolio.get_positions()
+        return list(self.portfolio.positions.values())
     
     async def update_position_price(self, position_id: UUID, new_price: Decimal) -> None:
         """Update position with real-time price data."""
-        positions = self.portfolio.get_positions()
+        positions = list(self.portfolio.positions.values())
         for position in positions:
             if position.position_id == position_id:
                 position.update_price(new_price)

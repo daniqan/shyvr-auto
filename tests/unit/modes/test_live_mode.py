@@ -135,10 +135,16 @@ def create_mock_dex_client():
 def mock_portfolio():
     """Create mock portfolio for testing."""
     portfolio = Mock(spec=Portfolio)
-    portfolio.get_cash_balance.return_value = Decimal("10000")
-    portfolio.get_total_value.return_value = Decimal("15000")
-    portfolio.get_positions.return_value = []
-    portfolio.get_performance_metrics.return_value = PerformanceMetrics(
+    portfolio.cash_balance = Decimal("10000")
+    portfolio.total_value = Decimal("15000")
+    portfolio.positions = {}
+    
+    # Mock methods
+    portfolio.get_positions_by_chain.return_value = {}
+    portfolio.get_positions_by_dex.return_value = {}
+    
+    # Create mock performance metrics
+    performance_metrics = PerformanceMetrics(
         total_pnl=Decimal("1000"),
         realized_pnl=Decimal("800"),
         unrealized_pnl=Decimal("200"),
@@ -153,6 +159,12 @@ def mock_portfolio():
         initial_balance=Decimal("10000"),
         current_balance=Decimal("11000")
     )
+    portfolio.performance_metrics = performance_metrics
+    
+    # Add properties that live mode expects
+    portfolio.open_positions = {}
+    portfolio.total_unrealized_pnl = Decimal("200")
+    
     return portfolio
 
 
@@ -225,7 +237,6 @@ def live_mode_config():
 class TestLiveModeConfig:
     """Test live mode configuration and validation."""
     
-    @pytest.mark.skip(reason="Implementation pending - TDD")
     def test_live_mode_config_creation(self):
         """Test LiveModeConfig creation and validation."""
         config = LiveModeConfig(
@@ -242,7 +253,6 @@ class TestLiveModeConfig:
         assert config.max_position_size_pct == Decimal("0.1")
         assert len(config.dex_preference_order) == 3
     
-    @pytest.mark.skip(reason="Implementation pending - TDD")
     def test_live_mode_config_validation_errors(self):
         """Test validation errors in live mode configuration."""
         # Test invalid position size
@@ -623,7 +633,6 @@ class TestRealTimePnLTracker:
 class TestLiveMode:
     """Test main live trading mode class."""
     
-    @pytest.mark.skip(reason="Implementation pending - TDD")
     async def test_live_mode_initialization(self, live_mode_config, mock_portfolio, mock_dex_clients):
         """Test live mode initialization with all components."""
         with patch('src.modes.live_mode.LiveTradingExecutor') as mock_executor, \
