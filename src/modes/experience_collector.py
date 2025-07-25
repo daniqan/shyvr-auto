@@ -504,6 +504,14 @@ class TradingExperienceCollector:
             'buffer_size': len(self.replay_buffer) if self.replay_buffer else 0
         }
     
+    def get_buffer_size(self) -> int:
+        """Get current replay buffer size"""
+        return len(self.replay_buffer) if self.replay_buffer else 0
+    
+    def should_trigger_training(self, threshold: int) -> bool:
+        """Check if training should be triggered based on buffer size"""
+        return self.get_buffer_size() >= threshold
+    
     def _convert_to_rl_experience(self, exp_data: TradingExperienceData) -> Experience:
         """Convert trading experience to RL experience format"""
         return Experience(
