@@ -311,7 +311,7 @@ class TestSimulationExecutor:
         )
         
         # Should return simulation result
-        assert result.is_simulated is True
+        assert result.transaction_data["is_simulated"] is True
         assert result.status == SwapStatus.CONFIRMED
         assert result.input_amount == Decimal("1000")
         assert result.actual_output_amount is not None
@@ -351,7 +351,7 @@ class TestSimulationExecutor:
         )
         
         # Should return simulation result
-        assert result.is_simulated is True
+        assert result.transaction_data["is_simulated"] is True
         assert result.status == SwapStatus.CONFIRMED
         
         # Should update virtual portfolio with profit

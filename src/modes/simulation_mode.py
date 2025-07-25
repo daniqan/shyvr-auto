@@ -464,12 +464,17 @@ class SimulationExecutor:
             # Apply simulation effects
             adjusted_result = await self._apply_simulation_effects(quote)
             
-            # Create virtual position
+            # Create virtual position and update cash balance
             if adjusted_result.status == SwapStatus.CONFIRMED:
+                # Deduct cost from virtual portfolio
+                total_cost = amount_usd + Decimal(str(adjusted_result.transaction_data["fees"]))
+                self.virtual_portfolio.spend_cash(total_cost, f"Buy {token_address}")
+                
+                # Create position
                 await self._create_virtual_position(
                     token_address=token_address,
                     amount=adjusted_result.actual_output_amount,
-                    entry_price=adjusted_result.actual_price
+                    entry_price=Decimal(str(adjusted_result.transaction_data["actual_price"]))
                 )
             
             execution_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -591,6 +596,8 @@ class SimulationExecutor:
         # Calculate actual price impact
         actual_price_impact_bps = quote.price_impact_bps + (self.slippage_bps // 2)
         
+        actual_price = adjusted_output / quote.input_amount if quote.input_amount > 0 else Decimal("0")
+        
         result = SwapResult(
             transaction_hash=f"SIMULATED_{uuid4().hex[:8]}",
             status=SwapStatus.CONFIRMED,
@@ -602,12 +609,12 @@ class SimulationExecutor:
             dex_name=quote.dex_name,
             quote_used=quote,
             actual_price_impact_bps=actual_price_impact_bps,
-            transaction_data={"is_simulated": True, "fees": fees}
+            transaction_data={
+                "is_simulated": True, 
+                "fees": fees,
+                "actual_price": actual_price
+            }
         )
-        # Add simulation-specific attributes
-        result.is_simulated = True
-        result.fees = fees
-        result.actual_price = adjusted_output / quote.input_amount if quote.input_amount > 0 else Decimal("0")
         
         return result
     
