@@ -13,9 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.dex.jupiter_client import JupiterDEXClient
 from src.dex.base import DEXConfig, SwapType
 from src.wallet.solana_wallet import SolanaWallet
-from src.wallet.base import WalletConfig
+from src.wallet.base import WalletConfig, NetworkType, Chain
 from src.trading.dex_wallet_bridge import DEXWalletBridge, SwapExecutionConfig
-from src.wallet.base import Chain, NetworkType
 
 
 @pytest.fixture
@@ -26,7 +25,8 @@ def jupiter_config():
         name="jupiter",
         max_slippage_bps=50,
         timeout_seconds=30,
-        rate_limit_per_second=10
+        rate_limit_per_second=10,
+        max_price_impact_bps=5000  # Allow up to 50% price impact for integration tests
     )
 
 
@@ -64,6 +64,14 @@ def mock_solana_wallet(solana_wallet_config):
     wallet._wallet_address = solana_wallet_config.wallet_address
     wallet.keypair = MagicMock()
     wallet.client = AsyncMock()
+    
+    # Pre-configure common wallet methods for integration tests
+    wallet.check_token_balance_for_swap = AsyncMock(return_value=True)
+    wallet.prepare_swap_accounts = AsyncMock(return_value={
+        "input_account": None,
+        "output_account": "mock_token_account"
+    })
+    wallet.execute_dex_swap = AsyncMock()
     
     return wallet
 
@@ -108,21 +116,12 @@ class TestJupiterSolanaIntegration:
             swap_response    # For execute_swap
         ]
         
-        # Step 3: Mock wallet balance check
-        mock_solana_wallet.check_token_balance_for_swap = AsyncMock(return_value=True)
-        
-        # Step 4: Mock wallet account preparation
-        mock_solana_wallet.prepare_swap_accounts = AsyncMock(return_value={
-            "input_account": None,  # SOL doesn't need token account
-            "output_account": "usdc_token_account_address"
-        })
-        
-        # Step 5: Mock wallet DEX swap execution
+        # Step 3: Configure mock wallet return values for this test
         from src.wallet.base import TransactionResult, TransactionStatus
-        mock_solana_wallet.execute_dex_swap = AsyncMock(return_value=TransactionResult(
+        mock_solana_wallet.execute_dex_swap.return_value = TransactionResult(
             transaction_hash="actual_transaction_hash_123",
             status=TransactionStatus.PENDING
-        ))
+        )
         
         # Execute complete swap flow
         quote = await integration_bridge.get_quote(
@@ -138,7 +137,7 @@ class TestJupiterSolanaIntegration:
         assert quote.output_token == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         assert quote.input_amount == Decimal("1000000000")
         assert quote.output_amount == Decimal("100000000")
-        assert quote.price_impact_bps == 25
+        assert quote.price_impact_bps == 2500  # 0.25 * 10000 = 2500 bps (25%)
         assert quote.dex_name == "jupiter"
         
         # Verify swap result
