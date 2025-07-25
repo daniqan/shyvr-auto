@@ -45,9 +45,41 @@ except ImportError:
     PositionCloseResult = None
 
 try:
-    from .pnl_calculator import PnLCalculator
+    from .pnl_calculator import (
+        PnLCalculator,
+        PnLCalculationResult,
+        PnLAttribution,
+        PnLTimeSeriesPoint,
+        PnLSummary,
+        PnLAggregationPeriod,
+        PortfolioPnLResult,
+        ChainPnLResult,
+        DexPnLResult,
+        TimeSeriesPnLResult,
+        HistoricalPnLResult,
+        FundingPnLResult,
+        FeesResult,
+        DexFeesResult,
+        PnLAttributionResult,
+        PnLCalculationError,
+    )
 except ImportError:
     PnLCalculator = None
+    PnLCalculationResult = None
+    PnLAttribution = None
+    PnLTimeSeriesPoint = None
+    PnLSummary = None
+    PnLAggregationPeriod = None
+    PortfolioPnLResult = None
+    ChainPnLResult = None
+    DexPnLResult = None
+    TimeSeriesPnLResult = None
+    HistoricalPnLResult = None
+    FundingPnLResult = None
+    FeesResult = None
+    DexFeesResult = None
+    PnLAttributionResult = None
+    PnLCalculationError = None
 
 try:
     from .portfolio_manager import (
@@ -99,7 +131,24 @@ __all__ = [
 if PositionTracker is not None:
     __all__.extend(["PositionTracker", "PositionUpdateResult", "PositionCloseResult"])
 if PnLCalculator is not None:
-    __all__.append("PnLCalculator")
+    __all__.extend([
+        "PnLCalculator",
+        "PnLCalculationResult",
+        "PnLAttribution",
+        "PnLTimeSeriesPoint",
+        "PnLSummary",
+        "PnLAggregationPeriod",
+        "PortfolioPnLResult",
+        "ChainPnLResult",
+        "DexPnLResult",
+        "TimeSeriesPnLResult",
+        "HistoricalPnLResult",
+        "FundingPnLResult",
+        "FeesResult",
+        "DexFeesResult",
+        "PnLAttributionResult",
+        "PnLCalculationError",
+    ])
 if PortfolioManager is not None:
     __all__.extend([
         "PortfolioManager", 
