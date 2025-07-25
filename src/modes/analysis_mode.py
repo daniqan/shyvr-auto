@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 import structlog
+from scipy.stats import norm
 
 from src.modes.base import AnalysisMode as BaseAnalysisMode, ModeConfig, ModeStatus
 from src.portfolio.base import Portfolio, Position, PositionType, PositionStatus
@@ -1097,6 +1098,54 @@ class AnalysisMode(BaseAnalysisMode):
         )
         
         return results
+    
+    # Risk Analysis Methods
+    async def assess_portfolio_risk(
+        self,
+        positions: List[Position],
+        market_conditions: str = "normal"
+    ) -> Dict[str, Any]:
+        """Assess comprehensive portfolio risk."""
+        if not self.risk_analyzer:
+            self.risk_analyzer = RiskAnalyzer(self.analysis_config)
+        
+        return await self.risk_analyzer.assess_portfolio_risk(positions, market_conditions)
+    
+    async def calculate_value_at_risk(
+        self,
+        positions: List[Position],
+        confidence_levels: List[float] = [0.95, 0.99],
+        time_horizons: List[int] = [1, 7, 30]
+    ) -> Dict[str, Any]:
+        """Calculate Value at Risk for different confidence levels and time horizons."""
+        if not self.risk_analyzer:
+            self.risk_analyzer = RiskAnalyzer(self.analysis_config)
+        
+        return await self.risk_analyzer.calculate_value_at_risk(
+            positions, confidence_levels, time_horizons
+        )
+    
+    async def run_stress_tests(
+        self,
+        positions: List[Position],
+        scenarios: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Run portfolio stress testing scenarios."""
+        if not self.risk_analyzer:
+            self.risk_analyzer = RiskAnalyzer(self.analysis_config)
+        
+        return await self.risk_analyzer.run_stress_tests(positions, scenarios)
+    
+    async def analyze_correlation_risk(
+        self,
+        symbols: List[str],
+        lookback_period_days: int = 30
+    ) -> Dict[str, Any]:
+        """Analyze correlation risk across positions."""
+        if not self.risk_analyzer:
+            self.risk_analyzer = RiskAnalyzer(self.analysis_config)
+        
+        return await self.risk_analyzer.analyze_correlation_risk(symbols, lookback_period_days)
 
 
 # Helper classes for analysis components
@@ -1468,3 +1517,381 @@ class RiskAnalyzer:
     def __init__(self, config: AnalysisConfig):
         self.config = config
         self.logger = logger.bind(component="risk_analyzer")
+    
+    async def assess_portfolio_risk(
+        self,
+        positions: List[Position],
+        market_conditions: str = "normal"
+    ) -> Dict[str, Any]:
+        """Assess comprehensive portfolio risk."""
+        if not positions:
+            return {
+                "overall_risk_score": 0.0,
+                "concentration_risk": 0.0,
+                "correlation_risk": 0.0,
+                "liquidity_risk": 0.0,
+                "market_risk": 0.0,
+                "recommendations": ["No positions to analyze"]
+            }
+        
+        # Calculate concentration risk (Herfindahl index)
+        total_value = sum(abs(float(pos.size * pos.current_price)) for pos in positions)
+        if total_value == 0:
+            concentration_risk = 0.0
+        else:
+            weights = [abs(float(pos.size * pos.current_price)) / total_value for pos in positions]
+            concentration_risk = sum(w**2 for w in weights)
+        
+        # Mock correlation risk (would normally calculate from historical data)
+        correlation_risk = np.random.uniform(0.3, 0.8)
+        
+        # Liquidity risk assessment
+        liquidity_risk = self._assess_liquidity_risk(positions)
+        
+        # Market risk based on conditions
+        market_risk_multiplier = {
+            "normal": 1.0,
+            "volatile": 1.5,
+            "crisis": 2.0,
+            "calm": 0.7
+        }.get(market_conditions, 1.0)
+        
+        market_risk = concentration_risk * market_risk_multiplier
+        
+        # Overall risk score (weighted combination)
+        overall_risk_score = (
+            concentration_risk * 0.3 +
+            correlation_risk * 0.25 +
+            liquidity_risk * 0.25 +
+            market_risk * 0.2
+        )
+        
+        # Generate recommendations
+        recommendations = []
+        if concentration_risk > 0.5:
+            recommendations.append("High concentration risk - consider diversifying positions")
+        if correlation_risk > 0.7:
+            recommendations.append("High correlation risk - positions may move together")
+        if liquidity_risk > 0.6:
+            recommendations.append("Liquidity concerns - some positions may be hard to exit")
+        if market_risk > 0.8:
+            recommendations.append(f"Elevated market risk due to {market_conditions} conditions")
+        
+        if not recommendations:
+            recommendations.append("Risk levels appear acceptable")
+        
+        risk_assessment = {
+            "overall_risk_score": float(overall_risk_score),
+            "concentration_risk": float(concentration_risk),
+            "correlation_risk": float(correlation_risk),
+            "liquidity_risk": float(liquidity_risk),
+            "market_risk": float(market_risk),
+            "recommendations": recommendations,
+            "market_conditions": market_conditions,
+            "assessment_timestamp": datetime.now().isoformat()
+        }
+        
+        self.logger.info(
+            "Completed portfolio risk assessment",
+            overall_risk=overall_risk_score,
+            positions=len(positions),
+            conditions=market_conditions
+        )
+        
+        return risk_assessment
+    
+    def _assess_liquidity_risk(self, positions: List[Position]) -> float:
+        """Assess liquidity risk based on position characteristics."""
+        if not positions:
+            return 0.0
+        
+        liquidity_scores = []
+        
+        for position in positions:
+            # Simple liquidity scoring based on position characteristics
+            symbol = position.symbol
+            size_usd = float(position.size * position.current_price)
+            
+            # Mock liquidity scoring
+            if "BTC" in symbol:
+                base_liquidity = 0.1  # High liquidity
+            elif "ETH" in symbol:
+                base_liquidity = 0.2  # Good liquidity
+            elif symbol.endswith("/USDC") or symbol.endswith("/USDT"):
+                base_liquidity = 0.3  # Decent liquidity
+            else:
+                base_liquidity = 0.6  # Lower liquidity
+            
+            # Adjust for position size
+            if size_usd > 100000:  # Large position
+                liquidity_penalty = 0.2
+            elif size_usd > 10000:  # Medium position
+                liquidity_penalty = 0.1
+            else:  # Small position
+                liquidity_penalty = 0.0
+            
+            position_liquidity_risk = min(base_liquidity + liquidity_penalty, 1.0)
+            liquidity_scores.append(position_liquidity_risk)
+        
+        # Return weighted average liquidity risk
+        return float(np.mean(liquidity_scores))
+    
+    async def calculate_value_at_risk(
+        self,
+        positions: List[Position],
+        confidence_levels: List[float] = [0.95, 0.99],
+        time_horizons: List[int] = [1, 7, 30]
+    ) -> Dict[str, Any]:
+        """Calculate Value at Risk for different confidence levels and time horizons."""
+        if not positions:
+            return {
+                "parametric_var": {},
+                "historical_var": {},
+                "monte_carlo_var": {},
+                "expected_shortfall": {}
+            }
+        
+        # Calculate portfolio value
+        portfolio_value = sum(float(pos.size * pos.current_price) for pos in positions)
+        
+        var_results = {
+            "parametric_var": {},
+            "historical_var": {},
+            "monte_carlo_var": {},
+            "expected_shortfall": {}
+        }
+        
+        for confidence_level in confidence_levels:
+            confidence_key = f"{confidence_level:.0%}"
+            var_results["parametric_var"][confidence_key] = {}
+            var_results["historical_var"][confidence_key] = {}
+            var_results["monte_carlo_var"][confidence_key] = {}
+            var_results["expected_shortfall"][confidence_key] = {}
+            
+            for time_horizon in time_horizons:
+                horizon_key = f"{time_horizon}d"
+                
+                # Parametric VaR (assuming normal distribution)
+                # Mock volatility based on position types
+                daily_volatility = self._estimate_portfolio_volatility(positions)
+                horizon_volatility = daily_volatility * np.sqrt(time_horizon)
+                
+                # Z-score for confidence level
+                z_score = norm.ppf(1 - confidence_level)
+                parametric_var = portfolio_value * horizon_volatility * abs(z_score)
+                
+                # Historical VaR (simulated)
+                historical_returns = np.random.normal(0, daily_volatility, 1000)
+                horizon_returns = np.sum(historical_returns.reshape(-1, time_horizon), axis=1)
+                historical_var = portfolio_value * abs(np.percentile(horizon_returns, (1 - confidence_level) * 100))
+                
+                # Monte Carlo VaR (simplified simulation)
+                monte_carlo_returns = np.random.normal(0, horizon_volatility, 10000)
+                monte_carlo_var = portfolio_value * abs(np.percentile(monte_carlo_returns, (1 - confidence_level) * 100))
+                
+                # Expected Shortfall (Conditional VaR)
+                tail_losses = monte_carlo_returns[monte_carlo_returns <= np.percentile(monte_carlo_returns, (1 - confidence_level) * 100)]
+                expected_shortfall = portfolio_value * abs(np.mean(tail_losses)) if len(tail_losses) > 0 else monte_carlo_var
+                
+                var_results["parametric_var"][confidence_key][horizon_key] = float(parametric_var)
+                var_results["historical_var"][confidence_key][horizon_key] = float(historical_var)
+                var_results["monte_carlo_var"][confidence_key][horizon_key] = float(monte_carlo_var)
+                var_results["expected_shortfall"][confidence_key][horizon_key] = float(expected_shortfall)
+        
+        var_results["portfolio_value"] = portfolio_value
+        var_results["calculation_timestamp"] = datetime.now().isoformat()
+        
+        self.logger.info(
+            "Calculated Value at Risk",
+            portfolio_value=portfolio_value,
+            confidence_levels=confidence_levels,
+            time_horizons=time_horizons
+        )
+        
+        return var_results
+    
+    def _estimate_portfolio_volatility(self, positions: List[Position]) -> float:
+        """Estimate daily portfolio volatility."""
+        if not positions:
+            return 0.0
+        
+        # Simple volatility estimation based on position types
+        total_value = sum(float(pos.size * pos.current_price) for pos in positions)
+        if total_value == 0:
+            return 0.0
+        
+        weighted_volatility = 0.0
+        
+        for position in positions:
+            weight = float(position.size * position.current_price) / total_value
+            
+            # Mock volatilities by asset type
+            if "BTC" in position.symbol:
+                asset_volatility = 0.04  # 4% daily volatility
+            elif "ETH" in position.symbol:
+                asset_volatility = 0.05  # 5% daily volatility
+            elif "SOL" in position.symbol:
+                asset_volatility = 0.06  # 6% daily volatility
+            else:
+                asset_volatility = 0.08  # 8% daily volatility for other assets
+            
+            weighted_volatility += weight * asset_volatility
+        
+        return weighted_volatility
+    
+    async def run_stress_tests(
+        self,
+        positions: List[Position],
+        scenarios: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Run portfolio stress testing scenarios."""
+        if not positions:
+            return []
+        
+        initial_portfolio_value = sum(float(pos.size * pos.current_price) for pos in positions)
+        stress_results = []
+        
+        for scenario in scenarios:
+            scenario_name = scenario.get("name", "Unknown Scenario")
+            
+            portfolio_impact = 0.0
+            position_impacts = []
+            
+            for position in positions:
+                symbol = position.symbol
+                position_value = float(position.size * position.current_price)
+                
+                # Apply scenario-specific changes
+                if "BTC" in symbol and "btc_change" in scenario:
+                    price_change = scenario["btc_change"]
+                elif "ETH" in symbol and "eth_change" in scenario:
+                    price_change = scenario["eth_change"]
+                elif "SOL" in symbol and "sol_change" in scenario:
+                    price_change = scenario.get("sol_change", scenario.get("btc_change", -0.3))
+                else:
+                    # Default to BTC correlation for other assets
+                    price_change = scenario.get("btc_change", -0.3) * 0.8  # 80% correlation
+                
+                position_impact = position_value * price_change
+                portfolio_impact += position_impact
+                
+                position_impacts.append({
+                    "symbol": symbol,
+                    "current_value": position_value,
+                    "price_change": price_change,
+                    "value_impact": position_impact,
+                    "percentage_impact": price_change
+                })
+            
+            # Estimate recovery time based on scenario severity
+            impact_severity = abs(portfolio_impact / initial_portfolio_value)
+            if impact_severity < 0.1:
+                recovery_time_estimate = "1-2 weeks"
+            elif impact_severity < 0.3:
+                recovery_time_estimate = "1-3 months"
+            elif impact_severity < 0.5:
+                recovery_time_estimate = "6-12 months"
+            else:
+                recovery_time_estimate = "12+ months"
+            
+            stress_result = {
+                "scenario_name": scenario_name,
+                "portfolio_impact": float(portfolio_impact),
+                "portfolio_impact_percentage": float(portfolio_impact / initial_portfolio_value),
+                "position_impacts": position_impacts,
+                "recovery_time_estimate": recovery_time_estimate,
+                "scenario_parameters": scenario
+            }
+            
+            stress_results.append(stress_result)
+        
+        self.logger.info(
+            "Completed stress testing",
+            scenarios=len(scenarios),
+            initial_value=initial_portfolio_value
+        )
+        
+        return stress_results
+    
+    async def analyze_correlation_risk(
+        self,
+        symbols: List[str],
+        lookback_period_days: int = 30
+    ) -> Dict[str, Any]:
+        """Analyze correlation risk across positions."""
+        if len(symbols) < 2:
+            return {
+                "correlation_matrix": {},
+                "diversification_score": 1.0,
+                "concentration_metrics": {},
+                "risk_contribution": {}
+            }
+        
+        # Generate mock correlation matrix
+        correlation_matrix = {}
+        for i, symbol1 in enumerate(symbols):
+            correlation_matrix[symbol1] = {}
+            for j, symbol2 in enumerate(symbols):
+                if i == j:
+                    correlation_matrix[symbol1][symbol2] = 1.0
+                else:
+                    # Mock correlations based on asset types
+                    if ("BTC" in symbol1 and "BTC" in symbol2) or ("ETH" in symbol1 and "ETH" in symbol2):
+                        correlation = 1.0
+                    elif ("BTC" in symbol1 or "BTC" in symbol2) and ("ETH" in symbol1 or "ETH" in symbol2):
+                        correlation = np.random.uniform(0.6, 0.8)  # High crypto correlation
+                    elif any(crypto in symbol1 and crypto in symbol2 for crypto in ["SOL", "AVAX", "MATIC"]):
+                        correlation = np.random.uniform(0.5, 0.7)  # Medium alt correlation
+                    else:
+                        correlation = np.random.uniform(0.3, 0.6)  # Lower correlation
+                    
+                    correlation_matrix[symbol1][symbol2] = float(correlation)
+        
+        # Calculate diversification score (lower correlations = better diversification)
+        correlations = []
+        for symbol1 in symbols:
+            for symbol2 in symbols:
+                if symbol1 != symbol2:
+                    correlations.append(correlation_matrix[symbol1][symbol2])
+        
+        avg_correlation = np.mean(correlations) if correlations else 0
+        diversification_score = max(0, 1 - avg_correlation)  # Higher score = better diversification
+        
+        # Concentration metrics
+        concentration_metrics = {
+            "number_of_assets": len(symbols),
+            "average_correlation": float(avg_correlation),
+            "max_correlation": float(max(correlations)) if correlations else 0,
+            "min_correlation": float(min(correlations)) if correlations else 0
+        }
+        
+        # Risk contribution (simplified)
+        risk_contribution = {}
+        for symbol in symbols:
+            # Mock risk contribution based on typical behavior
+            if "BTC" in symbol:
+                risk_contrib = 0.4  # Bitcoin often dominates risk
+            elif "ETH" in symbol:
+                risk_contrib = 0.3
+            else:
+                risk_contrib = 0.3 / max(1, len(symbols) - 2)  # Split among alts
+            
+            risk_contribution[symbol] = float(risk_contrib)
+        
+        correlation_analysis = {
+            "correlation_matrix": correlation_matrix,
+            "diversification_score": float(diversification_score),
+            "concentration_metrics": concentration_metrics,
+            "risk_contribution": risk_contribution,
+            "lookback_period_days": lookback_period_days,
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        self.logger.info(
+            "Completed correlation risk analysis",
+            symbols=len(symbols),
+            avg_correlation=avg_correlation,
+            diversification_score=diversification_score
+        )
+        
+        return correlation_analysis
