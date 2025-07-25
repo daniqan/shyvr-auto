@@ -28,6 +28,9 @@ from .base import (
     SwapType,
     PriceImpact,
 )
+from .jupiter_client import JupiterDEXClient
+from .uniswap_v3_client import UniswapV3Client
+from .hyperliquid_client import HyperliquidDEXClient
 
 __all__ = [
     "DEXBase",
@@ -41,4 +44,7 @@ __all__ = [
     "DEXRateLimitError",
     "SwapType",
     "PriceImpact",
+    "JupiterDEXClient",
+    "UniswapV3Client",
+    "HyperliquidDEXClient",
 ]
