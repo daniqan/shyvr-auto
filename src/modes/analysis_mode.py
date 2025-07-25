@@ -548,6 +548,186 @@ class AnalysisMode(BaseAnalysisMode):
         
         return analysis_result
     
+    # Backtesting Operations
+    async def initialize_backtest_engine(self, config: Dict[str, Any]) -> 'BacktestEngine':
+        """Initialize backtest engine with configuration."""
+        if not self.backtest_engine:
+            self.backtest_engine = BacktestEngine(self.analysis_config)
+        
+        # Configure backtest engine
+        await self.backtest_engine.initialize(config)
+        
+        self.logger.info("Backtest engine initialized", config=config)
+        return self.backtest_engine
+    
+    async def run_strategy_backtest(
+        self,
+        strategy_name: str,
+        config: Dict[str, Any],
+        tokens: List[str]
+    ) -> Dict[str, Any]:
+        """Run a complete strategy backtest."""
+        if not self.backtest_engine:
+            await self.initialize_backtest_engine(config)
+        
+        # Run backtest for the strategy
+        backtest_result = await self.backtest_engine.run_backtest(
+            strategy_name=strategy_name,
+            tokens=tokens,
+            config=config
+        )
+        
+        self.logger.info(
+            "Completed strategy backtest",
+            strategy=strategy_name,
+            tokens=tokens,
+            total_return=backtest_result.get("total_return", 0)
+        )
+        
+        return backtest_result
+    
+    async def compare_strategies(
+        self,
+        strategies: List[str],
+        config: Dict[str, Any],
+        tokens: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Compare multiple strategies in backtest."""
+        comparison_results = []
+        
+        for strategy in strategies:
+            # Run backtest for each strategy
+            strategy_result = await self.run_strategy_backtest(
+                strategy_name=strategy,
+                config=config,
+                tokens=tokens
+            )
+            
+            # Calculate ranking score (simple weighted score)
+            ranking_score = (
+                strategy_result.get("total_return", 0) * 0.3 +
+                strategy_result.get("sharpe_ratio", 0) * 0.4 +
+                (1.0 - abs(strategy_result.get("max_drawdown", 0))) * 0.3
+            )
+            
+            comparison_result = {
+                "strategy_name": strategy,
+                "performance_metrics": strategy_result,
+                "ranking_score": ranking_score
+            }
+            
+            comparison_results.append(comparison_result)
+        
+        # Sort by ranking score
+        comparison_results.sort(key=lambda x: x["ranking_score"], reverse=True)
+        
+        self.logger.info(
+            "Completed strategy comparison",
+            strategies=strategies,
+            best_strategy=comparison_results[0]["strategy_name"] if comparison_results else None
+        )
+        
+        return comparison_results
+    
+    async def optimize_strategy_parameters(
+        self,
+        strategy_name: str,
+        parameter_grid: Dict[str, List[Any]],
+        optimization_metric: str = "sharpe_ratio"
+    ) -> Dict[str, Any]:
+        """Optimize strategy parameters through backtesting."""
+        best_parameters = None
+        best_performance = float('-inf')
+        optimization_history = []
+        parameter_sensitivity = {}
+        
+        # Generate all parameter combinations
+        from itertools import product
+        param_names = list(parameter_grid.keys())
+        param_values = list(parameter_grid.values())
+        
+        all_combinations = list(product(*param_values))
+        
+        for combination in all_combinations[:20]:  # Limit to 20 combinations for demo
+            # Create parameter dict for this combination
+            params = dict(zip(param_names, combination))
+            
+            # Create config with these parameters
+            config = {
+                "strategy_parameters": params,
+                "start_date": datetime.now() - timedelta(days=30),
+                "end_date": datetime.now(),
+                "initial_balance": Decimal("10000")
+            }
+            
+            # Run backtest with these parameters
+            try:
+                result = await self.run_strategy_backtest(
+                    strategy_name=strategy_name,
+                    config=config,
+                    tokens=["BTC/USDC"]  # Simple test
+                )
+                
+                metric_value = result.get(optimization_metric, 0)
+                
+                # Track history
+                optimization_history.append({
+                    "parameters": params.copy(),
+                    "metric_value": metric_value,
+                    "full_results": result
+                })
+                
+                # Update best if this is better
+                if metric_value > best_performance:
+                    best_performance = metric_value
+                    best_parameters = params.copy()
+                
+            except Exception as e:
+                self.logger.warning(
+                    "Error in parameter optimization iteration",
+                    params=params,
+                    error=str(e)
+                )
+        
+        # Calculate parameter sensitivity (simple analysis)
+        for param_name in param_names:
+            param_impacts = []
+            for entry in optimization_history:
+                param_impacts.append({
+                    "value": entry["parameters"][param_name],
+                    "metric": entry["metric_value"]
+                })
+            
+            # Simple sensitivity measure (correlation between param value and metric)
+            if len(param_impacts) > 1:
+                values = [p["value"] for p in param_impacts]
+                metrics = [p["metric"] for p in param_impacts]
+                
+                # Simple correlation calculation
+                if len(set(values)) > 1:  # Avoid division by zero
+                    correlation = np.corrcoef(values, metrics)[0, 1] if not np.isnan(np.corrcoef(values, metrics)[0, 1]) else 0
+                    parameter_sensitivity[param_name] = abs(correlation)
+                else:
+                    parameter_sensitivity[param_name] = 0
+            else:
+                parameter_sensitivity[param_name] = 0
+        
+        optimization_results = {
+            "best_parameters": best_parameters,
+            "best_performance": best_performance,
+            "parameter_sensitivity": parameter_sensitivity,
+            "optimization_history": optimization_history
+        }
+        
+        self.logger.info(
+            "Completed parameter optimization",
+            strategy=strategy_name,
+            best_performance=best_performance,
+            best_params=best_parameters
+        )
+        
+        return optimization_results
+    
     def get_memory_usage(self) -> int:
         """Get current memory usage estimate in bytes."""
         # Simple memory usage estimation
@@ -649,6 +829,330 @@ class BacktestEngine:
     def __init__(self, config: AnalysisConfig):
         self.config = config
         self.logger = logger.bind(component="backtest_engine")
+        self.initialized = False
+        self.backtest_config = None
+    
+    async def initialize(self, config: Dict[str, Any]) -> None:
+        """Initialize backtest engine with configuration."""
+        self.backtest_config = config
+        self.initialized = True
+        self.logger.info("Backtest engine initialized", config=config)
+    
+    async def run_backtest(
+        self,
+        strategy_name: str,
+        tokens: List[str],
+        config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Run a complete backtest for a strategy."""
+        if not self.initialized:
+            await self.initialize(config)
+        
+        # Extract configuration
+        start_date = config.get("start_date", datetime.now() - timedelta(days=30))
+        end_date = config.get("end_date", datetime.now())
+        initial_balance = float(config.get("initial_balance", 10000))
+        strategy_params = config.get("strategy_parameters", {})
+        transaction_costs = config.get("transaction_costs", {
+            "maker_fee": 0.001,
+            "taker_fee": 0.001,
+            "slippage_bps": 5
+        })
+        
+        # Initialize backtest state
+        portfolio_value = initial_balance
+        cash_balance = initial_balance
+        positions = {}
+        trade_history = []
+        daily_returns = []
+        equity_curve = []
+        
+        # Generate simulated price data for backtesting
+        price_data = self._generate_backtest_data(tokens[0], start_date, end_date)
+        
+        # Run backtest simulation
+        for i, data_point in enumerate(price_data):
+            current_price = data_point["price"]
+            current_time = data_point["timestamp"]
+            
+            # Calculate portfolio value
+            position_value = sum(
+                pos["size"] * current_price for pos in positions.values()
+            )
+            portfolio_value = cash_balance + position_value
+            equity_curve.append({
+                "timestamp": current_time,
+                "portfolio_value": portfolio_value
+            })
+            
+            # Generate trading signals based on strategy
+            signal = self._generate_strategy_signal(
+                strategy_name, data_point, price_data[max(0, i-20):i+1], strategy_params
+            )
+            
+            # Execute trades based on signals
+            if signal and signal != "HOLD":
+                trade = self._execute_backtest_trade(
+                    signal, current_price, current_time, cash_balance, 
+                    positions, transaction_costs, strategy_params
+                )
+                
+                if trade:
+                    trade_history.append(trade)
+                    # Update cash and positions
+                    if trade["side"] == "buy":
+                        cash_balance -= trade["cost"]
+                        positions[tokens[0]] = {
+                            "size": trade["size"],
+                            "entry_price": current_price,
+                            "entry_time": current_time
+                        }
+                    elif trade["side"] == "sell" and tokens[0] in positions:
+                        cash_balance += trade["proceeds"]
+                        del positions[tokens[0]]
+            
+            # Calculate daily return if this is end of day
+            if i > 0 and len(equity_curve) > 1:
+                prev_value = equity_curve[-2]["portfolio_value"]
+                daily_return = (portfolio_value - prev_value) / prev_value
+                daily_returns.append(daily_return)
+        
+        # Calculate final performance metrics
+        total_return = (portfolio_value - initial_balance) / initial_balance
+        
+        # Calculate risk metrics
+        if daily_returns:
+            returns_array = np.array(daily_returns)
+            sharpe_ratio = self._calculate_sharpe_ratio(returns_array)
+            sortino_ratio = self._calculate_sortino_ratio(returns_array)
+            max_drawdown = self._calculate_max_drawdown(equity_curve)
+        else:
+            sharpe_ratio = 0.0
+            sortino_ratio = 0.0
+            max_drawdown = 0.0
+        
+        # Calculate trading metrics
+        winning_trades = [t for t in trade_history if t.get("pnl", 0) > 0]
+        losing_trades = [t for t in trade_history if t.get("pnl", 0) < 0]
+        
+        win_rate = len(winning_trades) / len(trade_history) if trade_history else 0
+        profit_factor = (
+            sum(t.get("pnl", 0) for t in winning_trades) / 
+            abs(sum(t.get("pnl", 0) for t in losing_trades))
+            if losing_trades else float('inf')
+        )
+        
+        # Annualize return
+        days_traded = (end_date - start_date).days or 1
+        annual_return = (1 + total_return) ** (365 / days_traded) - 1
+        
+        backtest_result = {
+            "strategy_name": strategy_name,
+            "total_return": total_return,
+            "annual_return": annual_return,
+            "max_drawdown": max_drawdown,
+            "sharpe_ratio": sharpe_ratio,
+            "sortino_ratio": sortino_ratio,
+            "win_rate": win_rate,
+            "total_trades": len(trade_history),
+            "profit_factor": profit_factor if profit_factor != float('inf') else 10.0,
+            "trade_history": trade_history[-50:],  # Last 50 trades
+            "performance_metrics": {
+                "initial_balance": initial_balance,
+                "final_balance": portfolio_value,
+                "total_fees_paid": sum(t.get("fees", 0) for t in trade_history),
+                "average_trade_return": sum(t.get("pnl", 0) for t in trade_history) / len(trade_history) if trade_history else 0,
+                "volatility": returns_array.std() if len(returns_array) > 0 else 0
+            }
+        }
+        
+        self.logger.info(
+            "Completed backtest",
+            strategy=strategy_name,
+            total_return=total_return,
+            trades=len(trade_history),
+            sharpe=sharpe_ratio
+        )
+        
+        return backtest_result
+    
+    def _generate_backtest_data(self, symbol: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Generate simulated price data for backtesting."""
+        data_points = []
+        current_time = start_date
+        base_price = 100.0
+        
+        # Simple random walk with some trend
+        trend = np.random.uniform(-0.001, 0.001)  # Daily trend
+        
+        while current_time <= end_date:
+            # Add some volatility and trend
+            price_change = np.random.normal(trend, 0.02)
+            base_price *= (1 + price_change)
+            
+            # Add some technical indicator values
+            data_point = {
+                "timestamp": current_time,
+                "price": max(base_price, 0.01),  # Prevent negative prices
+                "volume": np.random.uniform(50000, 200000),
+                "rsi": np.random.uniform(20, 80),
+                "macd": np.random.uniform(-2, 2)
+            }
+            
+            data_points.append(data_point)
+            current_time += timedelta(hours=1)  # Hourly data
+        
+        return data_points
+    
+    def _generate_strategy_signal(
+        self, 
+        strategy_name: str, 
+        current_data: Dict[str, Any], 
+        historical_data: List[Dict[str, Any]], 
+        params: Dict[str, Any]
+    ) -> str:
+        """Generate trading signal based on strategy."""
+        if strategy_name == "RSI_MEAN_REVERSION":
+            rsi = current_data.get("rsi", 50)
+            oversold = params.get("rsi_oversold", 30)
+            overbought = params.get("rsi_overbought", 70)
+            
+            if rsi < oversold:
+                return "BUY"
+            elif rsi > overbought:
+                return "SELL"
+            else:
+                return "HOLD"
+                
+        elif strategy_name == "MACD_CROSSOVER":
+            macd = current_data.get("macd", 0)
+            if len(historical_data) > 1:
+                prev_macd = historical_data[-2].get("macd", 0)
+                
+                # Simple MACD crossover
+                if macd > 0 and prev_macd <= 0:
+                    return "BUY"
+                elif macd < 0 and prev_macd >= 0:
+                    return "SELL"
+            
+            return "HOLD"
+            
+        elif strategy_name == "BOLLINGER_BANDS":
+            # Simple price mean reversion
+            if len(historical_data) >= 20:
+                prices = [d["price"] for d in historical_data[-20:]]
+                sma = sum(prices) / len(prices)
+                current_price = current_data["price"]
+                
+                # Simple bands logic
+                if current_price < sma * 0.98:  # 2% below SMA
+                    return "BUY"
+                elif current_price > sma * 1.02:  # 2% above SMA
+                    return "SELL"
+            
+            return "HOLD"
+        
+        return "HOLD"
+    
+    def _execute_backtest_trade(
+        self,
+        signal: str,
+        price: float,
+        timestamp: datetime,
+        cash_balance: float,
+        positions: Dict[str, Any],
+        transaction_costs: Dict[str, float],
+        strategy_params: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Execute a trade in the backtest."""
+        position_size_pct = strategy_params.get("position_size_pct", 0.1)
+        
+        if signal == "BUY" and len(positions) == 0:  # Only buy if no position
+            position_value = cash_balance * position_size_pct
+            size = position_value / price
+            fees = position_value * transaction_costs.get("taker_fee", 0.001)
+            slippage = position_value * (transaction_costs.get("slippage_bps", 5) / 10000)
+            total_cost = position_value + fees + slippage
+            
+            if total_cost <= cash_balance:
+                return {
+                    "side": "buy",
+                    "price": price,
+                    "size": size,
+                    "cost": total_cost,
+                    "fees": fees + slippage,
+                    "timestamp": timestamp,
+                    "pnl": 0  # Will be calculated on sell
+                }
+        
+        elif signal == "SELL" and len(positions) > 0:  # Only sell if have position
+            # Assuming we're selling the first position
+            position = list(positions.values())[0]
+            size = position["size"]
+            proceeds_gross = size * price
+            fees = proceeds_gross * transaction_costs.get("taker_fee", 0.001)
+            slippage = proceeds_gross * (transaction_costs.get("slippage_bps", 5) / 10000)
+            proceeds_net = proceeds_gross - fees - slippage
+            
+            # Calculate P&L
+            entry_value = size * position["entry_price"]
+            pnl = proceeds_net - entry_value
+            
+            return {
+                "side": "sell",
+                "price": price,
+                "size": size,
+                "proceeds": proceeds_net,
+                "fees": fees + slippage,
+                "timestamp": timestamp,
+                "pnl": pnl,
+                "entry_price": position["entry_price"]
+            }
+        
+        return None
+    
+    def _calculate_sharpe_ratio(self, returns: np.ndarray, risk_free_rate: float = 0.02) -> float:
+        """Calculate Sharpe ratio."""
+        if len(returns) == 0 or returns.std() == 0:
+            return 0.0
+        
+        excess_returns = returns - (risk_free_rate / 365)  # Daily risk-free rate
+        return excess_returns.mean() / returns.std() * np.sqrt(365)  # Annualized
+    
+    def _calculate_sortino_ratio(self, returns: np.ndarray, risk_free_rate: float = 0.02) -> float:
+        """Calculate Sortino ratio."""
+        if len(returns) == 0:
+            return 0.0
+        
+        excess_returns = returns - (risk_free_rate / 365)
+        downside_returns = returns[returns < 0]
+        
+        if len(downside_returns) == 0:
+            return float('inf')
+        
+        downside_deviation = downside_returns.std()
+        if downside_deviation == 0:
+            return 0.0
+        
+        return excess_returns.mean() / downside_deviation * np.sqrt(365)
+    
+    def _calculate_max_drawdown(self, equity_curve: List[Dict[str, Any]]) -> float:
+        """Calculate maximum drawdown."""
+        if len(equity_curve) < 2:
+            return 0.0
+        
+        values = [point["portfolio_value"] for point in equity_curve]
+        peak = values[0]
+        max_drawdown = 0.0
+        
+        for value in values:
+            if value > peak:
+                peak = value
+            
+            drawdown = (peak - value) / peak
+            max_drawdown = max(max_drawdown, drawdown)
+        
+        return max_drawdown
 
 
 class RiskAnalyzer:
