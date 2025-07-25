@@ -123,24 +123,14 @@ class EthereumWallet(WalletBase):
             WalletConnectionError: If connection fails
         """
         try:
-            # Initialize Web3 connection
+            # Validate configuration first
             if not self.config.rpc_url:
                 raise WalletConnectionError("RPC URL not configured")
             
-            # Create async Web3 instance
-            self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(
-                self.config.rpc_url,
-                request_kwargs={'timeout': self.config.timeout_seconds}
-            ))
+            # Initialize and validate account/address BEFORE connecting to RPC
+            from .config import WalletConfigManager
+            config_manager = WalletConfigManager()
             
-            # Note: PoA middleware may be needed for some testnets
-            # For now, using standard middleware setup
-            
-            # Test connection
-            if not await self.w3.is_connected():
-                raise WalletConnectionError("Failed to connect to Ethereum network")
-            
-            # Initialize account or set read-only mode
             if self.config.wallet_address:
                 # Read-only mode (prioritize this over private key lookup)
                 if not is_address(self.config.wallet_address):
@@ -149,15 +139,13 @@ class EthereumWallet(WalletBase):
                 logger.info(f"Read-only mode for address: {self._wallet_address}")
             else:
                 # Try to get private key for full wallet functionality
-                from .config import WalletConfigManager
-                config_manager = WalletConfigManager()
-                
                 private_key = self.config.private_key
                 if not private_key:
                     private_key = config_manager.get_private_key(self.config.chain, self.config.network)
                 
                 if private_key:
                     try:
+                        # Validate private key BEFORE RPC connection
                         self.account = Account.from_key(private_key)
                         self._wallet_address = self.account.address
                         logger.info(f"Loaded account: {self.account.address}")
@@ -166,10 +154,20 @@ class EthereumWallet(WalletBase):
                 else:
                     raise WalletConnectionError("No private key or wallet address provided")
             
+            # Now initialize Web3 connection after successful key validation
+            self.w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(
+                self.config.rpc_url,
+                request_kwargs={'timeout': self.config.timeout_seconds}
+            ))
+            
+            # Test connection
+            if not await self.w3.is_connected():
+                raise WalletConnectionError("Failed to connect to Ethereum network")
+            
             self._connected = True
             
             # Validate network chain ID
-            chain_id = self.w3.eth.chain_id
+            chain_id = await self.w3.eth.get_property('chainId')
             expected_chain_ids = self._get_expected_chain_ids()
             
             if expected_chain_ids and chain_id not in expected_chain_ids:
