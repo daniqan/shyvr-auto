@@ -883,24 +883,29 @@ class RiskManager:
             positions_reduced = False
             emergency_stop_triggered = False
             
-            # Process each exceeded limit
+            # Check for emergency stop conditions first (independent of limit exceeded status)
             for check in check_result.limit_checks:
-                if not check.limit_exceeded:
-                    continue
-                
-                # Handle critical violations
-                if check.severity == RiskAlertSeverity.CRITICAL:
-                    if check.limit_type == "drawdown" and check.current_value >= self.config.emergency_stop_loss_pct:
-                        await self._trigger_emergency_stop()
-                        emergency_stop_triggered = True
-                        actions_taken.append("emergency_stop_triggered")
-                    elif check.limit_type == "position_size" and check.position_id:
-                        await self._reduce_position_size(check.position_id, Decimal("0.5"))
-                        positions_reduced = True
-                        actions_taken.append(f"reduced_position_{check.position_id}")
-                    elif check.limit_type == "leverage" and check.position_id:
-                        await self._reduce_leverage(check.position_id)
-                        actions_taken.append(f"reduced_leverage_{check.position_id}")
+                if check.limit_type == "drawdown" and check.current_value >= self.config.emergency_stop_loss_pct:
+                    await self._trigger_emergency_stop()
+                    emergency_stop_triggered = True
+                    actions_taken.append("emergency_stop_triggered")
+                    break  # Emergency stop takes precedence over other actions
+            
+            # Process other exceeded limits if no emergency stop
+            if not emergency_stop_triggered:
+                for check in check_result.limit_checks:
+                    if not check.limit_exceeded:
+                        continue
+                    
+                    # Handle critical violations
+                    if check.severity == RiskAlertSeverity.CRITICAL:
+                        if check.limit_type == "position_size" and check.position_id:
+                            await self._reduce_position_size(check.position_id, Decimal("0.5"))
+                            positions_reduced = True
+                            actions_taken.append(f"reduced_position_{check.position_id}")
+                        elif check.limit_type == "leverage" and check.position_id:
+                            await self._reduce_leverage(check.position_id)
+                            actions_taken.append(f"reduced_leverage_{check.position_id}")
             
             result = RiskLimitResult(
                 success=True,
