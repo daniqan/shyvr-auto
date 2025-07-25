@@ -136,8 +136,9 @@ class TestHistoricalDataAnalysis:
             symbol="TEST",
             name="Test Token",
             chain=Chain.ETHEREUM,
-            decimals=18,
-            created_at=datetime.now() - timedelta(days=100)
+            discovered_at=datetime.now() - timedelta(days=100),
+            discovery_source="manual",
+            decimals=18
         )
     
     @pytest.fixture

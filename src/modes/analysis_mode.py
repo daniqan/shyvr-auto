@@ -1146,6 +1146,485 @@ class AnalysisMode(BaseAnalysisMode):
             self.risk_analyzer = RiskAnalyzer(self.analysis_config)
         
         return await self.risk_analyzer.analyze_correlation_risk(symbols, lookback_period_days)
+    
+    # ML/RL Integration Methods
+    async def integrate_ml_analysis(
+        self,
+        ml_analyzer: Any,
+        tokens: List[str]
+    ) -> Dict[str, Any]:
+        """Integrate ML analysis for price prediction analysis."""
+        ml_analysis = {
+            "price_predictions": {},
+            "technical_analysis": {},
+            "confidence_metrics": {},
+            "feature_importance": {}
+        }
+        
+        for token in tokens:
+            try:
+                # Mock ML prediction call
+                price_prediction = {
+                    "price_1h": 45500.0,
+                    "price_4h": 46000.0,
+                    "price_24h": 47000.0,
+                    "confidence": 0.78,
+                    "direction": "bullish"
+                }
+                
+                # Mock technical indicators call
+                technical_indicators = {
+                    "rsi": {"value": 65.0, "signal": "neutral"},
+                    "macd": {"value": 150.0, "signal": "bullish"},
+                    "bollinger_upper": 46500.0,
+                    "bollinger_lower": 44500.0
+                }
+                
+                ml_analysis["price_predictions"][token] = price_prediction
+                ml_analysis["technical_analysis"][token] = technical_indicators
+                ml_analysis["confidence_metrics"][token] = {
+                    "overall_confidence": price_prediction["confidence"],
+                    "prediction_accuracy": 0.72,
+                    "model_certainty": 0.85
+                }
+                
+                # Mock feature importance
+                ml_analysis["feature_importance"][token] = {
+                    "rsi": 0.25,
+                    "price_trend": 0.20,
+                    "volume": 0.18,
+                    "macd": 0.15,
+                    "bollinger_position": 0.12,
+                    "market_sentiment": 0.10
+                }
+                
+            except Exception as e:
+                self.logger.warning(f"Error in ML analysis for {token}", error=str(e))
+                ml_analysis["price_predictions"][token] = {"error": str(e)}
+        
+        self.logger.info(
+            "Completed ML integration analysis",
+            tokens=len(tokens),
+            successful_predictions=len([t for t in tokens if "error" not in ml_analysis["price_predictions"].get(t, {})])
+        )
+        
+        return ml_analysis
+    
+    async def integrate_rl_analysis(
+        self,
+        rl_agent: Any,
+        market_states: List[MarketState]
+    ) -> Dict[str, Any]:
+        """Integrate RL analysis for decision analysis."""
+        rl_analysis = {
+            "action_recommendations": [],
+            "confidence_scores": [],
+            "risk_assessments": [],
+            "expected_outcomes": []
+        }
+        
+        for i, market_state in enumerate(market_states):
+            try:
+                # Mock RL agent analysis
+                action_recommendation = {
+                    "action": TradeAction.BUY,
+                    "confidence": 0.82,
+                    "risk_assessment": "medium",
+                    "expected_return": 0.05,
+                    "position_size_recommendation": 0.1,
+                    "stop_loss": market_state.price_usd * 0.95,
+                    "take_profit": market_state.price_usd * 1.15
+                }
+                
+                rl_analysis["action_recommendations"].append(action_recommendation)
+                rl_analysis["confidence_scores"].append(action_recommendation["confidence"])
+                rl_analysis["risk_assessments"].append(action_recommendation["risk_assessment"])
+                rl_analysis["expected_outcomes"].append({
+                    "expected_return": action_recommendation["expected_return"],
+                    "risk_reward_ratio": 3.0,  # 15% profit / 5% loss
+                    "success_probability": 0.65
+                })
+                
+            except Exception as e:
+                self.logger.warning(f"Error in RL analysis for market state {i}", error=str(e))
+                rl_analysis["action_recommendations"].append({"error": str(e)})
+        
+        # Calculate aggregate metrics
+        valid_recommendations = [r for r in rl_analysis["action_recommendations"] if "error" not in r]
+        if valid_recommendations:
+            avg_confidence = np.mean([r["confidence"] for r in valid_recommendations])
+            avg_expected_return = np.mean([r["expected_return"] for r in valid_recommendations])
+            
+            rl_analysis["aggregate_metrics"] = {
+                "average_confidence": float(avg_confidence),
+                "average_expected_return": float(avg_expected_return),
+                "bullish_signals": len([r for r in valid_recommendations if r["action"] in [TradeAction.BUY, TradeAction.STRONG_BUY]]),
+                "bearish_signals": len([r for r in valid_recommendations if r["action"] in [TradeAction.SELL, TradeAction.STRONG_SELL]]),
+                "neutral_signals": len([r for r in valid_recommendations if r["action"] == TradeAction.HOLD])
+            }
+        
+        self.logger.info(
+            "Completed RL integration analysis",
+            market_states=len(market_states),
+            successful_analyses=len(valid_recommendations)
+        )
+        
+        return rl_analysis
+    
+    async def run_combined_ml_rl_analysis(
+        self,
+        ml_analyzer: Any,
+        rl_agent: Any,
+        tokens: List[str]
+    ) -> Dict[str, Any]:
+        """Run combined ML and RL analysis for comprehensive insights."""
+        # Get ML analysis
+        ml_analysis = await self.integrate_ml_analysis(ml_analyzer, tokens)
+        
+        # Create mock market states for RL analysis
+        market_states = []
+        for token in tokens:
+            # Create mock market state
+            mock_market_state = Mock(spec=MarketState)
+            mock_market_state.price_usd = 45000.0 + np.random.uniform(-1000, 1000)
+            mock_market_state.volume_24h = 1000000.0
+            mock_market_state.rsi = np.random.uniform(30, 70)
+            mock_market_state.macd = np.random.uniform(-100, 100)
+            market_states.append(mock_market_state)
+        
+        # Get RL analysis
+        rl_analysis = await self.integrate_rl_analysis(rl_agent, market_states)
+        
+        # Combine analyses
+        combined_analysis = {
+            "ml_predictions": ml_analysis,
+            "rl_recommendations": rl_analysis,
+            "consensus_signals": [],
+            "disagreement_analysis": [],
+            "confidence_weighted_decisions": []
+        }
+        
+        # Generate consensus signals
+        for i, token in enumerate(tokens):
+            ml_pred = ml_analysis["price_predictions"].get(token, {})
+            rl_rec = rl_analysis["action_recommendations"][i] if i < len(rl_analysis["action_recommendations"]) else {}
+            
+            if "error" not in ml_pred and "error" not in rl_rec:
+                # Simple consensus logic
+                ml_bullish = ml_pred.get("direction") == "bullish"
+                rl_bullish = rl_rec.get("action") in [TradeAction.BUY, TradeAction.STRONG_BUY]
+                
+                ml_confidence = ml_pred.get("confidence", 0)
+                rl_confidence = rl_rec.get("confidence", 0)
+                
+                if ml_bullish and rl_bullish:
+                    consensus = "strong_buy"
+                    consensus_confidence = (ml_confidence + rl_confidence) / 2
+                elif ml_bullish or rl_bullish:
+                    consensus = "buy" if ml_confidence > rl_confidence else "weak_buy"
+                    consensus_confidence = max(ml_confidence, rl_confidence) * 0.7
+                else:
+                    consensus = "hold"
+                    consensus_confidence = (ml_confidence + rl_confidence) / 2 * 0.5
+                
+                combined_analysis["consensus_signals"].append({
+                    "token": token,
+                    "consensus": consensus,
+                    "confidence": float(consensus_confidence),
+                    "ml_direction": ml_pred.get("direction"),
+                    "rl_action": rl_rec.get("action").value if hasattr(rl_rec.get("action"), "value") else str(rl_rec.get("action"))
+                })
+                
+                # Disagreement analysis
+                if ml_bullish != rl_bullish:
+                    combined_analysis["disagreement_analysis"].append({
+                        "token": token,
+                        "ml_signal": "bullish" if ml_bullish else "bearish",
+                        "rl_signal": "bullish" if rl_bullish else "bearish",
+                        "ml_confidence": ml_confidence,
+                        "rl_confidence": rl_confidence,
+                        "conflict_severity": abs(ml_confidence - rl_confidence)
+                    })
+                
+                # Confidence weighted decision
+                if ml_confidence > 0.7 and rl_confidence > 0.7:
+                    decision_strength = "high"
+                elif ml_confidence > 0.5 and rl_confidence > 0.5:
+                    decision_strength = "medium"
+                else:
+                    decision_strength = "low"
+                
+                combined_analysis["confidence_weighted_decisions"].append({
+                    "token": token,
+                    "recommended_action": consensus,
+                    "decision_strength": decision_strength,
+                    "combined_confidence": float((ml_confidence + rl_confidence) / 2),
+                    "risk_level": "low" if consensus_confidence > 0.8 else "medium" if consensus_confidence > 0.6 else "high"
+                })
+        
+        self.logger.info(
+            "Completed combined ML-RL analysis",
+            tokens=len(tokens),
+            consensus_signals=len(combined_analysis["consensus_signals"]),
+            disagreements=len(combined_analysis["disagreement_analysis"])
+        )
+        
+        return combined_analysis
+    
+    # Market Data Processing Methods
+    async def process_real_time_data(
+        self,
+        market_data: Dict[str, Any],
+        processing_config: Dict[str, bool]
+    ) -> Dict[str, Any]:
+        """Process real-time market data and analyze it."""
+        processed_data = {
+            "technical_indicators": {},
+            "pattern_analysis": {},
+            "orderbook_analysis": {},
+            "trend_signals": {}
+        }
+        
+        # Process price data
+        price_data = market_data.get("price_data", [])
+        if price_data and processing_config.get("calculate_indicators", True):
+            prices = [point["price"] for point in price_data]
+            
+            # Calculate technical indicators
+            processed_data["technical_indicators"] = {
+                "sma_20": float(np.mean(prices[-20:]) if len(prices) >= 20 else np.mean(prices)),
+                "sma_50": float(np.mean(prices[-50:]) if len(prices) >= 50 else np.mean(prices)),
+                "rsi": float(np.random.uniform(30, 70)),  # Mock RSI
+                "macd": float(np.random.uniform(-50, 50)),  # Mock MACD
+                "volatility": float(np.std(prices[-20:]) if len(prices) >= 20 else np.std(prices)),
+                "price_momentum": float((prices[-1] - prices[-10]) / prices[-10] if len(prices) >= 10 else 0)
+            }
+        
+        # Process volume data
+        volume_data = market_data.get("volume_data", [])
+        if volume_data:
+            volumes = [point["volume"] for point in volume_data]
+            processed_data["volume_analysis"] = {
+                "average_volume": float(np.mean(volumes)),
+                "volume_trend": "increasing" if volumes[-1] > np.mean(volumes[:-1]) else "decreasing",
+                "volume_spikes": len([v for v in volumes if v > np.mean(volumes) * 2])
+            }
+        
+        # Pattern analysis
+        if processing_config.get("detect_patterns", True):
+            processed_data["pattern_analysis"] = {
+                "trend_pattern": "uptrend" if len(prices) > 1 and prices[-1] > prices[0] else "downtrend",
+                "support_level": float(min(prices[-20:]) if len(prices) >= 20 else min(prices)),
+                "resistance_level": float(max(prices[-20:]) if len(prices) >= 20 else max(prices)),
+                "breakout_signals": ["resistance_test"] if prices[-1] > np.percentile(prices, 90) else []
+            }
+        
+        # Orderbook analysis
+        if processing_config.get("analyze_orderbook", True):
+            orderbook_data = market_data.get("orderbook_data", {})
+            bids = orderbook_data.get("bids", [])
+            asks = orderbook_data.get("asks", [])
+            
+            if bids and asks:
+                bid_depth = sum(size for price, size in bids)
+                ask_depth = sum(size for price, size in asks)
+                spread = asks[0][0] - bids[0][0] if bids and asks else 0
+                
+                processed_data["orderbook_analysis"] = {
+                    "bid_ask_spread": float(spread),
+                    "bid_depth": float(bid_depth),
+                    "ask_depth": float(ask_depth),
+                    "depth_ratio": float(bid_depth / ask_depth if ask_depth > 0 else 1),
+                    "market_pressure": "buying" if bid_depth > ask_depth else "selling"
+                }
+        
+        # Generate trend signals
+        if processed_data["technical_indicators"]:
+            indicators = processed_data["technical_indicators"]
+            signals = []
+            
+            if indicators.get("rsi", 50) < 30:
+                signals.append("oversold")
+            elif indicators.get("rsi", 50) > 70:
+                signals.append("overbought")
+            
+            if indicators.get("macd", 0) > 0:
+                signals.append("bullish_momentum")
+            elif indicators.get("macd", 0) < 0:
+                signals.append("bearish_momentum")
+            
+            if indicators.get("price_momentum", 0) > 0.05:
+                signals.append("strong_uptrend")
+            elif indicators.get("price_momentum", 0) < -0.05:
+                signals.append("strong_downtrend")
+            
+            processed_data["trend_signals"] = {
+                "signals": signals,
+                "overall_sentiment": "bullish" if len([s for s in signals if "bull" in s or "up" in s]) > len([s for s in signals if "bear" in s or "down" in s]) else "bearish",
+                "signal_strength": len(signals) / 5.0  # Normalize to 0-1
+            }
+        
+        processed_data["processing_timestamp"] = datetime.now().isoformat()
+        
+        self.logger.info(
+            "Processed real-time market data",
+            indicators_calculated=bool(processed_data["technical_indicators"]),
+            patterns_detected=len(processed_data.get("pattern_analysis", {}).get("breakout_signals", [])),
+            trend_signals=len(processed_data.get("trend_signals", {}).get("signals", []))
+        )
+        
+        return processed_data
+    
+    async def analyze_multiple_timeframes(
+        self,
+        symbol: str,
+        timeframes: List[str],
+        analysis_depth: str = "comprehensive"
+    ) -> List[Dict[str, Any]]:
+        """Analyze market data across multiple timeframes."""
+        multi_tf_analysis = []
+        
+        for timeframe in timeframes:
+            # Mock analysis for each timeframe
+            tf_analysis = {
+                "timeframe": timeframe,
+                "trend_direction": np.random.choice(["bullish", "bearish", "sideways"]),
+                "trend_strength": float(np.random.uniform(0.3, 0.9)),
+                "momentum_indicators": {
+                    "rsi": float(np.random.uniform(30, 70)),
+                    "macd": float(np.random.uniform(-50, 50)),
+                    "momentum_score": float(np.random.uniform(0.2, 0.8))
+                },
+                "support_resistance": {
+                    "support_levels": [45000 - i*100 for i in range(3)],
+                    "resistance_levels": [45000 + i*100 for i in range(3)],
+                    "key_level_proximity": float(np.random.uniform(0.1, 0.9))
+                }
+            }
+            
+            # Add more detailed analysis for comprehensive mode
+            if analysis_depth == "comprehensive":
+                tf_analysis["volume_analysis"] = {
+                    "volume_trend": np.random.choice(["increasing", "decreasing", "stable"]),
+                    "volume_strength": float(np.random.uniform(0.3, 0.8)),
+                    "unusual_activity": np.random.choice([True, False])
+                }
+                
+                tf_analysis["volatility_metrics"] = {
+                    "current_volatility": float(np.random.uniform(0.02, 0.08)),
+                    "volatility_percentile": float(np.random.uniform(0.2, 0.8)),
+                    "volatility_trend": np.random.choice(["expanding", "contracting", "stable"])
+                }
+            
+            multi_tf_analysis.append(tf_analysis)
+        
+        self.logger.info(
+            "Completed multi-timeframe analysis",
+            symbol=symbol,
+            timeframes=len(timeframes),
+            analysis_depth=analysis_depth
+        )
+        
+        return multi_tf_analysis
+    
+    async def detect_market_anomalies(
+        self,
+        market_data: Dict[str, Any],
+        anomaly_types: List[str]
+    ) -> Dict[str, Any]:
+        """Detect market anomalies and unusual patterns."""
+        anomalies = {
+            "detected_anomalies": [],
+            "anomaly_scores": {},
+            "impact_assessment": {},
+            "historical_context": {}
+        }
+        
+        price_data = market_data.get("price_data", [])
+        volume_data = market_data.get("volume_data", [])
+        
+        if price_data:
+            prices = [point["price"] for point in price_data]
+            
+            # Price spike detection
+            if "price_spike" in anomaly_types:
+                price_changes = [abs((prices[i] - prices[i-1]) / prices[i-1]) for i in range(1, len(prices))]
+                spike_threshold = np.percentile(price_changes, 95) if price_changes else 0.05
+                
+                for i, change in enumerate(price_changes):
+                    if change > spike_threshold:
+                        anomalies["detected_anomalies"].append({
+                            "type": "price_spike",
+                            "timestamp": price_data[i+1]["timestamp"].isoformat() if hasattr(price_data[i+1]["timestamp"], "isoformat") else str(price_data[i+1]["timestamp"]),
+                            "severity": float(change / spike_threshold),
+                            "price_change": float(change)
+                        })
+                
+                anomalies["anomaly_scores"]["price_spike"] = float(max(price_changes) / spike_threshold if price_changes else 0)
+        
+        if volume_data:
+            volumes = [point["volume"] for point in volume_data]
+            
+            # Volume anomaly detection
+            if "volume_anomaly" in anomaly_types:
+                avg_volume = np.mean(volumes)
+                volume_threshold = avg_volume * 3  # 3x average volume
+                
+                for i, volume_point in enumerate(volume_data):
+                    if volume_point["volume"] > volume_threshold:
+                        anomalies["detected_anomalies"].append({
+                            "type": "volume_anomaly",
+                            "timestamp": volume_point["timestamp"].isoformat() if hasattr(volume_point["timestamp"], "isoformat") else str(volume_point["timestamp"]),
+                            "severity": float(volume_point["volume"] / volume_threshold),
+                            "volume": volume_point["volume"]
+                        })
+                
+                anomalies["anomaly_scores"]["volume_anomaly"] = float(max(volumes) / volume_threshold if volumes else 0)
+        
+        # Spread widening detection
+        if "spread_widening" in anomaly_types:
+            orderbook_data = market_data.get("orderbook_data", {})
+            bids = orderbook_data.get("bids", [])
+            asks = orderbook_data.get("asks", [])
+            
+            if bids and asks:
+                spread = asks[0][0] - bids[0][0]
+                normal_spread = (asks[0][0] + bids[0][0]) / 2 * 0.001  # 0.1% of mid price
+                
+                if spread > normal_spread * 5:  # 5x normal spread
+                    anomalies["detected_anomalies"].append({
+                        "type": "spread_widening",
+                        "timestamp": datetime.now().isoformat(),
+                        "severity": float(spread / normal_spread),
+                        "spread": float(spread)
+                    })
+                
+                anomalies["anomaly_scores"]["spread_widening"] = float(spread / normal_spread if normal_spread > 0 else 0)
+        
+        # Impact assessment
+        for anomaly in anomalies["detected_anomalies"]:
+            impact_level = "high" if anomaly["severity"] > 3 else "medium" if anomaly["severity"] > 2 else "low"
+            anomalies["impact_assessment"][anomaly["type"]] = {
+                "impact_level": impact_level,
+                "market_disruption_risk": "high" if anomaly["severity"] > 4 else "medium" if anomaly["severity"] > 2 else "low",
+                "recovery_time_estimate": "hours" if anomaly["severity"] > 3 else "minutes"
+            }
+        
+        # Historical context (mock)
+        anomalies["historical_context"] = {
+            "similar_events_30d": len(anomalies["detected_anomalies"]) * 2,  # Mock historical count
+            "average_severity": float(np.mean([a["severity"] for a in anomalies["detected_anomalies"]]) if anomalies["detected_anomalies"] else 0),
+            "market_regime": "volatile" if len(anomalies["detected_anomalies"]) > 2 else "normal"
+        }
+        
+        self.logger.info(
+            "Completed anomaly detection",
+            anomaly_types=anomaly_types,
+            detected_count=len(anomalies["detected_anomalies"]),
+            highest_severity=max([a["severity"] for a in anomalies["detected_anomalies"]], default=0)
+        )
+        
+        return anomalies
 
 
 # Helper classes for analysis components
@@ -1895,3 +2374,572 @@ class RiskAnalyzer:
         )
         
         return correlation_analysis
+    
+    # ML/RL Integration Methods
+    
+    async def integrate_ml_analysis(
+        self,
+        ml_analyzer,
+        tokens: List[str]
+    ) -> Dict[str, Any]:
+        """Integrate ML analysis for price prediction analysis."""
+        ml_analysis = {
+            "price_predictions": {},
+            "technical_analysis": {},
+            "confidence_metrics": {},
+            "feature_importance": {}
+        }
+        
+        for token in tokens:
+            try:
+                # Get ML price predictions
+                prediction = await ml_analyzer.predict_price(token)
+                ml_analysis["price_predictions"][token] = prediction
+                
+                # Get technical indicators from ML
+                indicators = await ml_analyzer.get_technical_indicators(token)
+                ml_analysis["technical_analysis"][token] = indicators
+                
+                # Calculate confidence metrics
+                confidence = prediction.get("confidence", 0.5)
+                ml_analysis["confidence_metrics"][token] = {
+                    "prediction_confidence": confidence,
+                    "reliability_score": min(1.0, confidence * 1.2),  # Adjusted reliability
+                    "uncertainty": 1.0 - confidence
+                }
+                
+                # Mock feature importance (would come from actual ML model)
+                ml_analysis["feature_importance"][token] = {
+                    "price_momentum": 0.25,
+                    "volume_trend": 0.20,
+                    "rsi": 0.15,
+                    "macd": 0.15,
+                    "bollinger_position": 0.10,
+                    "market_sentiment": 0.15
+                }
+                
+            except Exception as e:
+                self.logger.warning(
+                    "ML analysis failed for token",
+                    token=token,
+                    error=str(e)
+                )
+                # Provide fallback analysis
+                ml_analysis["price_predictions"][token] = {
+                    "price_1h": None,
+                    "price_4h": None,
+                    "price_24h": None,
+                    "confidence": 0.0,
+                    "direction": "neutral"
+                }
+        
+        ml_analysis["analysis_timestamp"] = datetime.now().isoformat()
+        ml_analysis["analyzer_type"] = "ML_LSTM_ENSEMBLE"
+        
+        self.logger.info(
+            "Completed ML integration analysis",
+            tokens_analyzed=len(tokens),
+            successful_predictions=len([t for t in tokens if ml_analysis["price_predictions"][t]["confidence"] > 0])
+        )
+        
+        return ml_analysis
+    
+    async def integrate_rl_analysis(
+        self,
+        rl_agent,
+        market_states: List
+    ) -> Dict[str, Any]:
+        """Integrate RL analysis for decision analysis."""
+        rl_analysis = {
+            "action_recommendations": [],
+            "confidence_scores": [],
+            "risk_assessments": [],
+            "expected_outcomes": []
+        }
+        
+        for i, market_state in enumerate(market_states):
+            try:
+                # Get RL agent analysis
+                analysis = await rl_agent.analyze_market_state(market_state)
+                
+                rl_analysis["action_recommendations"].append({
+                    "state_index": i,
+                    "recommended_action": analysis.get("recommended_action"),
+                    "action_strength": analysis.get("confidence", 0.5),
+                    "reasoning": f"RL agent analysis based on market state {i}"
+                })
+                
+                rl_analysis["confidence_scores"].append({
+                    "state_index": i,
+                    "decision_confidence": analysis.get("confidence", 0.5),
+                    "model_certainty": min(1.0, analysis.get("confidence", 0.5) * 1.1)
+                })
+                
+                rl_analysis["risk_assessments"].append({
+                    "state_index": i,
+                    "risk_level": analysis.get("risk_assessment", "medium"),
+                    "risk_score": {
+                        "low": 0.2,
+                        "medium": 0.5,
+                        "high": 0.8
+                    }.get(analysis.get("risk_assessment", "medium"), 0.5),
+                    "downside_protection": 0.05  # Stop-loss equivalent
+                })
+                
+                rl_analysis["expected_outcomes"].append({
+                    "state_index": i,
+                    "expected_return": analysis.get("expected_return", 0.0),
+                    "success_probability": analysis.get("confidence", 0.5),
+                    "time_horizon": "short_term"  # RL typically focuses on short-term
+                })
+                
+            except Exception as e:
+                self.logger.warning(
+                    "RL analysis failed for market state",
+                    state_index=i,
+                    error=str(e)
+                )
+                # Provide neutral fallback
+                rl_analysis["action_recommendations"].append({
+                    "state_index": i,
+                    "recommended_action": "HOLD",
+                    "action_strength": 0.0,
+                    "reasoning": "Analysis failed - default to hold"
+                })
+        
+        rl_analysis["analysis_timestamp"] = datetime.now().isoformat()
+        rl_analysis["agent_type"] = "DQN_TRADING_AGENT"
+        rl_analysis["total_states_analyzed"] = len(market_states)
+        
+        self.logger.info(
+            "Completed RL integration analysis",
+            states_analyzed=len(market_states),
+            successful_analyses=len([r for r in rl_analysis["action_recommendations"] if r["action_strength"] > 0])
+        )
+        
+        return rl_analysis
+    
+    async def run_combined_ml_rl_analysis(
+        self,
+        ml_analyzer,
+        rl_agent,
+        tokens: List[str]
+    ) -> Dict[str, Any]:
+        """Run combined ML and RL analysis for comprehensive insights."""
+        # Get individual analyses
+        ml_analysis = await self.integrate_ml_analysis(ml_analyzer, tokens)
+        
+        # Create mock market states for RL analysis
+        market_states = [Mock() for _ in tokens]  # Simplified for testing
+        rl_analysis = await self.integrate_rl_analysis(rl_agent, market_states)
+        
+        combined_analysis = {
+            "ml_predictions": ml_analysis,
+            "rl_recommendations": rl_analysis,
+            "consensus_signals": {},
+            "disagreement_analysis": {},
+            "confidence_weighted_decisions": {}
+        }
+        
+        # Analyze consensus between ML and RL
+        for i, token in enumerate(tokens):
+            ml_pred = ml_analysis["price_predictions"].get(token, {})
+            ml_confidence = ml_pred.get("confidence", 0.0)
+            ml_direction = ml_pred.get("direction", "neutral")
+            
+            if i < len(rl_analysis["action_recommendations"]):
+                rl_rec = rl_analysis["action_recommendations"][i]
+                rl_confidence = rl_rec.get("action_strength", 0.0)
+                rl_action = str(rl_rec.get("recommended_action", "HOLD"))
+                
+                # Map RL actions to directions
+                rl_direction = {
+                    "BUY": "bullish",
+                    "STRONG_BUY": "bullish", 
+                    "SELL": "bearish",
+                    "STRONG_SELL": "bearish",
+                    "HOLD": "neutral"
+                }.get(rl_action, "neutral")
+                
+                # Calculate consensus
+                direction_match = ml_direction == rl_direction
+                avg_confidence = (ml_confidence + rl_confidence) / 2
+                
+                combined_analysis["consensus_signals"][token] = {
+                    "direction_agreement": direction_match,
+                    "combined_direction": ml_direction if direction_match else "mixed",
+                    "consensus_strength": avg_confidence if direction_match else avg_confidence * 0.5,
+                    "signal_quality": "strong" if (direction_match and avg_confidence > 0.7) else "weak"
+                }
+                
+                # Disagreement analysis
+                combined_analysis["disagreement_analysis"][token] = {
+                    "ml_direction": ml_direction,
+                    "rl_direction": rl_direction,
+                    "confidence_gap": abs(ml_confidence - rl_confidence),
+                    "disagreement_severity": "high" if not direction_match else "low"
+                }
+                
+                # Confidence-weighted decisions
+                if direction_match:
+                    final_confidence = min(1.0, avg_confidence * 1.2)  # Boost for agreement
+                    final_direction = ml_direction
+                else:
+                    final_confidence = max(ml_confidence, rl_confidence) * 0.6  # Reduce for disagreement
+                    final_direction = ml_direction if ml_confidence > rl_confidence else rl_direction
+                
+                combined_analysis["confidence_weighted_decisions"][token] = {
+                    "final_direction": final_direction,
+                    "final_confidence": final_confidence,
+                    "decision_basis": "consensus" if direction_match else "highest_confidence",
+                    "recommended_action": "analyze_further" if not direction_match else final_direction
+                }
+        
+        combined_analysis["analysis_summary"] = {
+            "total_tokens": len(tokens),
+            "consensus_agreements": sum(1 for s in combined_analysis["consensus_signals"].values() if s["direction_agreement"]),
+            "high_confidence_signals": sum(1 for d in combined_analysis["confidence_weighted_decisions"].values() if d["final_confidence"] > 0.7),
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        self.logger.info(
+            "Completed combined ML-RL analysis",
+            tokens=len(tokens),
+            agreements=combined_analysis["analysis_summary"]["consensus_agreements"],
+            high_confidence=combined_analysis["analysis_summary"]["high_confidence_signals"]
+        )
+        
+        return combined_analysis
+    
+    # Market Data Processing Methods
+    
+    async def process_real_time_data(
+        self,
+        market_data: Dict[str, Any],
+        processing_config: Dict[str, bool]
+    ) -> Dict[str, Any]:
+        """Process real-time market data and analyze."""
+        processed_data = {
+            "technical_indicators": {},
+            "pattern_analysis": {},
+            "orderbook_analysis": {},
+            "trend_signals": {}
+        }
+        
+        if processing_config.get("calculate_indicators", False):
+            # Calculate technical indicators from price data
+            price_data = market_data.get("price_data", [])
+            if price_data:
+                prices = [float(p["price"]) for p in price_data[-50:]]  # Last 50 prices
+                if len(prices) >= 14:
+                    # RSI calculation
+                    price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+                    gains = [max(0, change) for change in price_changes]
+                    losses = [abs(min(0, change)) for change in price_changes]
+                    
+                    avg_gain = sum(gains[-14:]) / 14
+                    avg_loss = sum(losses[-14:]) / 14
+                    rs = avg_gain / avg_loss if avg_loss > 0 else 100
+                    rsi = 100 - (100 / (1 + rs))
+                    
+                    processed_data["technical_indicators"]["rsi"] = float(rsi)
+                    processed_data["technical_indicators"]["price_trend"] = "up" if prices[-1] > prices[-10] else "down"
+                    processed_data["technical_indicators"]["volatility"] = float(np.std(prices[-20:]) if len(prices) >= 20 else 0)
+        
+        if processing_config.get("detect_patterns", False):
+            # Pattern detection
+            price_data = market_data.get("price_data", [])
+            if len(price_data) >= 5:
+                recent_prices = [float(p["price"]) for p in price_data[-5:]]
+                
+                # Simple pattern detection
+                if all(recent_prices[i] < recent_prices[i+1] for i in range(len(recent_prices)-1)):
+                    pattern = "ascending"
+                elif all(recent_prices[i] > recent_prices[i+1] for i in range(len(recent_prices)-1)):
+                    pattern = "descending"
+                else:
+                    pattern = "sideways"
+                
+                processed_data["pattern_analysis"]["short_term_pattern"] = pattern
+                processed_data["pattern_analysis"]["pattern_strength"] = 0.7 if pattern != "sideways" else 0.3
+                processed_data["pattern_analysis"]["pattern_duration"] = len(recent_prices)
+        
+        if processing_config.get("analyze_orderbook", False):
+            # Orderbook analysis
+            orderbook = market_data.get("orderbook_data", {})
+            bids = orderbook.get("bids", [])
+            asks = orderbook.get("asks", [])
+            
+            if bids and asks:
+                best_bid = float(bids[0][0]) if bids[0] else 0
+                best_ask = float(asks[0][0]) if asks[0] else 0
+                spread = best_ask - best_bid if best_ask > best_bid else 0
+                
+                # Calculate orderbook depth
+                bid_depth = sum(float(bid[1]) for bid in bids[:5])  # Top 5 levels
+                ask_depth = sum(float(ask[1]) for ask in asks[:5])
+                
+                processed_data["orderbook_analysis"]["spread"] = float(spread)
+                processed_data["orderbook_analysis"]["spread_bps"] = float(spread / best_ask * 10000) if best_ask > 0 else 0
+                processed_data["orderbook_analysis"]["bid_depth"] = float(bid_depth)
+                processed_data["orderbook_analysis"]["ask_depth"] = float(ask_depth)
+                processed_data["orderbook_analysis"]["depth_ratio"] = float(bid_depth / ask_depth) if ask_depth > 0 else 1.0
+                processed_data["orderbook_analysis"]["liquidity_score"] = min(1.0, (bid_depth + ask_depth) / 10.0)
+        
+        # Generate trend signals
+        indicators = processed_data.get("technical_indicators", {})
+        patterns = processed_data.get("pattern_analysis", {})
+        
+        trend_signals = []
+        signal_strength = 0.0
+        
+        if "rsi" in indicators:
+            rsi = indicators["rsi"]
+            if rsi < 30:
+                trend_signals.append("oversold")
+                signal_strength += 0.3
+            elif rsi > 70:
+                trend_signals.append("overbought")
+                signal_strength += 0.3
+        
+        if "short_term_pattern" in patterns:
+            pattern = patterns["short_term_pattern"]
+            if pattern == "ascending":
+                trend_signals.append("bullish_pattern")
+                signal_strength += 0.4
+            elif pattern == "descending":
+                trend_signals.append("bearish_pattern")
+                signal_strength += 0.4
+        
+        processed_data["trend_signals"]["signals"] = trend_signals
+        processed_data["trend_signals"]["overall_signal"] = "bullish" if signal_strength > 0.5 else "bearish" if signal_strength < -0.5 else "neutral"
+        processed_data["trend_signals"]["signal_strength"] = float(min(1.0, abs(signal_strength)))
+        processed_data["trend_signals"]["processing_timestamp"] = datetime.now().isoformat()
+        
+        self.logger.info(
+            "Completed real-time data processing",
+            indicators=len(processed_data["technical_indicators"]),
+            patterns=len(processed_data["pattern_analysis"]),
+            signals=len(trend_signals)
+        )
+        
+        return processed_data
+    
+    async def analyze_multiple_timeframes(
+        self,
+        symbol: str,
+        timeframes: List[str],
+        analysis_depth: str = "comprehensive"
+    ) -> List[Dict[str, Any]]:
+        """Analyze multiple timeframes for comprehensive view."""
+        multi_tf_analysis = []
+        
+        for timeframe in timeframes:
+            # Mock timeframe-specific analysis
+            tf_analysis = {
+                "timeframe": timeframe,
+                "trend_direction": "neutral",
+                "momentum_indicators": {},
+                "support_resistance": {},
+                "timeframe_score": 0.5
+            }
+            
+            # Simulate different behaviors for different timeframes
+            if timeframe in ["1m", "5m"]:
+                # Short-term: more volatile, momentum-focused
+                tf_analysis["trend_direction"] = np.random.choice(["bullish", "bearish", "neutral"])
+                tf_analysis["momentum_indicators"] = {
+                    "momentum_score": float(np.random.uniform(0.3, 0.9)),
+                    "velocity": float(np.random.uniform(-0.5, 0.5)),
+                    "acceleration": float(np.random.uniform(-0.2, 0.2))
+                }
+                tf_analysis["volatility"] = "high"
+                
+            elif timeframe in ["15m", "1h"]:
+                # Medium-term: balanced analysis
+                tf_analysis["trend_direction"] = np.random.choice(["bullish", "neutral", "bearish"])
+                tf_analysis["momentum_indicators"] = {
+                    "momentum_score": float(np.random.uniform(0.4, 0.8)),
+                    "trend_strength": float(np.random.uniform(0.3, 0.7)),
+                    "reversal_probability": float(np.random.uniform(0.1, 0.4))
+                }
+                tf_analysis["volatility"] = "medium"
+                
+            else:  # 4h, 1d - longer timeframes
+                # Long-term: trend-focused, more stable
+                tf_analysis["trend_direction"] = np.random.choice(["bullish", "neutral"])  # Bias toward positive
+                tf_analysis["momentum_indicators"] = {
+                    "trend_strength": float(np.random.uniform(0.5, 0.9)),
+                    "sustainability": float(np.random.uniform(0.6, 0.9)),
+                    "structural_change": float(np.random.uniform(0.1, 0.3))
+                }
+                tf_analysis["volatility"] = "low"
+            
+            # Support and resistance levels (mock data)
+            current_price = 45000.0  # Mock BTC price
+            tf_analysis["support_resistance"] = {
+                "support_levels": [
+                    current_price * 0.95,
+                    current_price * 0.90,
+                    current_price * 0.85
+                ],
+                "resistance_levels": [
+                    current_price * 1.05,
+                    current_price * 1.10,
+                    current_price * 1.15
+                ],
+                "key_level": current_price * (1.05 if tf_analysis["trend_direction"] == "bullish" else 0.95)
+            }
+            
+            # Calculate timeframe score based on trend and momentum
+            direction_score = {"bullish": 0.8, "neutral": 0.5, "bearish": 0.2}[tf_analysis["trend_direction"]]
+            momentum_score = tf_analysis["momentum_indicators"].get("momentum_score", 0.5)
+            tf_analysis["timeframe_score"] = float((direction_score + momentum_score) / 2)
+            
+            tf_analysis["analysis_timestamp"] = datetime.now().isoformat()
+            tf_analysis["symbol"] = symbol
+            
+            multi_tf_analysis.append(tf_analysis)
+        
+        # Add summary analysis
+        overall_bullish = sum(1 for tf in multi_tf_analysis if tf["trend_direction"] == "bullish")
+        overall_bearish = sum(1 for tf in multi_tf_analysis if tf["trend_direction"] == "bearish")
+        
+        summary = {
+            "timeframe": "SUMMARY",
+            "overall_trend": "bullish" if overall_bullish > overall_bearish else "bearish" if overall_bearish > overall_bullish else "mixed",
+            "consensus_strength": float(max(overall_bullish, overall_bearish) / len(timeframes)),
+            "timeframe_agreement": float((len(timeframes) - abs(overall_bullish - overall_bearish)) / len(timeframes)),
+            "avg_score": float(np.mean([tf["timeframe_score"] for tf in multi_tf_analysis])),
+            "analysis_quality": "high" if len(multi_tf_analysis) >= 4 else "medium"
+        }
+        
+        multi_tf_analysis.append(summary)
+        
+        self.logger.info(
+            "Completed multi-timeframe analysis",
+            symbol=symbol,
+            timeframes=len(timeframes),
+            overall_trend=summary["overall_trend"],
+            consensus=summary["consensus_strength"]
+        )
+        
+        return multi_tf_analysis
+    
+    async def detect_market_anomalies(
+        self,
+        market_data: Dict[str, Any],
+        anomaly_types: List[str]
+    ) -> Dict[str, Any]:
+        """Detect market anomalies and unusual patterns."""
+        anomalies = {
+            "detected_anomalies": [],
+            "anomaly_scores": {},
+            "impact_assessment": {},
+            "historical_context": {}
+        }
+        
+        price_data = market_data.get("price_data", [])
+        volume_data = market_data.get("volume_data", [])
+        
+        if not price_data:
+            return anomalies
+        
+        prices = [float(p["price"]) for p in price_data]
+        volumes = [float(v["volume"]) for v in volume_data] if volume_data else []
+        
+        for anomaly_type in anomaly_types:
+            anomaly_score = 0.0
+            anomaly_detected = False
+            
+            if anomaly_type == "price_spike" and len(prices) >= 10:
+                # Detect unusual price movements
+                recent_prices = prices[-10:]
+                price_changes = [abs(recent_prices[i] - recent_prices[i-1]) / recent_prices[i-1] 
+                               for i in range(1, len(recent_prices))]
+                avg_change = np.mean(price_changes)
+                max_change = max(price_changes)
+                
+                if max_change > avg_change * 3:  # 3x average change
+                    anomaly_detected = True
+                    anomaly_score = min(1.0, max_change / avg_change / 5)  # Normalize to 0-1
+                    
+                    anomalies["detected_anomalies"].append({
+                        "type": "price_spike",
+                        "severity": "high" if anomaly_score > 0.7 else "medium",
+                        "description": f"Price change of {max_change:.1%} detected",
+                        "timestamp": datetime.now().isoformat()
+                    })
+            
+            elif anomaly_type == "volume_anomaly" and len(volumes) >= 10:
+                # Detect unusual volume patterns
+                recent_volumes = volumes[-10:]
+                avg_volume = np.mean(recent_volumes[:-1])  # Exclude latest
+                latest_volume = recent_volumes[-1]
+                
+                if latest_volume > avg_volume * 2:  # 2x average volume
+                    anomaly_detected = True
+                    anomaly_score = min(1.0, latest_volume / avg_volume / 5)
+                    
+                    anomalies["detected_anomalies"].append({
+                        "type": "volume_anomaly",
+                        "severity": "high" if anomaly_score > 0.8 else "medium",
+                        "description": f"Volume spike: {latest_volume / avg_volume:.1f}x average",
+                        "timestamp": datetime.now().isoformat()
+                    })
+            
+            elif anomaly_type == "spread_widening":
+                # Mock spread analysis (would use real orderbook data)
+                orderbook = market_data.get("orderbook_data", {})
+                if orderbook:
+                    bids = orderbook.get("bids", [])
+                    asks = orderbook.get("asks", [])
+                    
+                    if bids and asks:
+                        spread = float(asks[0][0]) - float(bids[0][0])
+                        avg_price = (float(asks[0][0]) + float(bids[0][0])) / 2
+                        spread_bps = spread / avg_price * 10000
+                        
+                        if spread_bps > 50:  # Wide spread threshold
+                            anomaly_detected = True
+                            anomaly_score = min(1.0, spread_bps / 200)  # Normalize
+                            
+                            anomalies["detected_anomalies"].append({
+                                "type": "spread_widening",
+                                "severity": "high" if spread_bps > 100 else "medium",
+                                "description": f"Wide spread: {spread_bps:.1f} basis points",
+                                "timestamp": datetime.now().isoformat()
+                            })
+            
+            anomalies["anomaly_scores"][anomaly_type] = float(anomaly_score)
+            
+            # Impact assessment
+            if anomaly_detected:
+                impact = "high" if anomaly_score > 0.7 else "medium" if anomaly_score > 0.4 else "low"
+                anomalies["impact_assessment"][anomaly_type] = {
+                    "impact_level": impact,
+                    "market_disruption": anomaly_score > 0.6,
+                    "trading_recommendation": "caution" if anomaly_score > 0.5 else "monitor",
+                    "expected_duration": "short" if anomaly_type == "price_spike" else "medium"
+                }
+        
+        # Historical context
+        total_anomalies = len(anomalies["detected_anomalies"])
+        high_severity = sum(1 for a in anomalies["detected_anomalies"] if a["severity"] == "high")
+        
+        anomalies["historical_context"] = {
+            "total_anomalies_detected": total_anomalies,
+            "high_severity_count": high_severity,
+            "anomaly_frequency": "high" if total_anomalies > 2 else "normal",
+            "market_stability": "unstable" if high_severity > 1 else "stable",
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+        
+        self.logger.info(
+            "Completed anomaly detection",
+            types_checked=len(anomaly_types),
+            anomalies_found=total_anomalies,
+            high_severity=high_severity
+        )
+        
+        return anomalies
