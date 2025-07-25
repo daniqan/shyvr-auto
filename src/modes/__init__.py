@@ -36,13 +36,18 @@ from .base import (
     ModeConfig,
     ModeResult,
     TradingMode,
-    AnalysisMode,
     SimulationMode,
     ModeError,
     ModeNotFoundError,
     ModeConfigError,
     InvalidModeTransitionError,
 )
+
+# Import base AnalysisMode for compatibility
+from .base import AnalysisMode as BaseAnalysisMode
+
+# Import enhanced AnalysisMode
+from .analysis_mode import AnalysisMode
 
 # Mode manager and scheduling
 from .mode_manager import (
@@ -68,6 +73,7 @@ __all__ = [
     "ModeResult",
     "TradingMode",
     "AnalysisMode",
+    "BaseAnalysisMode",
     "SimulationMode",
     
     # Mode manager classes
