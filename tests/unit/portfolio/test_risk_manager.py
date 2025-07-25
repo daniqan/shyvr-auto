@@ -332,7 +332,7 @@ class TestRiskLimits:
                 position_type=PositionType.SPOT,
                 chain=Chain.SOLANA,
                 dex_name="jupiter",
-                size=Decimal("1.0"),
+                size=Decimal("0.15"),  # 0.15 BTC @ $52,000 = $7,800 (7.8% of $100k portfolio)
                 entry_price=Decimal("50000"),
                 current_price=Decimal("52000"),
                 status=PositionStatus.OPEN
@@ -343,7 +343,7 @@ class TestRiskLimits:
                 position_type=PositionType.SPOT,
                 chain=Chain.ETHEREUM,
                 dex_name="uniswap_v3",
-                size=Decimal("10.0"),
+                size=Decimal("2.5"),  # 2.5 ETH @ $3,100 = $7,750 (7.75% of $100k portfolio)
                 entry_price=Decimal("3000"),
                 current_price=Decimal("3100"),
                 status=PositionStatus.OPEN
