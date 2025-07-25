@@ -15,7 +15,7 @@ from src.dex.base import DEXConfig, SwapType
 from src.wallet.solana_wallet import SolanaWallet
 from src.wallet.base import WalletConfig
 from src.trading.dex_wallet_bridge import DEXWalletBridge, SwapExecutionConfig
-from src.utils.base import Chain, NetworkType
+from src.wallet.base import Chain, NetworkType
 
 
 @pytest.fixture
