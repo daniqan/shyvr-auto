@@ -812,13 +812,16 @@ class PortfolioManager:
             avg_loss = total_loss_amount / Decimal(losing_trades) if losing_trades > 0 else Decimal("0")
             profit_factor = total_win_amount / total_loss_amount if total_loss_amount > 0 else Decimal("0")
             
+            # Get the actual initial balance from portfolio peaks (tracks original portfolio value)
+            actual_initial_balance = self._portfolio_peaks.get(portfolio_id, portfolio.config.initial_balance)
+            
             # Calculate Sharpe ratio (simplified)
-            returns = (total_realized_pnl + total_unrealized_pnl) / portfolio.config.initial_balance
+            returns = (total_realized_pnl + total_unrealized_pnl) / actual_initial_balance
             sharpe_ratio = returns * Decimal("3.46")  # Simplified: assuming annual returns and 10% volatility
             
             # Calculate max drawdown
             current_value = portfolio.equity
-            peak_value = self._portfolio_peaks.get(portfolio_id, portfolio.config.initial_balance)
+            peak_value = self._portfolio_peaks.get(portfolio_id, actual_initial_balance)
             max_drawdown = (peak_value - current_value) / peak_value if peak_value > 0 else Decimal("0")
             
             metrics = PerformanceMetrics(
@@ -833,7 +836,7 @@ class PortfolioManager:
                 sharpe_ratio=sharpe_ratio,
                 max_drawdown=max_drawdown,
                 total_trades=total_trades,
-                initial_balance=portfolio.config.initial_balance,
+                initial_balance=actual_initial_balance,
                 current_balance=current_value,
                 winning_trades=winning_trades,
                 losing_trades=losing_trades

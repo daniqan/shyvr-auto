@@ -344,18 +344,21 @@ class TestPositionManagement:
         
         await portfolio_manager.add_position(portfolio_id, sample_position)
         
+        # Store original size before closing
+        original_size = sample_position.size
+        
         # Close position
         result = await portfolio_manager.close_position(
             portfolio_id=portfolio_id,
             position_id=sample_position.position_id,
-            close_size=sample_position.size,
+            close_size=original_size,
             close_price=Decimal("55000"),
             reason="profit_taking"
         )
         
         assert result.success is True
         assert result.position_id == sample_position.position_id
-        assert result.close_size == sample_position.size
+        assert result.close_size == original_size
         assert result.close_price == Decimal("55000")
         assert result.realized_pnl > 0  # Position was profitable
         
@@ -408,6 +411,9 @@ class TestPositionManagement:
         
         await portfolio_manager.add_position(portfolio_id, sample_position)
         
+        # Store original price before updating
+        original_price = sample_position.current_price
+        
         # Update price
         new_price = Decimal("60000")
         result = await portfolio_manager.update_position_price(
@@ -417,7 +423,7 @@ class TestPositionManagement:
         
         assert result.success is True
         assert result.new_price == new_price
-        assert result.price_change == new_price - sample_position.current_price
+        assert result.price_change == new_price - original_price
         
         # Verify position updated
         portfolio = portfolio_manager.get_portfolio(portfolio_id)
@@ -425,31 +431,32 @@ class TestPositionManagement:
         assert position.current_price == new_price
 
 
+@pytest.fixture
+def multiple_positions():
+    """Multiple positions for batch testing."""
+    positions = []
+    symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
+    prices = [Decimal("50000"), Decimal("3000"), Decimal("100")]
+    
+    for i, (symbol, price) in enumerate(zip(symbols, prices)):
+        position = Position(
+            position_id=uuid4(),
+            symbol=symbol,
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.1") * (i + 1),  # Different sizes
+            entry_price=price,
+            current_price=price,
+            status=PositionStatus.OPEN
+        )
+        positions.append(position)
+    
+    return positions
+
+
 class TestBatchOperations:
     """Test batch operations for multiple positions."""
-    
-    @pytest.fixture
-    def multiple_positions(self):
-        """Multiple positions for batch testing."""
-        positions = []
-        symbols = ["BTC/USDC", "ETH/USDC", "SOL/USDC"]
-        prices = [Decimal("50000"), Decimal("3000"), Decimal("100")]
-        
-        for i, (symbol, price) in enumerate(zip(symbols, prices)):
-            position = Position(
-                position_id=uuid4(),
-                symbol=symbol,
-                position_type=PositionType.SPOT,
-                chain=Chain.SOLANA,
-                dex_name="jupiter",
-                size=Decimal("0.1") * (i + 1),  # Different sizes
-                entry_price=price,
-                current_price=price,
-                status=PositionStatus.OPEN
-            )
-            positions.append(position)
-        
-        return positions
     
     @pytest.mark.asyncio
     async def test_batch_add_positions(self, portfolio_manager, multiple_positions):
@@ -578,27 +585,57 @@ class TestRiskManagement:
     @pytest.mark.asyncio
     async def test_insufficient_funds_validation(self, portfolio_manager):
         """Test insufficient funds validation."""
-        # Create portfolio with limited funds
-        portfolio_result = await portfolio_manager.create_portfolio(
+        # Create a custom config with higher position size limit to test insufficient funds
+        custom_config = PortfolioConfig(
+            initial_balance=Decimal("1000"),
+            base_currency="USDC",
+            max_position_size_pct=Decimal("0.8"),  # 80% limit instead of 10%
+            max_daily_loss_pct=Decimal("0.05"),
+            max_drawdown_pct=Decimal("0.15"),
+            stop_loss_pct=Decimal("0.08"),
+            take_profit_pct=Decimal("0.4"),
+            max_open_positions=10,
+            min_trade_amount_usd=Decimal("10"),
+            enable_risk_management=True,
+            enable_auto_rebalancing=False
+        )
+        manager = portfolio_manager.__class__(custom_config)
+        
+        portfolio_result = await manager.create_portfolio(
             name="Limited Funds Portfolio",
-            initial_balance=Decimal("1000")  # Only $1000
+            initial_balance=Decimal("100")  # Only $100
         )
         portfolio_id = portfolio_result.portfolio_id
         
-        # Try to add position requiring more funds than available
+        # Add one position that consumes most of the cash
+        first_position = Position(
+            position_id=uuid4(),
+            symbol="TOKEN1/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("40"),  # $40 position (under $50 limit)
+            entry_price=Decimal("1"),
+            current_price=Decimal("1"),
+            status=PositionStatus.OPEN
+        )
+        result1 = await manager.add_position(portfolio_id, first_position)
+        assert result1.success is True
+        
+        # Now try to add another position that would exceed remaining cash ($60 remaining)
         expensive_position = Position(
             position_id=uuid4(),
             symbol="BTC/USDC",
             position_type=PositionType.SPOT,
             chain=Chain.SOLANA,
             dex_name="jupiter",
-            size=Decimal("0.03"),  # 0.03 BTC at $50k = $1500 > $1000 available
-            entry_price=Decimal("50000"),
-            current_price=Decimal("50000"),
+            size=Decimal("70"),  # $70 position (exceeds $60 available)
+            entry_price=Decimal("1"),
+            current_price=Decimal("1"),
             status=PositionStatus.OPEN
         )
         
-        result = await portfolio_manager.add_position(portfolio_id, expensive_position)
+        result = await manager.add_position(portfolio_id, expensive_position)
         assert result.success is False
         assert "Insufficient funds" in result.message
     
@@ -632,30 +669,59 @@ class TestRiskManagement:
     @pytest.mark.asyncio
     async def test_drawdown_monitoring(self, portfolio_manager, sample_position):
         """Test portfolio drawdown monitoring."""
+        # Create a custom config with higher position size limit
+        custom_config = PortfolioConfig(
+            initial_balance=Decimal("10000"),
+            base_currency="USDC",
+            max_position_size_pct=Decimal("0.95"),  # 95% limit
+            max_daily_loss_pct=Decimal("0.05"),
+            max_drawdown_pct=Decimal("0.15"),  # 15% drawdown limit  
+            stop_loss_pct=Decimal("0.08"),
+            take_profit_pct=Decimal("0.4"),
+            max_open_positions=10,
+            min_trade_amount_usd=Decimal("10"),
+            enable_risk_management=True,
+            enable_auto_rebalancing=False
+        )
+        manager = portfolio_manager.__class__(custom_config)
+        
         # Create portfolio
-        portfolio_result = await portfolio_manager.create_portfolio(
+        portfolio_result = await manager.create_portfolio(
             name="Drawdown Portfolio",
             initial_balance=Decimal("10000")
         )
         portfolio_id = portfolio_result.portfolio_id
         
-        # Add position
-        await portfolio_manager.add_position(portfolio_id, sample_position)
+        # Create a larger position that can create significant drawdown
+        large_position = Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.18"),  # 0.18 BTC at $50k = $9000 (90% of portfolio)
+            entry_price=Decimal("50000"),
+            current_price=Decimal("50000"),
+            status=PositionStatus.OPEN
+        )
         
-        # Simulate large loss (update price to create 20% drawdown > 15% limit)
-        loss_price = sample_position.entry_price * Decimal("0.6")  # 40% loss
+        await manager.add_position(portfolio_id, large_position)
         
-        result = await portfolio_manager.update_position_price(
-            sample_position.position_id,
+        # Simulate large loss (update price to create >15% drawdown)
+        # 50% price drop on 90% of portfolio = 45% loss on position = ~40% portfolio drawdown
+        loss_price = large_position.entry_price * Decimal("0.5")  # 50% loss
+        
+        result = await manager.update_position_price(
+            large_position.position_id,
             loss_price
         )
         
         # Should trigger drawdown warning
         assert result.success is True
         # Check if portfolio manager detects excessive drawdown
-        drawdown_risk = await portfolio_manager.check_drawdown_risk(portfolio_id)
+        drawdown_risk = await manager.check_drawdown_risk(portfolio_id)
         assert drawdown_risk.at_risk is True
-        assert drawdown_risk.current_drawdown > portfolio_manager.config.max_drawdown_pct
+        assert drawdown_risk.current_drawdown > manager.config.max_drawdown_pct
 
 
 class TestMultiChainSupport:
@@ -911,18 +977,31 @@ class TestErrorHandlingAndEdgeCases:
         invalid_id = uuid4()
         
         # Test various operations with invalid portfolio ID
-        with pytest.raises((PortfolioError, PositionNotFoundError)):
-            await portfolio_manager.add_position(invalid_id, Position(
-                position_id=uuid4(),
-                symbol="BTC/USDC",
-                position_type=PositionType.SPOT,
-                chain=Chain.SOLANA,
-                dex_name="jupiter",
-                size=Decimal("0.1"),
-                entry_price=Decimal("50000"),
-                current_price=Decimal("50000"),
-                status=PositionStatus.OPEN
-            ))
+        result = await portfolio_manager.add_position(invalid_id, Position(
+            position_id=uuid4(),
+            symbol="BTC/USDC",
+            position_type=PositionType.SPOT,
+            chain=Chain.SOLANA,
+            dex_name="jupiter",
+            size=Decimal("0.1"),
+            entry_price=Decimal("50000"),
+            current_price=Decimal("50000"),
+            status=PositionStatus.OPEN
+        ))
+        
+        # Should return failure result instead of raising exception
+        assert result.success is False
+        assert "Portfolio not found" in result.message
+        
+        # Test close position with invalid portfolio ID
+        close_result = await portfolio_manager.close_position(
+            portfolio_id=invalid_id,
+            position_id=uuid4(),
+            close_size=Decimal("0.1"),
+            close_price=Decimal("50000")
+        )
+        assert close_result.success is False
+        assert "Portfolio not found" in close_result.message
     
     @pytest.mark.asyncio
     async def test_handle_concurrent_operations(self, portfolio_manager, multiple_positions):
