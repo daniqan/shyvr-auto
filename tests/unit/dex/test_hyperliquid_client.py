@@ -386,3 +386,189 @@ class TestHyperliquidDEXClientTDD:
             assert quote.additional_fees is not None
             assert "funding_rate" in quote.additional_fees
             assert quote.additional_fees["funding_rate"] == Decimal("0.0001")
+
+    @pytest.mark.asyncio
+    async def test_sdk_initialization_error(self, hyperliquid_config):
+        """Test SDK initialization error handling (lines 105-107)."""
+        with patch('src.dex.hyperliquid_client.HyperliquidAsync') as mock_sdk:
+            mock_sdk.side_effect = Exception("SDK initialization failed")
+            
+            with pytest.raises(DEXConnectionError, match="SDK initialization failed"):
+                from src.dex.hyperliquid_client import HyperliquidDEXClient
+                HyperliquidDEXClient(hyperliquid_config)
+
+    @pytest.mark.asyncio
+    async def test_session_creation_error(self, mock_hyperliquid_client):
+        """Test session creation errors (lines 111-120)."""
+        with patch('aiohttp.ClientSession') as mock_session_class:
+            mock_session_class.side_effect = Exception("Session creation failed")
+            
+            with pytest.raises(Exception, match="Session creation failed"):
+                await mock_hyperliquid_client._get_session()
+
+    @pytest.mark.asyncio
+    async def test_http_request_unsupported_method(self, mock_hyperliquid_client):
+        """Test unsupported HTTP method error (lines 164-165)."""
+        with patch.object(mock_hyperliquid_client, '_get_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value = mock_session
+            
+            with pytest.raises(DEXError, match="Unsupported HTTP method: PATCH"):
+                await mock_hyperliquid_client._make_request("PATCH", "/test")
+
+    @pytest.mark.asyncio
+    async def test_http_request_client_error(self, mock_hyperliquid_client):
+        """Test HTTP client error handling (lines 167-169)."""
+        import aiohttp
+        
+        with patch.object(mock_hyperliquid_client, '_get_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value = mock_session
+            
+            # Create a mock context manager for session.get()
+            mock_context = AsyncMock()
+            mock_context.__aenter__.side_effect = aiohttp.ClientError("Network error")
+            mock_session.get.return_value = mock_context
+            
+            with pytest.raises(DEXConnectionError, match="Request failed: Network error"):
+                await mock_hyperliquid_client._make_request("GET", "/test")
+
+    @pytest.mark.asyncio
+    async def test_http_request_rate_limit_error(self, mock_hyperliquid_client):
+        """Test rate limit error handling (lines 152-153, 159-160)."""
+        with patch.object(mock_hyperliquid_client, '_get_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_response = AsyncMock()
+            mock_response.status = 429
+            
+            # Create a proper context manager mock
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value = mock_response
+            mock_context.__aexit__.return_value = None
+            mock_session.get.return_value = mock_context
+            mock_get_session.return_value = mock_session
+            
+            with pytest.raises(DEXRateLimitError, match="Rate limit exceeded"):
+                await mock_hyperliquid_client._make_request("GET", "/test")
+
+    @pytest.mark.asyncio
+    async def test_http_request_unexpected_error(self, mock_hyperliquid_client):
+        """Test unexpected error handling (lines 170-172)."""
+        with patch.object(mock_hyperliquid_client, '_get_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value = mock_session
+            
+            # Create a mock context manager that raises an error
+            mock_context = AsyncMock()
+            mock_context.__aenter__.side_effect = RuntimeError("Unexpected error")
+            mock_session.get.return_value = mock_context
+            
+            with pytest.raises(DEXError, match="Request error: Unexpected error"):
+                await mock_hyperliquid_client._make_request("GET", "/test")
+
+    @pytest.mark.asyncio
+    async def test_authentication_no_client_error(self, mock_hyperliquid_client):
+        """Test authentication with no client initialized (lines 185-186)."""
+        mock_hyperliquid_client.hyperliquid_client = None
+        
+        with pytest.raises(DEXConnectionError, match="Hyperliquid client not initialized"):
+            await mock_hyperliquid_client._authenticate()
+
+    @pytest.mark.asyncio
+    async def test_authentication_failure_error(self, mock_hyperliquid_client):
+        """Test authentication failure handling (lines 193-195)."""
+        # Set the client but make it raise an exception during authentication test
+        mock_hyperliquid_client.hyperliquid_client = AsyncMock()
+        
+        # Patch the logger to trigger the exception path in _authenticate
+        with patch.object(mock_hyperliquid_client.logger, 'info') as mock_logger:
+            mock_logger.side_effect = Exception("Auth failed")
+            
+            with pytest.raises(DEXConnectionError, match="Authentication failed: Auth failed"):
+                await mock_hyperliquid_client._authenticate()
+
+    @pytest.mark.asyncio
+    async def test_get_quote_error_handling(self, mock_hyperliquid_client):
+        """Test quote generation error handling (lines 344-346)."""
+        with patch.object(
+            mock_hyperliquid_client, '_get_orderbook_quote', new_callable=AsyncMock
+        ) as mock_quote:
+            mock_quote.side_effect = Exception("Quote API failed")
+            
+            with pytest.raises(DEXError, match="Quote request failed: Quote API failed"):
+                await mock_hyperliquid_client.get_quote(
+                    input_token="USDC",
+                    output_token="BTC-PERP",
+                    amount=Decimal("45000"),
+                    swap_type=SwapType.EXACT_INPUT
+                )
+
+    @pytest.mark.asyncio
+    async def test_get_leveraged_quote_error_handling(self, mock_hyperliquid_client):
+        """Test leveraged quote generation error handling (lines 391-393)."""
+        with patch.object(
+            mock_hyperliquid_client, '_get_leveraged_quote', new_callable=AsyncMock
+        ) as mock_quote:
+            mock_quote.side_effect = Exception("Leveraged quote failed")
+            
+            with pytest.raises(DEXError, match="Leveraged quote request failed: Leveraged quote failed"):
+                await mock_hyperliquid_client.get_leveraged_quote(
+                    input_token="USDC",
+                    output_token="BTC-PERP",
+                    amount=Decimal("4500"),
+                    leverage=10,
+                    slippage_bps=100
+                )
+
+    @pytest.mark.asyncio
+    async def test_execute_swap_validation_failure(self, mock_hyperliquid_client):
+        """Test swap execution validation failure (lines 428-429)."""
+        quote = SwapQuote(
+            input_token="USDC",
+            output_token="BTC-PERP",
+            input_amount=Decimal("45000"),
+            output_amount=Decimal("1.0"),
+            price=Decimal("45000.50"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            dex_name="hyperliquid",
+            quote_id="hl_quote_123",
+        )
+        
+        with patch.object(mock_hyperliquid_client, 'validate_quote') as mock_validate:
+            mock_validate.return_value = False
+            
+            with pytest.raises(DEXTransactionError, match="Quote validation failed"):
+                await mock_hyperliquid_client.execute_swap(
+                    quote=quote,
+                    wallet_address="0x1234567890abcdef1234567890abcdef12345678"
+                )
+
+    @pytest.mark.asyncio
+    async def test_execute_swap_execution_failure(self, mock_hyperliquid_client):
+        """Test swap execution failure handling (lines 457-459)."""
+        quote = SwapQuote(
+            input_token="USDC",
+            output_token="BTC-PERP",
+            input_amount=Decimal("45000"),
+            output_amount=Decimal("1.0"),
+            price=Decimal("45000.50"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            dex_name="hyperliquid",
+            quote_id="hl_quote_123",
+        )
+        
+        with patch.object(mock_hyperliquid_client, 'validate_quote') as mock_validate:
+            mock_validate.return_value = True
+            
+            with patch.object(
+                mock_hyperliquid_client, '_execute_order', new_callable=AsyncMock
+            ) as mock_execute:
+                mock_execute.side_effect = Exception("Order execution failed")
+                
+                with pytest.raises(DEXTransactionError, match="Order execution failed: Order execution failed"):
+                    await mock_hyperliquid_client.execute_swap(
+                        quote=quote,
+                        wallet_address="0x1234567890abcdef1234567890abcdef12345678"
+                    )

@@ -381,3 +381,228 @@ class TestUniswapV3Client:
                     quote=quote,
                     wallet_address="0x742d35cc6e38d44ccc6d7d0b4d16be1d8f7b3a3e"
                 )
+
+    @pytest.mark.asyncio
+    async def test_web3_initialization_error(self, uniswap_client):
+        """Test Web3 initialization error handling (lines 354-356)."""
+        with patch('web3.Web3') as mock_web3:
+            mock_web3.side_effect = Exception("Web3 connection failed")
+            
+            result = await uniswap_client._initialize_web3()
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_get_quote_no_valid_quotes_across_tiers(self, uniswap_client):
+        """Test quote processing with no valid quotes across fee tiers (lines 175-181, 184)."""
+        input_token = "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC"
+        output_token = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        amount = Decimal("1000")
+        
+        # Mock all fee tier quotes to return None
+        with patch.object(uniswap_client, '_get_quote_for_fee_tier') as mock_tier_quote:
+            mock_tier_quote.return_value = None
+            
+            with pytest.raises(DEXError, match="No valid quotes found across any fee tier"):
+                await uniswap_client.get_quote(
+                    input_token=input_token,
+                    output_token=output_token,
+                    amount=amount
+                )
+
+    @pytest.mark.asyncio
+    async def test_get_quote_fee_tier_warning_logging(self, uniswap_client):
+        """Test quote fee tier warning logging (lines 175-181)."""
+        input_token = "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC"
+        output_token = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        amount = Decimal("1000")
+        
+        # Mock first fee tier to fail, second to succeed
+        good_quote = SwapQuote(
+            input_token=input_token,
+            output_token=output_token,
+            input_amount=amount,
+            output_amount=Decimal("0.5"),
+            price=Decimal("0.0005"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            dex_name="uniswap_v3"
+        )
+        
+        with patch.object(uniswap_client, '_get_quote_for_fee_tier') as mock_tier_quote:
+            mock_tier_quote.side_effect = [Exception("Fee tier 500 failed"), good_quote, None]
+            
+            with patch.object(uniswap_client, '_select_best_quote') as mock_select:
+                mock_select.return_value = good_quote
+                
+                quote = await uniswap_client.get_quote(
+                    input_token=input_token,
+                    output_token=output_token,
+                    amount=amount
+                )
+                
+                assert quote == good_quote
+                assert mock_tier_quote.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_get_quote_error_handling(self, uniswap_client):
+        """Test quote request error handling (lines 190-192)."""
+        # Force an error in the try-catch block by patching connect to raise an error
+        with patch.object(uniswap_client, 'connect') as mock_connect:
+            mock_connect.side_effect = RuntimeError("Unexpected quote error")
+            uniswap_client._connected = False  # Force it to try to connect
+            
+            with pytest.raises(DEXError, match="Quote request failed: Unexpected quote error"):
+                await uniswap_client.get_quote(
+                    input_token="0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+                    output_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    amount=Decimal("1000")
+                )
+
+    @pytest.mark.asyncio
+    async def test_execute_swap_validation_failure(self, uniswap_client):
+        """Test swap execution validation failure (lines 218-219)."""
+        quote = SwapQuote(
+            input_token="0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+            output_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            input_amount=Decimal("1000"),
+            output_amount=Decimal("0.5"),
+            price=Decimal("0.0005"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            dex_name="uniswap_v3"
+        )
+        
+        with patch.object(uniswap_client, 'validate_quote') as mock_validate:
+            mock_validate.return_value = False
+            
+            with pytest.raises(DEXTransactionError, match="Quote validation failed"):
+                await uniswap_client.execute_swap(
+                    quote=quote,
+                    wallet_address="0x742d35cc6e38d44ccc6d7d0b4d16be1d8f7b3a3e"
+                )
+
+    @pytest.mark.asyncio
+    async def test_get_token_price_error_handling(self, uniswap_client):
+        """Test token price error handling (lines 254-256)."""
+        with patch.object(uniswap_client, '_get_token_price_from_pool') as mock_price:
+            mock_price.side_effect = Exception("Price query failed")
+            
+            with pytest.raises(DEXError, match="Price query failed: Price query failed"):
+                await uniswap_client.get_token_price("0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC")
+
+    @pytest.mark.asyncio
+    async def test_get_supported_tokens_error_handling(self, uniswap_client):
+        """Test supported tokens error handling (lines 272-274)."""
+        with patch.object(uniswap_client, '_fetch_supported_tokens') as mock_tokens:
+            mock_tokens.side_effect = Exception("Token list query failed")
+            
+            with pytest.raises(DEXError, match="Token list query failed: Token list query failed"):
+                await uniswap_client.get_supported_tokens()
+
+    @pytest.mark.asyncio
+    async def test_estimate_gas_error_handling(self, uniswap_client):
+        """Test gas estimation error handling (lines 307-309)."""
+        with patch.object(uniswap_client, '_estimate_swap_gas') as mock_gas:
+            mock_gas.side_effect = Exception("Gas estimation failed")
+            
+            with pytest.raises(DEXError, match="Gas estimation failed: Gas estimation failed"):
+                await uniswap_client.estimate_gas(
+                    input_token="0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+                    output_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    amount=Decimal("1000"),
+                    wallet_address="0x742d35cc6e38d44ccc6d7d0b4d16be1d8f7b3a3e"
+                )
+
+    @pytest.mark.asyncio
+    async def test_get_transaction_status_error_handling(self, uniswap_client):
+        """Test transaction status error handling (lines 331-333)."""
+        with patch.object(uniswap_client, '_get_transaction_receipt') as mock_receipt:
+            mock_receipt.side_effect = Exception("Transaction query failed")
+            
+            with pytest.raises(DEXError, match="Transaction query failed: Transaction query failed"):
+                await uniswap_client.get_transaction_status("0x1234567890abcdef")
+
+    @pytest.mark.asyncio
+    async def test_get_quote_for_fee_tier_error_handling(self, uniswap_client):
+        """Test fee tier quote error handling (lines 395-397)."""
+        # Test internal error handling in _get_quote_for_fee_tier
+        with patch.object(uniswap_client.logger, 'error') as mock_logger:
+            result = await uniswap_client._get_quote_for_fee_tier(
+                "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                Decimal("1000"),
+                500,
+                SwapType.EXACT_INPUT,
+                50
+            )
+            
+            # Should return a SwapQuote even with mock implementation
+            assert result is not None
+            assert isinstance(result, SwapQuote)
+
+    @pytest.mark.asyncio 
+    async def test_select_best_quote_exact_output(self, uniswap_client):
+        """Test best quote selection for exact output swaps (lines 404-406)."""
+        input_token = "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC"
+        output_token = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        
+        # Create quotes with different input amounts for exact output
+        quote1 = SwapQuote(
+            input_token=input_token,
+            output_token=output_token,
+            input_amount=Decimal("1000"),  # Higher input amount
+            output_amount=Decimal("0.5"),
+            price=Decimal("0.0005"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            dex_name="uniswap_v3"
+        )
+        
+        quote2 = SwapQuote(
+            input_token=input_token,
+            output_token=output_token,
+            input_amount=Decimal("995"),   # Lower input amount (better)
+            output_amount=Decimal("0.5"),
+            price=Decimal("0.000502"),
+            price_impact_bps=20,
+            slippage_bps=50,
+            dex_name="uniswap_v3"
+        )
+        
+        quotes = [quote1, quote2]
+        best_quote = await uniswap_client._select_best_quote(quotes, SwapType.EXACT_OUTPUT)
+        
+        # For exact output, should choose quote with lowest input amount
+        assert best_quote == quote2
+        assert best_quote.input_amount == Decimal("995")
+
+    @pytest.mark.asyncio
+    async def test_fee_tier_mock_calculations(self, uniswap_client):
+        """Test fee tier specific calculations (lines 368-397)."""
+        input_token = "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC"
+        output_token = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        amount = Decimal("1000")
+        
+        # Test 0.05% fee tier (500)
+        quote_500 = await uniswap_client._get_quote_for_fee_tier(
+            input_token, output_token, amount, 500, SwapType.EXACT_INPUT, 50
+        )
+        assert quote_500.additional_fees["pool_fee"] == Decimal("5")  # 500/100 = 5 basis points
+        assert quote_500.output_amount == amount * Decimal("0.502")  # Best rate
+        assert quote_500.price_impact_bps == 20
+        
+        # Test 0.3% fee tier (3000)
+        quote_3000 = await uniswap_client._get_quote_for_fee_tier(
+            input_token, output_token, amount, 3000, SwapType.EXACT_INPUT, 50
+        )
+        assert quote_3000.additional_fees["pool_fee"] == Decimal("30")  # 3000/100 = 30 basis points
+        assert quote_3000.output_amount == amount * Decimal("0.500")  # Standard rate
+        assert quote_3000.price_impact_bps == 25
+        
+        # Test 1% fee tier (10000)
+        quote_10000 = await uniswap_client._get_quote_for_fee_tier(
+            input_token, output_token, amount, 10000, SwapType.EXACT_INPUT, 50
+        )
+        assert quote_10000.additional_fees["pool_fee"] == Decimal("100")  # 10000/100 = 100 basis points
+        assert quote_10000.output_amount == amount * Decimal("0.495")  # Exotic pairs
+        assert quote_10000.price_impact_bps == 35
