@@ -19,7 +19,9 @@ from src.portfolio.base import (
     Portfolio, Position, Transaction, PositionType, PositionStatus,
     TransactionType, PerformanceMetrics, RiskMetrics
 )
-from src.rl_agent.base import MarketState, TradeAction
+from src.rl_agent.base import MarketState, TradeAction, TradingResult
+from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
+from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
 
@@ -695,6 +697,34 @@ class SimulationMode(ModeBase):
         self.simulation_metrics = SimulationMetrics(
             virtual_balance=self.virtual_balance
         )
+        
+        # Experience collection setup
+        self.enable_experience_collection = params.get("enable_experience_collection", False)
+        self.experience_collector = None
+        if self.enable_experience_collection:
+            # Create experience collector configuration
+            experience_config = ExperienceCollectorConfig(
+                buffer_size=params.get("experience_buffer_size", 10000),
+                min_experience_gap_seconds=params.get("min_experience_gap_seconds", 1),
+                enable_persistence=params.get("enable_experience_persistence", True),
+                persistence_path=params.get("experience_persistence_path", "simulation_experiences.json"),
+                max_experiences_per_session=params.get("max_experiences_per_session", 1000)
+            )
+            
+            # Create replay buffer for experience collection
+            replay_config = ReplayBufferConfig(
+                max_size=experience_config.buffer_size,
+                batch_size=32,
+                min_size=100
+            )
+            replay_buffer = ExperienceReplayBuffer(replay_config)
+            
+            # Initialize experience collector
+            self.experience_collector = TradingExperienceCollector(experience_config, replay_buffer)
+            
+            self.logger.info("Experience collection enabled for simulation mode",
+                           buffer_size=experience_config.buffer_size,
+                           persistence=experience_config.enable_persistence)
     
     async def initialize(self) -> None:
         """Initialize simulation mode resources."""
@@ -720,6 +750,11 @@ class SimulationMode(ModeBase):
         # Activate simulation executor
         self.simulation_executor.is_active = True
         
+        # Start experience collection if enabled
+        if self.experience_collector:
+            await self.experience_collector.start_collection()
+            self.logger.info("Experience collection started")
+        
         self._set_status(ModeStatus.ACTIVE)
         self.logger.info("Simulation mode started")
     
@@ -727,6 +762,11 @@ class SimulationMode(ModeBase):
         """Stop simulation mode."""
         self.logger.info("Stopping simulation mode")
         self._set_status(ModeStatus.STOPPING)
+        
+        # Stop experience collection if enabled
+        if self.experience_collector:
+            await self.experience_collector.stop_collection()
+            self.logger.info("Experience collection stopped")
         
         # Deactivate executor
         self.simulation_executor.is_active = False
@@ -766,9 +806,17 @@ class SimulationMode(ModeBase):
             # Make trading decision based on market conditions
             action = self._make_trading_decision(market_state)
             
+            # Capture pre-trade experience if not HOLD and experience collection enabled
+            experience_id = None
+            if action != TradeAction.HOLD and self.experience_collector and self.experience_collector.is_collecting:
+                try:
+                    experience_id = await self.experience_collector.capture_pre_trade_state(market_state, action)
+                except Exception as e:
+                    self.logger.warning("Failed to capture pre-trade experience", error=str(e))
+            
             # Execute simulated trade if action is not HOLD
             if action != TradeAction.HOLD:
-                await self._execute_simulated_trade(action, market_state)
+                await self._execute_simulated_trade(action, market_state, experience_id)
             
             # Update simulation metrics
             self._update_simulation_metrics()
@@ -850,8 +898,11 @@ class SimulationMode(ModeBase):
         
         return TradeAction.HOLD
     
-    async def _execute_simulated_trade(self, action: TradeAction, market_state: MarketState) -> None:
+    async def _execute_simulated_trade(self, action: TradeAction, market_state: MarketState, 
+                                       experience_id: Optional[str] = None) -> None:
         """Execute simulated trade based on action."""
+        trading_result = None
+        
         try:
             if action in [TradeAction.BUY, TradeAction.STRONG_BUY]:
                 # Simulate buy order
@@ -862,16 +913,81 @@ class SimulationMode(ModeBase):
                 # Check risk limits
                 risk_check = await self.risk_manager.validate_position_size("SIMULATION_TOKEN", position_size)
                 if risk_check.is_valid:
-                    # Execute simulated buy (would use real token address in production)
-                    pass  # Placeholder for actual execution
+                    # Create simulated buy result
+                    trading_result = TradingResult(
+                        action=action,
+                        token=market_state.token,
+                        executed_at=datetime.now(),
+                        price=market_state.price_usd,
+                        quantity=float(position_size),
+                        value_usd=float(position_size * Decimal(str(market_state.price_usd))),
+                        success=True,
+                        slippage=0.01,  # 1% simulated slippage
+                        fees=float(position_size * Decimal("0.003")),  # 0.3% fees
+                        portfolio_value_before=float(self.virtual_portfolio.equity),
+                        portfolio_value_after=float(self.virtual_portfolio.equity),
+                        cash_change=float(-position_size * Decimal(str(market_state.price_usd))),
+                        position_change=float(position_size),
+                        realized_pnl=0.0,
+                        unrealized_pnl=0.0
+                    )
+                else:
+                    # Risk check failed - create failed result
+                    trading_result = TradingResult(
+                        action=action,
+                        token=market_state.token,
+                        executed_at=datetime.now(),
+                        price=market_state.price_usd,
+                        quantity=0.0,
+                        value_usd=0.0,
+                        success=False,
+                        error_message=risk_check.reason
+                    )
             
             elif action in [TradeAction.SELL, TradeAction.STRONG_SELL]:
                 # Simulate sell order for existing positions
                 open_positions = [p for p in self.virtual_portfolio.positions.values() if p.status == PositionStatus.OPEN]
                 if open_positions:
                     position = open_positions[0]  # Sell first position
-                    # Execute simulated sell
-                    pass  # Placeholder for actual execution
+                    sell_quantity = float(position.size)
+                    
+                    # Create simulated sell result
+                    trading_result = TradingResult(
+                        action=action,
+                        token=market_state.token,
+                        executed_at=datetime.now(),
+                        price=market_state.price_usd,
+                        quantity=sell_quantity,
+                        value_usd=sell_quantity * market_state.price_usd,
+                        success=True,
+                        slippage=0.01,
+                        fees=sell_quantity * market_state.price_usd * 0.003,
+                        portfolio_value_before=float(self.virtual_portfolio.equity),
+                        portfolio_value_after=float(self.virtual_portfolio.equity),
+                        cash_change=sell_quantity * market_state.price_usd,
+                        position_change=-sell_quantity,
+                        realized_pnl=(market_state.price_usd - float(position.entry_price)) * sell_quantity,
+                        unrealized_pnl=0.0
+                    )
+                else:
+                    # No positions to sell
+                    trading_result = TradingResult(
+                        action=action,
+                        token=market_state.token,
+                        executed_at=datetime.now(),
+                        price=market_state.price_usd,
+                        quantity=0.0,
+                        value_usd=0.0,
+                        success=False,
+                        error_message="No positions to sell"
+                    )
+            
+            # Capture post-trade experience if experience collection enabled
+            if experience_id and self.experience_collector and trading_result:
+                try:
+                    await self._capture_trade_experience(experience_id, trading_result, market_state)
+                except Exception as e:
+                    self.logger.warning("Failed to capture post-trade experience", error=str(e))
             
             # Update trade counter
             self.simulation_metrics.total_trades += 1
@@ -879,6 +995,41 @@ class SimulationMode(ModeBase):
             
         except Exception as e:
             self.logger.error("Error executing simulated trade", error=str(e))
+    
+    async def _capture_trade_experience(self, experience_id: str, trading_result: TradingResult, 
+                                       market_state: MarketState) -> None:
+        """Capture trading experience for RL training"""
+        if self.experience_collector:
+            await self.experience_collector.capture_post_trade_result(
+                experience_id, trading_result, market_state
+            )
+    
+    async def _flush_experiences_to_buffer(self) -> int:
+        """Flush completed experiences to replay buffer"""
+        if self.experience_collector:
+            return await self.experience_collector.add_experiences_to_buffer()
+        return 0
+    
+    async def get_enhanced_statistics(self) -> Dict[str, Any]:
+        """Get simulation statistics enhanced with experience collection data"""
+        stats = {
+            "simulation_metrics": {
+                "total_trades": self.simulation_metrics.total_trades,
+                "virtual_balance": float(self.simulation_metrics.virtual_balance),
+                "unrealized_pnl": float(self.simulation_metrics.unrealized_pnl),
+                "realized_pnl": float(self.simulation_metrics.realized_pnl)
+            }
+        }
+        
+        # Add experience collection statistics if enabled
+        if self.experience_collector:
+            try:
+                experience_stats = await self.experience_collector.get_statistics()
+                stats["experience_collection"] = experience_stats
+            except Exception as e:
+                self.logger.warning("Failed to get experience statistics", error=str(e))
+        
+        return stats
     
     def _update_simulation_metrics(self) -> None:
         """Update simulation performance metrics."""
