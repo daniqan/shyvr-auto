@@ -438,19 +438,19 @@ Live trading mode is **disabled by default** and requires:
 ### Project Structure
 ```
 shyvrai-rlte/
-   src/
-      discovery/      # Token discovery modules
-      evaluation/     # Fundamental analysis
-      ml_analysis/    # ML/prediction models
-      rl_agent/       # Reinforcement learning
-      agent/          # Natural language agent
-      modes/          # Trading mode implementations
-      utils/          # Shared utilities
-   tests/              # Comprehensive test suite
-   config/             # Configuration files
-   deploy/             # Deployment scripts
-   docker/             # Docker configurations
-   scripts/            # Utility scripts
+├── src/
+│   ├── discovery/      # Token discovery modules
+│   ├── evaluation/     # Fundamental analysis
+│   ├── ml_analysis/    # ML/prediction models
+│   ├── rl_agent/       # Reinforcement learning
+│   ├── agent/          # Natural language agent
+│   ├── modes/          # Trading mode implementations
+│   └── utils/          # Shared utilities
+├── tests/              # Comprehensive test suite
+├── config/             # Configuration files
+├── deploy/             # Deployment scripts
+├── docker/             # Docker configurations
+└── scripts/            # Utility scripts
 ```
 
 ### Contributing
