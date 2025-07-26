@@ -48,14 +48,15 @@ uv sync
 
 ### Required API Keys
 
-#### 1. BaseScan API Key (Required)
-**Purpose**: Blockchain data for Base network analysis
+#### 1. Etherscan API Key (Required for Ethereum and Base)
+**Purpose**: Blockchain data for Ethereum and Base network analysis (Base migrated to Etherscan API v2)
 
 **Setup Steps**:
-1. Visit [BaseScan](https://basescan.org/apis)
+1. Visit [Etherscan](https://etherscan.io/apis) 
 2. Create a free account
 3. Generate an API key
-4. Free tier provides 100,000 calls/day (sufficient for testing)
+4. This single API key works for both Ethereum (etherscan.io) and Base (basescan.org) networks
+5. Free tier provides 100,000 calls/day (sufficient for testing)
 
 **Rate Limits**: 5 requests/second (handled automatically by the system)
 
@@ -231,11 +232,10 @@ DB_NAME=shyvr_rlte
 DB_USER=rlte_user
 DB_PASSWORD=local_dev_password
 
-# Required API Keys
-BASESCAN_API_KEY=your_basescan_api_key_here
+# Required API Keys  
+ETHERSCAN_API_KEY=your_etherscan_api_key_here  # Used for both Ethereum and Base networks
 BIRDEYE_API_KEY=your_birdeye_api_key_here
 HELIUS_API_KEY=your_helius_api_key_here
-ETHERSCAN_API_KEY=your_etherscan_api_key_here
 
 # Optional API Keys (can be left empty for basic testing)
 X_BEARER_TOKEN=your_x_bearer_token_here
@@ -311,9 +311,8 @@ Create a `.env` file in the project root for Docker Compose:
 # .env file for Docker Compose
 DB_PASSWORD=local_dev_password
 HELIUS_API_KEY=your_helius_api_key
-ETHERSCAN_API_KEY=your_etherscan_api_key
+ETHERSCAN_API_KEY=your_etherscan_api_key  # Used for both Ethereum and Base
 BIRDEYE_API_KEY=your_birdeye_api_key
-BASESCAN_API_KEY=your_basescan_api_key
 ```
 
 ## Running Tests
@@ -391,7 +390,7 @@ docker-compose -f docker/docker-compose.yml exec postgres psql -U rlte_user -d s
 # Test API endpoints (if application exposes test endpoints)
 curl -f http://localhost:8080/api/test/birdeye
 curl -f http://localhost:8080/api/test/helius
-curl -f http://localhost:8080/api/test/basescan
+curl -f http://localhost:8080/api/test/etherscan  # Tests both Ethereum and Base endpoints
 ```
 
 ### 4. Wallet Connectivity
