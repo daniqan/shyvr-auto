@@ -159,10 +159,13 @@ class TestMLRLBridge:
         
         # Mock components
         mock_ml_analyzer = MagicMock()
+        # Use AsyncMock for async batch_analyze method
+        mock_ml_analyzer.batch_analyze = AsyncMock(return_value=mock_ml_predictions)
         mock_ml_analyzer.analyze_batch.return_value = mock_ml_predictions
         
         mock_rl_agent = MagicMock()
-        mock_rl_agent.predict_action.return_value = TradeAction.BUY
+        # Use AsyncMock for async predict_action method 
+        mock_rl_agent.predict_action = AsyncMock(return_value=TradeAction.BUY)
         
         bridge = MLRLBridge(
             ml_analyzer=mock_ml_analyzer,
@@ -185,6 +188,8 @@ class TestMLRLBridge:
         from src.integration.ml_rl_bridge import MLRLBridge
         
         mock_ml_analyzer = MagicMock()
+        # Use AsyncMock for async batch_analyze method
+        mock_ml_analyzer.batch_analyze = AsyncMock(return_value=[])
         mock_rl_agent = MagicMock()
         
         bridge = MLRLBridge(
@@ -196,11 +201,11 @@ class TestMLRLBridge:
         
         # First call should hit ML analyzer
         bridge.get_ml_predictions()
-        assert mock_ml_analyzer.analyze_batch.call_count == 1
+        assert mock_ml_analyzer.batch_analyze.call_count == 1
         
         # Second call within TTL should use cache
         bridge.get_ml_predictions()
-        assert mock_ml_analyzer.analyze_batch.call_count == 1  # No additional call
+        assert mock_ml_analyzer.batch_analyze.call_count == 1  # No additional call
 
 
 class TestMLRLTrainingPipeline:
