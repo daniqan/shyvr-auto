@@ -297,9 +297,8 @@ gcloud secrets create DB_PASSWORD --data-file=<(echo 'your_db_password')
 
 ### Optional API Keys
 - `X_BEARER_TOKEN`, `X_API_KEY`, `X_API_SECRET` - Twitter/X API
-- `ETHERSCAN_API_KEY` - Ethereum blockchain data
-- `HELIUS_API_KEY` - Solana blockchain data  
-- `BASESCAN_API_KEY` - Base blockchain data
+- `ETHERSCAN_API_KEY` - Ethereum and Base blockchain data (Base migrated to Etherscan API v2)
+- `HELIUS_API_KEY` - Solana blockchain data
 - `BIRDEYE_API_KEY` - Token price data
 - `OPENAI_API_KEY` - OpenAI models for agent
 - `XAI_API_KEY` - xAI models for agent
