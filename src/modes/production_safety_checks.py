@@ -160,7 +160,6 @@ class SafetyCheckConfig:
     # Configuration validation
     require_all_env_vars: bool = True
     require_database_connection: bool = True
-    require_redis_connection: bool = False  # Redis removed from system
     
     # Timeouts
     check_timeout_seconds: int = 60
