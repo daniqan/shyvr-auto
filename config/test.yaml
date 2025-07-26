@@ -1,0 +1,406 @@
+# Shyvr RLTE Test Configuration
+# Offline/mock settings for comprehensive local testing without production API keys
+
+app:
+  name: "shyvr-rlte-test"
+  version: "0.1.0"
+  environment: "test"
+  log_level: "DEBUG"
+  debug: true
+  mock_mode: true  # Enable all mock services
+  
+database:
+  host: "localhost"
+  port: 5432
+  database: "shyvr_rlte_test"
+  username: "test_user"
+  password: "test_password"
+  pool_size: 5
+  max_overflow: 10
+  echo: false
+  
+# Mock API configurations - No real API keys required
+apis:
+  helius:
+    api_key: "test_helius_key"
+    base_url: "http://localhost:8081/mock/helius"
+    rate_limit: 1000
+    timeout: 5
+    mock_enabled: true
+    
+  etherscan:
+    api_key: "test_etherscan_key"
+    base_url: "http://localhost:8081/mock/etherscan"
+    rate_limit: 100
+    timeout: 5
+    mock_enabled: true
+    
+  birdeye:
+    api_key: "test_birdeye_key"
+    base_url: "http://localhost:8081/mock/birdeye"
+    rate_limit: 1000
+    timeout: 5
+    mock_enabled: true
+    
+  x_api:
+    bearer_token: "test_x_bearer"
+    api_key: "test_x_key"
+    api_secret: "test_x_secret"
+    base_url: "http://localhost:8081/mock/x"
+    rate_limit: 1000
+    timeout: 5
+    mock_enabled: true
+    
+  basescan:
+    api_key: "test_basescan_key"
+    base_url: "http://localhost:8081/mock/basescan"
+    rate_limit: 100
+    timeout: 5
+    mock_enabled: true
+
+telegram:
+  token: "test_telegram_token"
+  webhook_secret: "test_webhook_secret"
+  admin_users: [12345]
+  rate_limit: 1000
+  mock_enabled: true
+  
+agent:
+  model_type: "mock"
+  model_name: "mock-gpt-4"
+  api_key: "test_agent_key"
+  max_tokens: 1000
+  temperature: 0.1
+  max_active_rules: 10
+  rule_expiry_hours: 24
+  mock_enabled: true
+  
+trading:
+  modes:
+    analysis: true
+    simulation: true
+    live: false  # Always disabled in test mode
+    
+  risk_management:
+    max_position_size_pct: 5.0     # More permissive for testing
+    max_daily_loss_pct: 10.0       # Higher limits for test scenarios
+    max_drawdown_pct: 25.0         # More permissive drawdown
+    stop_loss_pct: 8.0
+    take_profit_pct: 40.0
+    max_open_positions: 10         # More positions for testing
+    min_trade_amount_usd: 1        # Lower minimum for testing
+    
+  simulation:
+    initial_balance: 1000          # Smaller test balance
+    leverage: 1.0
+    slippage_pct: 0.1
+    commission_pct: 0.075
+    mock_enabled: true
+
+dex:
+  jupiter:
+    enabled: true
+    chain: "solana"
+    api_key: "test_jupiter_key"
+    base_url: "http://localhost:8081/mock/jupiter"
+    max_slippage_bps: 50
+    timeout_seconds: 5
+    rate_limit_per_second: 100
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 1000
+    mock_enabled: true
+    
+  hyperliquid:
+    enabled: true
+    chain: "hyperliquid"
+    api_key: "test_hyperliquid_key"
+    wallet_address: "0xtest_hyperliquid_wallet"
+    base_url: "http://localhost:8081/mock/hyperliquid"
+    testnet_url: "http://localhost:8081/mock/hyperliquid"
+    max_slippage_bps: 100
+    timeout_seconds: 5
+    rate_limit_per_second: 100
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 500
+    max_leverage: 50
+    default_leverage: 1
+    funding_rate_threshold: 0.01
+    mock_enabled: true
+    
+  uniswap_v3:
+    enabled: true
+    chain: "ethereum"
+    api_key: "test_uniswap_key"
+    base_url: "http://localhost:8081/mock/uniswap"
+    max_slippage_bps: 50
+    timeout_seconds: 5
+    rate_limit_per_second: 100
+    enable_price_impact_warnings: true
+    max_price_impact_bps: 1000
+    fee_tiers: [500, 3000, 10000]
+    rpc_url: "http://localhost:8081/mock/eth_rpc"
+    wallet_address: "0xtest_eth_wallet"
+    private_key_env: "test_eth_private_key"
+    factory_address: "0xtest_factory"
+    router_address: "0xtest_router"
+    quoter_address: "0xtest_quoter"
+    position_manager_address: "0xtest_position_manager"
+    mock_enabled: true
+    
+  global:
+    preferred_stablecoin: "USDC"
+    quote_cache_ttl_seconds: 5      # Shorter TTL for testing
+    price_cache_ttl_seconds: 10     # Shorter TTL for testing
+    retry_attempts: 2               # Fewer retries for faster tests
+    retry_delay_seconds: 0.1        # Faster retries
+    enable_routing_optimization: true
+    max_hops: 3
+    mock_enabled: true
+
+wallets:
+  solana:
+    enabled: true
+    chain: "solana"
+    network: "testnet"
+    rpc_url: "http://localhost:8081/mock/solana_rpc"
+    private_key: "test_solana_private_key"
+    wallet_address: "test_solana_wallet_address"
+    timeout_seconds: 5
+    max_retries: 2
+    commitment: "confirmed"
+    priority_fee_lamports: 0
+    compute_unit_limit: 300000
+    compute_unit_price: 0
+    mock_enabled: true
+    
+  ethereum:
+    enabled: true
+    chain: "ethereum"
+    network: "sepolia"
+    rpc_url: "http://localhost:8081/mock/eth_rpc"
+    private_key: "test_eth_private_key"
+    wallet_address: "0xtest_eth_wallet"
+    timeout_seconds: 5
+    max_retries: 2
+    max_gas_price_gwei: 100
+    gas_limit_multiplier: 1.2
+    mock_enabled: true
+    
+  base:
+    enabled: true
+    chain: "base"
+    network: "base-sepolia"
+    rpc_url: "http://localhost:8081/mock/base_rpc"
+    private_key: "test_base_private_key"
+    wallet_address: "0xtest_base_wallet"
+    timeout_seconds: 5
+    max_retries: 2
+    max_gas_price_gwei: 50
+    gas_limit_multiplier: 1.2
+    mock_enabled: true
+    
+  global:
+    enable_balance_checks: false    # Disable for faster testing
+    enable_account_preparation: false
+    transaction_confirmation_timeout: 10
+    enable_transaction_simulation: false
+    max_slippage_protection: true
+    retry_failed_transactions: false
+    transaction_retry_delay: 1
+    mock_enabled: true
+
+integration:
+  swap_execution:
+    max_retries: 2
+    retry_delay_seconds: 0.1
+    enable_balance_checks: false
+    enable_account_preparation: false
+    confirmation_timeout_seconds: 10
+    enable_slippage_protection: true
+    mock_enabled: true
+    
+  monitoring:
+    log_all_swaps: true
+    track_execution_time: true
+    alert_on_failures: false        # Disable alerts in test mode
+    max_execution_time_seconds: 30
+    
+  solana_integration:
+    enable_jupiter_integration: true
+    auto_wrap_sol: false           # Disable for testing
+    create_ata_if_missing: false   # Disable for testing
+    use_versioned_transactions: false
+    compute_unit_buffer: 20000
+    mock_enabled: true
+
+ml:
+  models:
+    lstm:
+      hidden_size: 32              # Smaller for faster testing
+      num_layers: 1                # Simpler for testing
+      dropout: 0.1
+      sequence_length: 30          # Shorter sequences
+      lookback_hours: 12           # Less data required
+      
+    transformer:
+      d_model: 64                  # Smaller for testing
+      nhead: 4                     # Fewer heads
+      num_layers: 2                # Fewer layers
+      dropout: 0.1
+      
+    ensemble:
+      weights:
+        lstm: 0.5
+        transformer: 0.3
+        xgboost: 0.2
+      
+  training:
+    batch_size: 16               # Smaller batches for testing
+    learning_rate: 0.01          # Higher LR for faster training
+    epochs: 10                   # Fewer epochs for testing
+    validation_split: 0.2
+    early_stopping_patience: 3   # Less patience for testing
+    save_best_model: false       # Don't save models in test mode
+    mock_enabled: true
+    
+  features:
+    technical_indicators: true
+    onchain_metrics: false       # Disable for testing
+    social_sentiment: false      # Disable for testing
+    timeframes: ["5m", "1h"]     # Fewer timeframes
+    lookback_periods: [14, 30]   # Fewer periods
+    mock_enabled: true
+
+rl:
+  algorithm: "DQN"
+  training_episodes: 100         # Fewer episodes for testing
+  epsilon_start: 1.0
+  epsilon_end: 0.1              # Higher end epsilon for testing
+  epsilon_decay: 0.99           # Faster decay
+  learning_rate: 0.01           # Higher LR for faster training
+  gamma: 0.95                   # Lower gamma for testing
+  batch_size: 32               # Smaller batches
+  memory_size: 1000            # Smaller memory for testing
+  target_update_freq: 50       # More frequent updates
+  mock_enabled: true
+  
+  reward_function:
+    profit_weight: 1.0
+    risk_penalty: 0.1
+    agent_bonus: 0.05
+    transaction_cost: 0.001
+    
+  training_schedule:
+    retrain_frequency_hours: 1   # More frequent retraining for testing
+    min_experiences: 50          # Fewer experiences required
+    validation_episodes: 10      # Fewer validation episodes
+
+discovery:
+  chains: ["ethereum", "solana", "base"]
+  scan_interval_seconds: 5       # Faster scanning for testing
+  max_tokens_per_scan: 10        # Fewer tokens for testing
+  mock_enabled: true
+  
+  filters:
+    min_liquidity_usd: 1000      # Lower requirements for testing
+    min_holders: 5               # Lower requirements
+    max_dev_wallet_pct: 20.0     # More permissive for testing
+    require_verified: false
+    blacklisted_names: ["test", "scam", "fake", "pump"]
+    
+  telegram:
+    channels: []
+    keywords: ["launch", "new", "token", "contract"]
+    mock_enabled: true
+
+evaluation:
+  fundamental_metrics:
+    - "liquidity_usd"
+    - "holder_count"
+    - "volume_24h"
+    - "market_cap"
+    - "price_change_24h"
+    - "dev_wallet_pct"
+    - "liquidity_locked_pct"
+    
+  honeypot_checks:
+    enabled: false               # Disable for testing
+    apis: []
+    confidence_threshold: 0.5    # Lower threshold for testing
+    mock_enabled: true
+    
+  social_metrics:
+    x_mentions: false            # Disable for testing
+    telegram_members: false      # Disable for testing
+    reddit_posts: false
+    mock_enabled: true
+    
+cache:
+  default_ttl: 30               # Shorter TTLs for testing
+  token_data_ttl: 20
+  ml_predictions_ttl: 60
+  user_data_ttl: 300
+  
+monitoring:
+  sentry_dsn: ""                # Disable in test mode
+  prometheus_enabled: false
+  health_check_interval: 5      # More frequent health checks
+  mock_enabled: true
+  
+  alerts:
+    email: ""
+    telegram_channel: ""
+    thresholds:
+      error_rate: 0.5           # More permissive for testing
+      response_time: 10.0       # Higher threshold
+      memory_usage: 0.9         # Higher threshold
+      
+logging:
+  level: "DEBUG"
+  format: "text"                # Easier to read in test mode
+  file_enabled: false           # Disable file logging
+  file_path: "/tmp/rlte_test.log"
+  max_file_size_mb: 10
+  backup_count: 1
+  
+security:
+  secret_key: "test-secret-key-not-for-production"
+  jwt_algorithm: "HS256"
+  jwt_expiry_hours: 1           # Shorter expiry for testing
+  api_key_length: 16            # Shorter keys for testing
+  rate_limit_storage: "memory"
+
+# Test-specific configurations
+test:
+  # Sample data configuration
+  sample_data:
+    tokens_file: "data/test/sample_tokens.json"
+    market_data_file: "data/test/sample_market_data.json"
+    historical_data_file: "data/test/sample_historical_data.json"
+    
+  # Mock service configuration
+  mock_services:
+    enabled: true
+    port: 8081
+    response_delay_ms: 10        # Simulate network latency
+    error_rate: 0.0              # No errors by default
+    
+  # Performance testing
+  performance:
+    max_execution_time_ms: 1000  # Fast execution for testing
+    batch_size_limit: 100        # Smaller batches
+    memory_limit_mb: 512         # Memory limit for testing
+    
+  # Analysis mode test settings
+  analysis:
+    use_sample_data: true
+    simulate_real_time: false    # Use static data
+    enable_backtesting: true
+    backtest_period_days: 7      # Shorter backtest period
+    
+  # Simulation mode test settings
+  simulation:
+    use_mock_market_data: true
+    market_update_frequency_ms: 100  # Faster updates for testing
+    enable_fast_mode: true       # Skip delays
+    virtual_portfolio_size: 1000 # Smaller test portfolio
