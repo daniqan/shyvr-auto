@@ -32,6 +32,13 @@ apis:
     rate_limit: 5    # requests per second
     timeout: 30
     
+  # Base chain uses Etherscan API v2 (same API key as Ethereum)
+  basescan:
+    api_key: "${ETHERSCAN_API_KEY}"  # Consolidated: Base now uses Etherscan API v2
+    base_url: "https://api.basescan.org"
+    rate_limit: 5    # requests per second
+    timeout: 30
+    
   birdeye:
     api_key: "${BIRDEYE_API_KEY}"
     base_url: "https://public-api.birdeye.so"
@@ -44,12 +51,6 @@ apis:
     api_secret: "${X_API_SECRET}"
     base_url: "https://api.x.com"
     rate_limit: 300  # requests per 15 minutes (Basic tier)
-    timeout: 30
-    
-  basescan:
-    api_key: "${BASESCAN_API_KEY}"
-    base_url: "https://api.basescan.org"
-    rate_limit: 5    # requests per second
     timeout: 30
 
 telegram:
