@@ -49,9 +49,8 @@ class TestDashboardAPI:
         auth_service.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser", 
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["dashboard.read", "dashboard.write", "trading.control"]
+            permissions=["dashboard.read", "dashboard.write", "trading.control"],
+            created_at=datetime.utcnow()
         ))
         return auth_service
     
@@ -111,9 +110,8 @@ class TestDashboardAPI:
         mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["trading.control"]
+            permissions=["trading.control"],
+            created_at=datetime.utcnow()
         ))
         mock_service.switch_trading_mode = AsyncMock(return_value=True)
         
@@ -186,9 +184,8 @@ class TestDashboardAPI:
         mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["trading.control"]
+            permissions=["trading.control"],
+            created_at=datetime.utcnow()
         ))
         mock_service.emergency_stop = AsyncMock(return_value=True)
         
@@ -216,9 +213,8 @@ class TestDashboardAPI:
         mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["trading.control"]
+            permissions=["trading.control"],
+            created_at=datetime.utcnow()
         ))
         mock_service.update_risk_limits = AsyncMock(return_value=True)
         
@@ -300,9 +296,8 @@ class TestDashboardAPI:
         mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["system.control"]
+            permissions=["system.control"],
+            created_at=datetime.utcnow()
         ))
         
         # Make request
@@ -362,9 +357,8 @@ class TestWebSocketEndpoint:
         mock_auth.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["dashboard.read"]
+            permissions=["dashboard.read"],
+            created_at=datetime.utcnow()
         ))
         
         # Create mock WebSocket
@@ -424,9 +418,8 @@ class TestWebSocketEndpoint:
         mock_auth.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["dashboard.read"]
+            permissions=["dashboard.read"],
+            created_at=datetime.utcnow()
         ))
         
         # Make receive_text raise an exception
@@ -463,9 +456,8 @@ class TestAPIIntegration:
         mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="admin-user",
             username="admin",
-            permissions={"admin", "read", "write"},
-            created_at=datetime.utcnow(),
-            permissions=["dashboard.read", "dashboard.write", "trading.control", "system.control"]
+            permissions=["dashboard.read", "dashboard.write", "trading.control", "system.control"],
+            created_at=datetime.utcnow()
         ))
         
         dashboard_data = DashboardData.create_default()
