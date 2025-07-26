@@ -1,0 +1,157 @@
+# Docker Compose override for local development and testing
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.local.yml up
+
+version: '3.8'
+
+services:
+  # PostgreSQL database with local development settings
+  postgres:
+    environment:
+      POSTGRES_DB: shyvr_rlte
+      POSTGRES_USER: rlte_user
+      POSTGRES_PASSWORD: dev_password_change_in_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+      - ../scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rlte_user -d shyvr_rlte"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rlte_network
+
+  # Main RLTE application with local development settings
+  rlte:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      # Database configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shyvr_rlte
+      DB_USER: rlte_user
+      DB_PASSWORD: dev_password_change_in_prod
+      
+      # Application configuration
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      DEBUG: "true"
+      
+      # Security (development only)
+      SECRET_KEY: dev-key-for-local-testing-only
+      
+      # Dashboard configuration
+      DASHBOARD_UPDATE_INTERVAL: 2.0
+      ENABLE_DEBUG_ENDPOINTS: "true"
+      ENABLE_MOCK_DATA: "true"
+      
+      # API Keys (use your own testing keys)
+      HELIUS_API_KEY: ${HELIUS_API_KEY:-}
+      ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:-}
+      BIRDEYE_API_KEY: ${BIRDEYE_API_KEY:-}
+      
+      # Trading configuration (safe defaults)
+      TRADING_MODE_ANALYSIS: "true"
+      TRADING_MODE_SIMULATION: "true"
+      TRADING_MODE_LIVE: "false"
+      
+      # Wallet configuration (testnet only)
+      SOLANA_NETWORK: devnet
+      ETH_NETWORK: sepolia
+      BASE_NETWORK: base-sepolia
+      
+      # Agent configuration
+      AGENT_MODEL_TYPE: local
+      AGENT_MODEL_NAME: local-mock
+    ports:
+      - "8080:8080"
+      - "8081:8081"  # Additional port for development
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../models:/app/models
+      - ../config:/app/config
+      - ../static:/app/static  # Mount static files for live updates
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - rlte_network
+    # Development settings
+    stdin_open: true
+    tty: true
+
+  # Redis for caching (optional for local development)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_local:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rlte_network
+    profiles:
+      - with-redis
+
+  # Development database admin interface
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@shyvr-rlte.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data_local:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - rlte_network
+    profiles:
+      - with-pgadmin
+
+  # Development Nginx proxy (optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../config/nginx.local.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - rlte
+    networks:
+      - rlte_network
+    profiles:
+      - with-proxy
+
+volumes:
+  postgres_data_local:
+    driver: local
+  redis_data_local:
+    driver: local
+  pgadmin_data_local:
+    driver: local
+
+networks:
+  rlte_network:
+    driver: bridge
+    name: rlte_local_network
