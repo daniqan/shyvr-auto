@@ -9,606 +9,744 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.dashboard.auth import (
-    AuthService, Role, AuthToken, LoginRequest, TokenResponse,
-    AuthenticationError, AuthorizationError, RateLimitError,
-    auth_service, require_permission, verify_api_key, verify_jwt_token
+    DashboardAuth, User, Session, dashboard_auth,
+    get_current_user_api_key, get_current_user_jwt, require_permission
 )
 
 
-class TestRole:
-    """Test suite for Role enum"""
+class TestUser:
+    """Test suite for User dataclass"""
     
-    def test_role_values(self):
-        """Test Role enum values"""
-        assert Role.ADMIN.value == "admin"
-        assert Role.TRADER.value == "trader"
-        assert Role.VIEWER.value == "viewer"
+    def test_user_creation(self):
+        """Test User creation with valid data"""
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read", "write", "admin"},
+            created_at=datetime.utcnow()
+        )
+        
+        assert user.username == "testuser"
+        assert user.user_id == "user-123"
+        assert len(user.permissions) == 3
+        assert "read" in user.permissions
+        assert "admin" in user.permissions
+        assert user.is_active is True
     
-    def test_role_comparison(self):
-        """Test Role comparison"""
-        assert Role.ADMIN != Role.TRADER
-        assert Role.TRADER != Role.VIEWER
-        assert Role.ADMIN == Role.ADMIN
+    def test_user_with_last_login(self):
+        """Test User with last_login set"""
+        now = datetime.utcnow()
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=now,
+            last_login=now,
+            is_active=False
+        )
+        
+        assert user.last_login == now
+        assert user.is_active is False
 
 
-class TestAuthToken:
-    """Test suite for AuthToken data structure"""
+class TestSession:
+    """Test suite for Session dataclass"""
     
-    def test_auth_token_creation(self):
-        """Test AuthToken creation with valid data"""
-        token = AuthToken(
+    def test_session_creation(self):
+        """Test Session creation"""
+        now = datetime.utcnow()
+        expires = now + timedelta(hours=24)
+        
+        session = Session(
+            session_id="session-123",
             user_id="user-123",
             username="testuser",
-            role=Role.ADMIN,
-            permissions=["dashboard.read", "dashboard.write", "trading.control"]
+            permissions={"read", "write"},
+            created_at=now,
+            expires_at=expires,
+            last_activity=now
         )
         
-        assert token.user_id == "user-123"
-        assert token.username == "testuser"
-        assert token.role == Role.ADMIN
-        assert len(token.permissions) == 3
-        assert "dashboard.read" in token.permissions
-        assert "trading.control" in token.permissions
-    
-    def test_auth_token_has_permission(self):
-        """Test AuthToken permission checking"""
-        token = AuthToken(
-            user_id="user-123",
-            username="testuser",
-            role=Role.TRADER,
-            permissions=["dashboard.read", "trading.control"]
-        )
-        
-        assert token.has_permission("dashboard.read") is True
-        assert token.has_permission("trading.control") is True
-        assert token.has_permission("system.control") is False
-        assert token.has_permission("nonexistent.permission") is False
+        assert session.session_id == "session-123"
+        assert session.user_id == "user-123"
+        assert session.username == "testuser"
+        assert len(session.permissions) == 2
+        assert session.expires_at == expires
 
 
-class TestLoginRequest:
-    """Test suite for LoginRequest data structure"""
-    
-    def test_login_request_creation(self):
-        """Test LoginRequest creation"""
-        request = LoginRequest(
-            username="testuser",
-            password="testpass"
-        )
-        
-        assert request.username == "testuser"
-        assert request.password == "testpass"
-
-
-class TestTokenResponse:
-    """Test suite for TokenResponse data structure"""
-    
-    def test_token_response_creation(self):
-        """Test TokenResponse creation"""
-        response = TokenResponse(
-            access_token="jwt-token-here",
-            token_type="bearer",
-            expires_in=3600,
-            user_id="user-123",
-            username="testuser",
-            role="admin",
-            permissions=["dashboard.read", "trading.control"]
-        )
-        
-        assert response.access_token == "jwt-token-here"
-        assert response.token_type == "bearer"
-        assert response.expires_in == 3600
-        assert response.user_id == "user-123"
-        assert response.username == "testuser"
-        assert response.role == "admin"
-        assert len(response.permissions) == 2
-
-
-class TestAuthService:
-    """Test suite for AuthService"""
+class TestDashboardAuth:
+    """Test suite for DashboardAuth"""
     
     @pytest.fixture
-    def auth_service_instance(self):
-        """AuthService instance for testing"""
-        return AuthService()
+    def auth_instance(self):
+        """DashboardAuth instance for testing"""
+        with patch('src.dashboard.auth.get_config') as mock_config:
+            config = MagicMock()
+            config.security.secret_key = "test-secret-key"
+            config.security.jwt_algorithm = "HS256"
+            mock_config.return_value = config
+            return DashboardAuth()
     
-    @pytest.fixture
-    def mock_config(self):
-        """Mock configuration"""
-        config = MagicMock()
-        config.dashboard.jwt_secret = "test-secret-key"
-        config.dashboard.jwt_algorithm = "HS256"
-        config.dashboard.jwt_expiry_hours = 24
-        config.dashboard.api_keys = {
-            "admin-key": {
-                "user_id": "admin-user",
-                "username": "admin",
-                "role": "admin",
-                "permissions": ["dashboard.read", "dashboard.write", "trading.control", "system.control"]
-            },
-            "trader-key": {
-                "user_id": "trader-user", 
-                "username": "trader",
-                "role": "trader",
-                "permissions": ["dashboard.read", "trading.control"]
-            },
-            "viewer-key": {
-                "user_id": "viewer-user",
-                "username": "viewer",
-                "role": "viewer",
-                "permissions": ["dashboard.read"]
-            }
-        }
-        config.dashboard.users = {
-            "admin": {
-                "password_hash": "$2b$12$hash.for.admin.password",
-                "role": "admin",
-                "permissions": ["dashboard.read", "dashboard.write", "trading.control", "system.control"]
-            },
-            "trader": {
-                "password_hash": "$2b$12$hash.for.trader.password",
-                "role": "trader", 
-                "permissions": ["dashboard.read", "trading.control"]
-            }
-        }
-        config.dashboard.rate_limit_requests_per_minute = 60
-        return config
+    def test_dashboard_auth_initialization(self, auth_instance):
+        """Test DashboardAuth initialization"""
+        auth = auth_instance
+        
+        assert auth._users is not None
+        assert auth._sessions is not None
+        assert auth._api_keys is not None
+        assert auth._rate_limits is not None
+        
+        # Should have default admin user
+        assert len(auth._users) == 1
+        admin_user = list(auth._users.values())[0]
+        assert admin_user.username == "admin"
+        assert "admin" in admin_user.permissions
     
-    def test_auth_service_initialization(self, auth_service_instance):
-        """Test AuthService initialization"""
-        service = auth_service_instance
+    def test_create_user(self, auth_instance):
+        """Test user creation"""
+        auth = auth_instance
+        initial_user_count = len(auth._users)
         
-        assert service._rate_limiter is not None
-        assert service._failed_attempts is not None
-        assert service._active_sessions is not None
+        api_key = auth.create_user(
+            username="testuser",
+            password="testpass",
+            permissions={"read", "write"}
+        )
+        
+        assert len(auth._users) == initial_user_count + 1
+        assert len(api_key) > 0
+        assert api_key in auth._api_keys
+        
+        # Find the new user
+        new_user = None
+        for user in auth._users.values():
+            if user.username == "testuser":
+                new_user = user
+                break
+        
+        assert new_user is not None
+        assert new_user.username == "testuser"
+        assert "read" in new_user.permissions
+        assert "write" in new_user.permissions
     
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    async def test_verify_api_key_valid(self, mock_get_config, auth_service_instance, mock_config):
-        """Test API key verification with valid key"""
-        mock_get_config.return_value = mock_config
-        service = auth_service_instance
+    def test_authenticate_api_key_valid(self, auth_instance):
+        """Test API key authentication with valid key"""
+        auth = auth_instance
         
-        # Test admin key
-        token = await service.verify_api_key("admin-key")
+        # Create a user and get their API key
+        api_key = auth.create_user(
+            username="testuser",
+            password="testpass",
+            permissions={"read"}
+        )
         
-        assert token is not None
-        assert token.user_id == "admin-user"
-        assert token.username == "admin"
-        assert token.role == Role.ADMIN
-        assert "system.control" in token.permissions
+        # Authenticate with the API key
+        user = auth.authenticate_api_key(api_key)
         
-        # Test trader key
-        token = await service.verify_api_key("trader-key")
-        
-        assert token is not None
-        assert token.user_id == "trader-user"
-        assert token.role == Role.TRADER
-        assert "trading.control" in token.permissions
-        assert "system.control" not in token.permissions
+        assert user is not None
+        assert user.username == "testuser"
+        assert "read" in user.permissions
+        assert user.is_active is True
     
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    async def test_verify_api_key_invalid(self, mock_get_config, auth_service_instance, mock_config):
-        """Test API key verification with invalid key"""
-        mock_get_config.return_value = mock_config
-        service = auth_service_instance
+    def test_authenticate_api_key_invalid(self, auth_instance):
+        """Test API key authentication with invalid key"""
+        auth = auth_instance
         
         # Test invalid key
-        token = await service.verify_api_key("invalid-key")
-        assert token is None
+        user = auth.authenticate_api_key("invalid-key")
+        assert user is None
         
         # Test empty key
-        token = await service.verify_api_key("")
-        assert token is None
+        user = auth.authenticate_api_key("")
+        assert user is None
         
         # Test None key
-        token = await service.verify_api_key(None)
-        assert token is None
+        user = auth.authenticate_api_key(None)
+        assert user is None
     
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    @patch('src.dashboard.auth.bcrypt')
-    async def test_login_success(self, mock_bcrypt, mock_get_config, auth_service_instance, mock_config):
-        """Test successful user login"""
-        mock_get_config.return_value = mock_config
-        mock_bcrypt.checkpw.return_value = True
-        service = auth_service_instance
+    def test_authenticate_api_key_inactive_user(self, auth_instance):
+        """Test API key authentication with inactive user"""
+        auth = auth_instance
         
-        # Create login request
-        login_request = LoginRequest(username="admin", password="correct-password")
+        # Create user and get API key
+        api_key = auth.create_user(
+            username="testuser",
+            password="testpass",
+            permissions={"read"}
+        )
         
-        # Attempt login
-        response = await service.login(login_request)
+        # Deactivate user
+        user_id = auth._api_keys[api_key]
+        auth._users[user_id].is_active = False
         
-        assert response is not None
-        assert response.user_id == "admin"
-        assert response.username == "admin"
-        assert response.role == "admin"
-        assert response.token_type == "bearer"
-        assert response.expires_in == 24 * 3600  # 24 hours in seconds
-        assert len(response.access_token) > 0
-        
-        # Should have all admin permissions
-        assert "system.control" in response.permissions
-        assert "trading.control" in response.permissions
+        # Should not authenticate
+        user = auth.authenticate_api_key(api_key)
+        assert user is None
     
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    @patch('src.dashboard.auth.bcrypt')
-    async def test_login_invalid_credentials(self, mock_bcrypt, mock_get_config, auth_service_instance, mock_config):
-        """Test login with invalid credentials"""
-        mock_get_config.return_value = mock_config
-        mock_bcrypt.checkpw.return_value = False  # Wrong password
-        service = auth_service_instance
+    def test_create_session(self, auth_instance):
+        """Test session creation"""
+        auth = auth_instance
         
-        # Test wrong password
-        login_request = LoginRequest(username="admin", password="wrong-password")
-        
-        with pytest.raises(AuthenticationError) as exc_info:
-            await service.login(login_request)
-        assert "Invalid credentials" in str(exc_info.value)
-        
-        # Test nonexistent user
-        login_request = LoginRequest(username="nonexistent", password="password")
-        
-        with pytest.raises(AuthenticationError) as exc_info:
-            await service.login(login_request)
-        assert "Invalid credentials" in str(exc_info.value)
-    
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    async def test_verify_jwt_token_valid(self, mock_get_config, auth_service_instance, mock_config):
-        """Test JWT token verification with valid token"""
-        mock_get_config.return_value = mock_config
-        service = auth_service_instance
-        
-        # Create a valid JWT token
-        payload = {
-            "user_id": "test-user",
-            "username": "testuser",
-            "role": "admin",
-            "permissions": ["dashboard.read", "trading.control"],
-            "exp": datetime.utcnow() + timedelta(hours=1)
-        }
-        token = jwt.encode(payload, "test-secret-key", algorithm="HS256")
-        
-        # Verify token
-        auth_token = await service.verify_jwt_token(token)
-        
-        assert auth_token is not None
-        assert auth_token.user_id == "test-user"
-        assert auth_token.username == "testuser"
-        assert auth_token.role == Role.ADMIN
-        assert "dashboard.read" in auth_token.permissions
-        assert "trading.control" in auth_token.permissions
-    
-    @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    async def test_verify_jwt_token_invalid(self, mock_get_config, auth_service_instance, mock_config):
-        """Test JWT token verification with invalid tokens"""
-        mock_get_config.return_value = mock_config
-        service = auth_service_instance
-        
-        # Test invalid token
-        invalid_token = await service.verify_jwt_token("invalid.jwt.token")
-        assert invalid_token is None
-        
-        # Test expired token
-        payload = {
-            "user_id": "test-user",
-            "username": "testuser",
-            "role": "admin",
-            "permissions": ["dashboard.read"],
-            "exp": datetime.utcnow() - timedelta(hours=1)  # Expired
-        }
-        expired_token = jwt.encode(payload, "test-secret-key", algorithm="HS256")
-        
-        invalid_token = await service.verify_jwt_token(expired_token)
-        assert invalid_token is None
-        
-        # Test token with wrong secret
-        wrong_secret_token = jwt.encode(payload, "wrong-secret", algorithm="HS256")
-        invalid_token = await service.verify_jwt_token(wrong_secret_token)
-        assert invalid_token is None
-    
-    @pytest.mark.asyncio
-    async def test_logout(self, auth_service_instance):
-        """Test user logout"""
-        service = auth_service_instance
-        user_id = "test-user"
-        
-        # Add user to active sessions
-        service._active_sessions[user_id] = datetime.utcnow()
-        assert user_id in service._active_sessions
-        
-        # Logout
-        await service.logout(user_id)
-        
-        # Should remove from active sessions
-        assert user_id not in service._active_sessions
-    
-    @pytest.mark.asyncio
-    async def test_rate_limiting(self, auth_service_instance):
-        """Test rate limiting functionality"""
-        service = auth_service_instance
-        client_ip = "192.168.1.100"
-        
-        # Should allow first request
-        is_allowed = await service.check_rate_limit(client_ip)
-        assert is_allowed is True
-        
-        # Simulate many requests in short time
-        for _ in range(100):  # Exceed rate limit
-            await service.check_rate_limit(client_ip)
-        
-        # Should now be rate limited
-        is_allowed = await service.check_rate_limit(client_ip)
-        assert is_allowed is False
-    
-    @pytest.mark.asyncio
-    async def test_failed_login_tracking(self, auth_service_instance):
-        """Test failed login attempt tracking"""
-        service = auth_service_instance
-        username = "testuser"
-        
-        # Should allow login attempts initially
-        is_allowed = await service.check_failed_attempts(username)
-        assert is_allowed is True
-        
-        # Record failed attempts
-        for _ in range(10):  # Exceed failed attempt limit
-            await service.record_failed_attempt(username)
-        
-        # Should now block login attempts
-        is_allowed = await service.check_failed_attempts(username)
-        assert is_allowed is False
-    
-    @pytest.mark.asyncio
-    async def test_session_management(self, auth_service_instance):
-        """Test session management"""
-        service = auth_service_instance
-        user_id = "test-user"
+        # Create a user
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
+        auth._users[user.user_id] = user
         
         # Create session
-        await service.create_session(user_id)
+        session_id = auth.create_session(user)
         
-        # Should be in active sessions
-        assert user_id in service._active_sessions
+        assert len(session_id) > 0
+        assert session_id in auth._sessions
         
-        # Check if session is valid
-        is_valid = await service.is_session_valid(user_id)
-        assert is_valid is True
-        
-        # End session
-        await service.end_session(user_id)
-        
-        # Should no longer be valid
-        is_valid = await service.is_session_valid(user_id)
-        assert is_valid is False
-
-
-class TestAuthDecorators:
-    """Test suite for authentication decorators and functions"""
+        session = auth._sessions[session_id]
+        assert session.user_id == user.user_id
+        assert session.username == user.username
+        assert session.permissions == user.permissions
+        assert user.last_login is not None
     
-    @pytest.mark.asyncio
-    async def test_require_permission_decorator_success(self):
-        """Test require_permission decorator with valid permission"""
-        # Mock function that requires permission
-        @require_permission("dashboard.read")
-        async def protected_function(auth_token: AuthToken):
-            return {"success": True, "user": auth_token.username}
+    def test_get_session_valid(self, auth_instance):
+        """Test getting valid session"""
+        auth = auth_instance
         
-        # Create token with required permission
-        token = AuthToken(
+        # Create user and session
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
+        auth._users[user.user_id] = user
+        session_id = auth.create_session(user)
+        
+        # Get session
+        session = auth.get_session(session_id)
+        
+        assert session is not None
+        assert session.session_id == session_id
+        assert session.user_id == user.user_id
+    
+    def test_get_session_expired(self, auth_instance):
+        """Test getting expired session"""
+        auth = auth_instance
+        
+        # Create expired session manually
+        now = datetime.utcnow()
+        expired_session = Session(
+            session_id="expired-session",
             user_id="user-123",
             username="testuser",
-            role=Role.ADMIN,
-            permissions=["dashboard.read", "trading.control"]
+            permissions={"read"},
+            created_at=now - timedelta(hours=25),
+            expires_at=now - timedelta(hours=1),  # Expired
+            last_activity=now - timedelta(hours=2)
+        )
+        auth._sessions["expired-session"] = expired_session
+        
+        # Should return None and remove session
+        session = auth.get_session("expired-session")
+        assert session is None
+        assert "expired-session" not in auth._sessions
+    
+    def test_revoke_session(self, auth_instance):
+        """Test session revocation"""
+        auth = auth_instance
+        
+        # Create user and session
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
+        auth._users[user.user_id] = user
+        session_id = auth.create_session(user)
+        
+        # Revoke session
+        result = auth.revoke_session(session_id)
+        
+        assert result is True
+        assert session_id not in auth._sessions
+        
+        # Revoking again should return False
+        result = auth.revoke_session(session_id)
+        assert result is False
+    
+    def test_create_jwt_token(self, auth_instance):
+        """Test JWT token creation"""
+        auth = auth_instance
+        
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read", "write"},
+            created_at=datetime.utcnow()
         )
         
-        # Should execute successfully
-        result = await protected_function(token)
-        assert result["success"] is True
-        assert result["user"] == "testuser"
-    
-    @pytest.mark.asyncio
-    async def test_require_permission_decorator_failure(self):
-        """Test require_permission decorator with missing permission"""
-        # Mock function that requires permission
-        @require_permission("system.control")
-        async def protected_function(auth_token: AuthToken):
-            return {"success": True}
+        token = auth.create_jwt_token(user)
         
-        # Create token without required permission
-        token = AuthToken(
+        assert len(token) > 0
+        
+        # Verify token can be decoded
+        payload = jwt.decode(
+            token,
+            "test-secret-key",
+            algorithms=["HS256"]
+        )
+        
+        assert payload["user_id"] == user.user_id
+        assert payload["username"] == user.username
+        assert set(payload["permissions"]) == user.permissions
+    
+    def test_verify_jwt_token_valid(self, auth_instance):
+        """Test JWT token verification with valid token"""
+        auth = auth_instance
+        
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
+        
+        # Create token
+        token = auth.create_jwt_token(user)
+        
+        # Verify token
+        payload = auth.verify_jwt_token(token)
+        
+        assert payload is not None
+        assert payload["user_id"] == user.user_id
+        assert payload["username"] == user.username
+    
+    def test_verify_jwt_token_invalid(self, auth_instance):
+        """Test JWT token verification with invalid tokens"""
+        auth = auth_instance
+        
+        # Test invalid token
+        payload = auth.verify_jwt_token("invalid.jwt.token")
+        assert payload is None
+        
+        # Test expired token
+        expired_payload = {
+            "user_id": "user-123",
+            "username": "testuser",
+            "permissions": ["read"],
+            "iat": datetime.utcnow() - timedelta(hours=25),
+            "exp": datetime.utcnow() - timedelta(hours=1)  # Expired
+        }
+        expired_token = jwt.encode(expired_payload, "test-secret-key", algorithm="HS256")
+        
+        payload = auth.verify_jwt_token(expired_token)
+        assert payload is None
+    
+    def test_check_permission(self, auth_instance):
+        """Test permission checking"""
+        auth = auth_instance
+        
+        # User with specific permissions
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read", "write"},
+            created_at=datetime.utcnow()
+        )
+        
+        assert auth.check_permission(user, "read") is True
+        assert auth.check_permission(user, "write") is True
+        assert auth.check_permission(user, "admin") is False
+        
+        # Admin user should have all permissions
+        admin_user = User(
+            username="admin",
+            user_id="admin-123",
+            permissions={"admin"},
+            created_at=datetime.utcnow()
+        )
+        
+        assert auth.check_permission(admin_user, "read") is True
+        assert auth.check_permission(admin_user, "write") is True
+        assert auth.check_permission(admin_user, "any_permission") is True
+    
+    def test_check_rate_limit(self, auth_instance):
+        """Test rate limiting"""
+        auth = auth_instance
+        user_id = "user-123"
+        
+        # Should allow requests initially
+        for _ in range(10):
+            result = auth.check_rate_limit(user_id, max_requests=10, window_minutes=60)
+            assert result is True
+        
+        # Should block after limit
+        result = auth.check_rate_limit(user_id, max_requests=10, window_minutes=60)
+        assert result is False
+    
+    def test_cleanup_expired_sessions(self, auth_instance):
+        """Test expired session cleanup"""
+        auth = auth_instance
+        
+        # Create expired session
+        now = datetime.utcnow()
+        expired_session = Session(
+            session_id="expired-session",
             user_id="user-123",
             username="testuser",
-            role=Role.VIEWER,
-            permissions=["dashboard.read"]  # Missing system.control
+            permissions={"read"},
+            created_at=now - timedelta(hours=25),
+            expires_at=now - timedelta(hours=1),  # Expired
+            last_activity=now - timedelta(hours=2)
         )
+        auth._sessions["expired-session"] = expired_session
         
-        # Should raise AuthorizationError
-        with pytest.raises(AuthorizationError) as exc_info:
-            await protected_function(token)
-        assert "Insufficient permissions" in str(exc_info.value)
+        # Create valid session
+        valid_session = Session(
+            session_id="valid-session",
+            user_id="user-456",
+            username="validuser",
+            permissions={"read"},
+            created_at=now,
+            expires_at=now + timedelta(hours=23),  # Valid
+            last_activity=now
+        )
+        auth._sessions["valid-session"] = valid_session
+        
+        # Cleanup
+        cleaned_count = auth.cleanup_expired_sessions()
+        
+        assert cleaned_count == 1
+        assert "expired-session" not in auth._sessions
+        assert "valid-session" in auth._sessions
+    
+    def test_get_user_stats(self, auth_instance):
+        """Test user statistics"""
+        auth = auth_instance
+        
+        stats = auth.get_user_stats()
+        
+        assert "total_users" in stats
+        assert "active_users" in stats
+        assert "active_sessions" in stats
+        assert "api_keys_issued" in stats
+        
+        # Should have at least the default admin user
+        assert stats["total_users"] >= 1
+        assert stats["active_users"] >= 1
+
+
+class TestDashboardAuthDependencies:
+    """Test authentication dependency functions"""
     
     @pytest.mark.asyncio
-    @patch('src.dashboard.auth.auth_service')
-    async def test_verify_api_key_function(self, mock_auth_service):
-        """Test verify_api_key function"""
+    @patch('src.dashboard.auth.dashboard_auth')
+    async def test_get_current_user_api_key_valid(self, mock_auth):
+        """Test get_current_user_api_key with valid key"""
         # Setup mock
-        expected_token = AuthToken(
-            user_id="user-123",
+        user = User(
             username="testuser",
-            role=Role.ADMIN,
-            permissions=["dashboard.read"]
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
         )
-        mock_auth_service.verify_api_key = AsyncMock(return_value=expected_token)
+        mock_auth.authenticate_api_key.return_value = user
+        mock_auth.check_rate_limit.return_value = True
+        
+        # Mock credentials
+        credentials = MagicMock()
+        credentials.credentials = "valid-api-key"
         
         # Test function
-        result = await verify_api_key("test-api-key")
+        result = await get_current_user_api_key(credentials)
         
-        assert result == expected_token
-        mock_auth_service.verify_api_key.assert_called_once_with("test-api-key")
+        assert result == user
+        mock_auth.authenticate_api_key.assert_called_once_with("valid-api-key")
+        mock_auth.check_rate_limit.assert_called_once_with(user.user_id)
     
     @pytest.mark.asyncio
-    @patch('src.dashboard.auth.auth_service')
-    async def test_verify_jwt_token_function(self, mock_auth_service):
-        """Test verify_jwt_token function"""
+    @patch('src.dashboard.auth.dashboard_auth')
+    async def test_get_current_user_api_key_invalid(self, mock_auth):
+        """Test get_current_user_api_key with invalid key"""
+        from fastapi import HTTPException
+        
+        # Setup mock to return None (invalid key)
+        mock_auth.authenticate_api_key.return_value = None
+        
+        # Mock credentials
+        credentials = MagicMock()
+        credentials.credentials = "invalid-api-key"
+        
+        # Test function - should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_api_key(credentials)
+        
+        assert exc_info.value.status_code == 401
+        assert "Authentication failed" in str(exc_info.value.detail)
+    
+    @pytest.mark.asyncio
+    @patch('src.dashboard.auth.dashboard_auth')
+    async def test_get_current_user_api_key_rate_limited(self, mock_auth):
+        """Test get_current_user_api_key with rate limit exceeded"""
+        from fastapi import HTTPException
+        
         # Setup mock
-        expected_token = AuthToken(
-            user_id="user-123",
+        user = User(
             username="testuser",
-            role=Role.ADMIN,
-            permissions=["dashboard.read"]
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
         )
-        mock_auth_service.verify_jwt_token = AsyncMock(return_value=expected_token)
+        mock_auth.authenticate_api_key.return_value = user
+        mock_auth.check_rate_limit.return_value = False  # Rate limited
+        
+        # Mock credentials
+        credentials = MagicMock()
+        credentials.credentials = "valid-api-key"
+        
+        # Test function - should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_api_key(credentials)
+        
+        assert exc_info.value.status_code == 401
+        assert "Authentication failed" in str(exc_info.value.detail)
+    
+    @pytest.mark.asyncio
+    @patch('src.dashboard.auth.dashboard_auth')
+    async def test_get_current_user_jwt_valid(self, mock_auth):
+        """Test get_current_user_jwt with valid token"""
+        # Setup mock
+        user = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
+        payload = {
+            "user_id": "user-123",
+            "username": "testuser",
+            "permissions": ["read"]
+        }
+        mock_auth.verify_jwt_token.return_value = payload
+        mock_auth._users = {"user-123": user}
+        mock_auth.check_rate_limit.return_value = True
+        
+        # Mock credentials
+        credentials = MagicMock()
+        credentials.credentials = "valid-jwt-token"
         
         # Test function
-        result = await verify_jwt_token("test-jwt-token")
+        result = await get_current_user_jwt(credentials)
         
-        assert result == expected_token
-        mock_auth_service.verify_jwt_token.assert_called_once_with("test-jwt-token")
-
-
-class TestAuthExceptions:
-    """Test suite for authentication exceptions"""
-    
-    def test_authentication_error(self):
-        """Test AuthenticationError exception"""
-        error = AuthenticationError("Invalid credentials")
-        assert str(error) == "Invalid credentials"
-        assert isinstance(error, Exception)
-    
-    def test_authorization_error(self):
-        """Test AuthorizationError exception"""
-        error = AuthorizationError("Insufficient permissions")
-        assert str(error) == "Insufficient permissions"
-        assert isinstance(error, Exception)
-    
-    def test_rate_limit_error(self):
-        """Test RateLimitError exception"""
-        error = RateLimitError("Rate limit exceeded")
-        assert str(error) == "Rate limit exceeded"
-        assert isinstance(error, Exception)
-
-
-class TestAuthServiceIntegration:
-    """Integration tests for AuthService"""
+        assert result == user
+        mock_auth.verify_jwt_token.assert_called_once_with("valid-jwt-token")
     
     @pytest.mark.asyncio
-    @patch('src.dashboard.auth.get_config')
-    @patch('src.dashboard.auth.bcrypt')
-    async def test_full_authentication_flow(self, mock_bcrypt, mock_get_config):
-        """Test complete authentication flow"""
-        # Setup config
-        config = MagicMock()
-        config.dashboard.jwt_secret = "test-secret-key"
-        config.dashboard.jwt_algorithm = "HS256"
-        config.dashboard.jwt_expiry_hours = 24
-        config.dashboard.api_keys = {
-            "admin-key": {
-                "user_id": "admin-user",
-                "username": "admin",
-                "role": "admin",
-                "permissions": ["dashboard.read", "dashboard.write", "trading.control", "system.control"]
-            }
-        }
-        config.dashboard.users = {
-            "admin": {
-                "password_hash": "$2b$12$hash.for.admin.password",
-                "role": "admin",
-                "permissions": ["dashboard.read", "dashboard.write", "trading.control", "system.control"]
-            }
-        }
-        config.dashboard.rate_limit_requests_per_minute = 60
-        mock_get_config.return_value = config
-        mock_bcrypt.checkpw.return_value = True
+    @patch('src.dashboard.auth.dashboard_auth')
+    async def test_get_current_user_jwt_invalid(self, mock_auth):
+        """Test get_current_user_jwt with invalid token"""
+        from fastapi import HTTPException
         
-        service = AuthService()
+        # Setup mock to return None (invalid token)
+        mock_auth.verify_jwt_token.return_value = None
         
-        # 1. Login with credentials
-        login_request = LoginRequest(username="admin", password="correct-password")
-        token_response = await service.login(login_request)
+        # Mock credentials
+        credentials = MagicMock()
+        credentials.credentials = "invalid-jwt-token"
         
-        assert token_response.username == "admin"
-        assert token_response.role == "admin"
-        jwt_token = token_response.access_token
+        # Test function - should raise HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_jwt(credentials)
         
-        # 2. Verify JWT token
-        auth_token = await service.verify_jwt_token(jwt_token)
-        assert auth_token is not None
-        assert auth_token.username == "admin"
-        assert auth_token.role == Role.ADMIN
-        
-        # 3. Verify API key
-        api_token = await service.verify_api_key("admin-key")
-        assert api_token is not None
-        assert api_token.username == "admin"
-        assert api_token.role == Role.ADMIN
-        
-        # 4. Check permissions
-        assert auth_token.has_permission("system.control") is True
-        assert api_token.has_permission("trading.control") is True
-        
-        # 5. Logout
-        await service.logout(auth_token.user_id)
-        
-        # Session should be ended
-        is_valid = await service.is_session_valid(auth_token.user_id)
-        assert is_valid is False
+        assert exc_info.value.status_code == 401
+        assert "Invalid or expired token" in str(exc_info.value.detail)
     
-    @pytest.mark.asyncio
-    async def test_concurrent_authentication(self):
-        """Test concurrent authentication operations"""
-        service = AuthService()
+    def test_require_permission_decorator(self):
+        """Test require_permission decorator"""
+        from fastapi import HTTPException
         
-        # Concurrent API key verification
-        tasks = []
-        for i in range(10):
-            task = asyncio.create_task(service.verify_api_key(f"key-{i}"))
-            tasks.append(task)
+        # Create decorator
+        decorator = require_permission("read")
         
-        results = await asyncio.gather(*tasks)
+        # Create user with permission
+        user_with_permission = User(
+            username="testuser",
+            user_id="user-123",
+            permissions={"read"},
+            created_at=datetime.utcnow()
+        )
         
-        # All should return None (invalid keys) but not crash
-        assert all(result is None for result in results)
-    
-    @pytest.mark.asyncio
-    async def test_error_handling(self):
-        """Test authentication error handling"""
-        service = AuthService()
+        # Should return user when permission exists
+        result = decorator(user_with_permission)
+        assert result == user_with_permission
         
-        # Test with None inputs
-        result = await service.verify_api_key(None)
-        assert result is None
+        # Create user without permission
+        user_without_permission = User(
+            username="testuser2",
+            user_id="user-456",
+            permissions={"write"},
+            created_at=datetime.utcnow()
+        )
         
-        result = await service.verify_jwt_token(None)
-        assert result is None
+        # Should raise HTTPException when permission missing
+        with pytest.raises(HTTPException) as exc_info:
+            decorator(user_without_permission)
         
-        # Test with empty strings
-        result = await service.verify_api_key("")
-        assert result is None
-        
-        result = await service.verify_jwt_token("")
-        assert result is None
+        assert exc_info.value.status_code == 403
+        assert "Permission 'read' required" in str(exc_info.value.detail)
 
 
-class TestGlobalAuthService:
-    """Test global auth_service instance"""
+class TestGlobalDashboardAuth:
+    """Test global dashboard_auth instance"""
     
     def test_global_instance_exists(self):
-        """Test that global auth_service instance exists"""
-        assert auth_service is not None
-        assert isinstance(auth_service, AuthService)
+        """Test that global dashboard_auth instance exists"""
+        assert dashboard_auth is not None
+        assert isinstance(dashboard_auth, DashboardAuth)
     
-    @pytest.mark.asyncio
-    async def test_global_instance_functionality(self):
-        """Test that global instance works correctly"""
-        # Should be able to verify invalid key (returns None)
-        token = await auth_service.verify_api_key("invalid-key")
-        assert token is None
+    def test_global_instance_has_admin(self):
+        """Test that global instance has default admin user"""
+        assert len(dashboard_auth._users) >= 1
         
-        # Should handle rate limiting
-        is_allowed = await auth_service.check_rate_limit("test-ip")
-        assert isinstance(is_allowed, bool)
+        # Find admin user
+        admin_user = None
+        for user in dashboard_auth._users.values():
+            if user.username == "admin":
+                admin_user = user
+                break
+        
+        assert admin_user is not None
+        assert "admin" in admin_user.permissions
+    
+    def test_global_instance_functionality(self):
+        """Test that global instance works correctly"""
+        # Should handle invalid API key gracefully
+        user = dashboard_auth.authenticate_api_key("invalid-key")
+        assert user is None
+        
+        # Should provide user stats
+        stats = dashboard_auth.get_user_stats()
+        assert isinstance(stats, dict)
+        assert "total_users" in stats
+
+
+class TestDashboardAuthIntegration:
+    """Integration tests for DashboardAuth"""
+    
+    @pytest.fixture
+    def fresh_auth(self):
+        """Fresh DashboardAuth instance for integration tests"""
+        with patch('src.dashboard.auth.get_config') as mock_config:
+            config = MagicMock()
+            config.security.secret_key = "integration-test-secret"
+            config.security.jwt_algorithm = "HS256"
+            mock_config.return_value = config
+            return DashboardAuth()
+    
+    def test_full_user_lifecycle(self, fresh_auth):
+        """Test complete user lifecycle"""
+        auth = fresh_auth
+        
+        # 1. Create user
+        api_key = auth.create_user(
+            username="testuser",
+            password="testpass",
+            permissions={"read", "write"}
+        )
+        
+        # 2. Authenticate with API key
+        user = auth.authenticate_api_key(api_key)
+        assert user is not None
+        assert user.username == "testuser"
+        
+        # 3. Create session
+        session_id = auth.create_session(user)
+        
+        # 4. Get session
+        session = auth.get_session(session_id)
+        assert session is not None
+        assert session.user_id == user.user_id
+        
+        # 5. Create JWT token
+        jwt_token = auth.create_jwt_token(user)
+        
+        # 6. Verify JWT token
+        payload = auth.verify_jwt_token(jwt_token)
+        assert payload is not None
+        assert payload["user_id"] == user.user_id
+        
+        # 7. Check permission
+        assert auth.check_permission(user, "read") is True
+        assert auth.check_permission(user, "admin") is False
+        
+        # 8. Revoke session
+        result = auth.revoke_session(session_id)
+        assert result is True
+        
+        # 9. Session should be gone
+        session = auth.get_session(session_id)
+        assert session is None
+    
+    def test_concurrent_operations(self, fresh_auth):
+        """Test concurrent authentication operations"""
+        auth = fresh_auth
+        
+        # Create multiple users concurrently (simulated)
+        api_keys = []
+        for i in range(5):
+            api_key = auth.create_user(
+                username=f"user{i}",
+                password=f"pass{i}",
+                permissions={"read"}
+            )
+            api_keys.append(api_key)
+        
+        # Authenticate all users
+        users = []
+        for api_key in api_keys:
+            user = auth.authenticate_api_key(api_key)
+            assert user is not None
+            users.append(user)
+        
+        # Create sessions for all users
+        session_ids = []
+        for user in users:
+            session_id = auth.create_session(user)
+            session_ids.append(session_id)
+        
+        # Verify all sessions exist
+        for session_id in session_ids:
+            session = auth.get_session(session_id)
+            assert session is not None
+        
+        # Cleanup - revoke all sessions
+        for session_id in session_ids:
+            result = auth.revoke_session(session_id)
+            assert result is True
+    
+    def test_error_resilience(self, fresh_auth):
+        """Test error handling and resilience"""
+        auth = fresh_auth
+        
+        # Test with None inputs
+        assert auth.authenticate_api_key(None) is None
+        assert auth.verify_jwt_token(None) is None
+        assert auth.get_session(None) is None
+        
+        # Test with empty strings
+        assert auth.authenticate_api_key("") is None
+        assert auth.verify_jwt_token("") is None
+        assert auth.get_session("") is None
+        
+        # Test invalid operations
+        assert auth.revoke_session("nonexistent-session") is False
+        
+        # Test rate limiting with high load
+        user_id = "test-user"
+        for _ in range(200):  # Exceed any reasonable limit
+            auth.check_rate_limit(user_id, max_requests=10, window_minutes=1)
+        
+        # Should still handle the call without crashing
+        result = auth.check_rate_limit(user_id, max_requests=10, window_minutes=1)
+        assert isinstance(result, bool)

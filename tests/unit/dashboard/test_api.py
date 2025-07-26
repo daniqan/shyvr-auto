@@ -15,7 +15,7 @@ from fastapi.websockets import WebSocket
 
 from src.dashboard.api import dashboard_api
 from src.dashboard.base import DashboardData, SystemStatus, TradingMode
-from src.dashboard.auth import AuthToken, Role
+from src.dashboard.auth import User, Session
 
 
 # Create test app with dashboard routes
@@ -40,16 +40,17 @@ class TestDashboardAPI:
     def mock_auth_service(self):
         """Mock authentication service"""
         auth_service = MagicMock()
-        auth_service.verify_api_key = AsyncMock(return_value=AuthToken(
+        auth_service.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
-            permissions=["dashboard.read", "dashboard.write", "trading.control"]
+            permissions={"dashboard.read", "dashboard.write", "trading.control", "admin"},
+            created_at=datetime.utcnow()
         ))
-        auth_service.verify_jwt_token = AsyncMock(return_value=AuthToken(
+        auth_service.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser", 
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["dashboard.read", "dashboard.write", "trading.control"]
         ))
         return auth_service
@@ -107,10 +108,11 @@ class TestDashboardAPI:
     async def test_switch_trading_mode_endpoint(self, mock_auth, mock_service, client):
         """Test POST /dashboard/trading/mode endpoint"""
         # Setup mocks
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["trading.control"]
         ))
         mock_service.switch_trading_mode = AsyncMock(return_value=True)
@@ -156,11 +158,11 @@ class TestDashboardAPI:
     async def test_switch_trading_mode_insufficient_permissions(self, mock_auth, mock_service, client):
         """Test trading mode switch with insufficient permissions"""
         # Setup mock with limited permissions
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.VIEWER,
-            permissions=["dashboard.read"]  # No trading.control
+            permissions={"dashboard.read"},  # No trading.control
+            created_at=datetime.utcnow()
         ))
         
         # Make request
@@ -181,10 +183,11 @@ class TestDashboardAPI:
     async def test_emergency_stop_endpoint(self, mock_auth, mock_service, client):
         """Test POST /dashboard/trading/emergency-stop endpoint"""
         # Setup mocks
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["trading.control"]
         ))
         mock_service.emergency_stop = AsyncMock(return_value=True)
@@ -210,10 +213,11 @@ class TestDashboardAPI:
     async def test_update_risk_limits_endpoint(self, mock_auth, mock_service, client):
         """Test PUT /dashboard/trading/risk-limits endpoint"""
         # Setup mocks
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["trading.control"]
         ))
         mock_service.update_risk_limits = AsyncMock(return_value=True)
@@ -293,10 +297,11 @@ class TestDashboardAPI:
     async def test_system_restart_endpoint(self, mock_auth, mock_service, client):
         """Test POST /dashboard/system/restart endpoint"""
         # Setup mocks
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["system.control"]
         ))
         
@@ -317,11 +322,11 @@ class TestDashboardAPI:
     async def test_system_restart_insufficient_permissions(self, mock_auth, client):
         """Test system restart with insufficient permissions"""
         # Setup mock with limited permissions
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.TRADER,
-            permissions=["dashboard.read", "trading.control"]  # No system.control
+            permissions={"dashboard.read", "trading.control"},  # No system.control
+            created_at=datetime.utcnow()
         ))
         
         # Make request
@@ -354,10 +359,11 @@ class TestWebSocketEndpoint:
     async def test_websocket_connection_success(self, mock_auth, mock_ws_manager):
         """Test successful WebSocket connection"""
         # Setup mocks
-        mock_auth.verify_jwt_token = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["dashboard.read"]
         ))
         
@@ -415,10 +421,11 @@ class TestWebSocketEndpoint:
     async def test_websocket_connection_error_handling(self, mock_auth, mock_ws_manager):
         """Test WebSocket error handling"""
         # Setup mocks
-        mock_auth.verify_jwt_token = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_jwt_token = AsyncMock(return_value=User(
             user_id="test-user",
             username="testuser",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["dashboard.read"]
         ))
         
@@ -453,10 +460,11 @@ class TestAPIIntegration:
     async def test_full_api_workflow(self, mock_auth, mock_service, client):
         """Test complete API workflow"""
         # Setup mocks
-        mock_auth.verify_api_key = AsyncMock(return_value=AuthToken(
+        mock_auth.verify_api_key = AsyncMock(return_value=User(
             user_id="admin-user",
             username="admin",
-            role=Role.ADMIN,
+            permissions={"admin", "read", "write"},
+            created_at=datetime.utcnow(),
             permissions=["dashboard.read", "dashboard.write", "trading.control", "system.control"]
         ))
         
