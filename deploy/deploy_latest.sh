@@ -63,7 +63,6 @@ OPTIONAL_SECRETS=(
     
     # Database and Infrastructure
     "DATABASE_URL"
-    "REDIS_URL"
     
     # Trading (for live mode - disabled by default)
     "SOLANA_RPC_URL"

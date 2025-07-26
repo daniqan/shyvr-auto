@@ -50,7 +50,6 @@ class SystemMetrics:
     
     # Component statuses
     database_status: SystemStatus
-    redis_status: SystemStatus
     ml_models_status: SystemStatus
     rl_agent_status: SystemStatus
     dex_connections_status: SystemStatus
@@ -75,7 +74,6 @@ class SystemMetrics:
             response_time_ms=0.0,
             last_updated=datetime.utcnow(),
             database_status=SystemStatus.HEALTHY,
-            redis_status=SystemStatus.HEALTHY,
             ml_models_status=SystemStatus.HEALTHY,
             rl_agent_status=SystemStatus.HEALTHY,
             dex_connections_status=SystemStatus.HEALTHY,

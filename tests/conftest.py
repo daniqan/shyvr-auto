@@ -44,10 +44,6 @@ database:
   pool_size: 5
   max_overflow: 10
 
-redis:
-  host: "localhost"
-  port: 6379
-  db: 1
 
 telegram:
   token: "test_telegram_token"
@@ -122,15 +118,6 @@ def mock_database():
     return mock_db
 
 
-@pytest.fixture
-def mock_redis():
-    """Mock Redis connection"""
-    mock_redis = AsyncMock()
-    mock_redis.get.return_value = None
-    mock_redis.set.return_value = True
-    mock_redis.delete.return_value = 1
-    mock_redis.exists.return_value = False
-    return mock_redis
 
 
 @pytest.fixture

@@ -367,7 +367,6 @@ class DashboardAPI:
                 "error_rate_pct": data.system_metrics.error_rate_pct,
                 "component_statuses": {
                     "database": data.system_metrics.database_status.value,
-                    "redis": data.system_metrics.redis_status.value,
                     "ml_models": data.system_metrics.ml_models_status.value,
                     "rl_agent": data.system_metrics.rl_agent_status.value,
                     "dex_connections": data.system_metrics.dex_connections_status.value
@@ -447,7 +446,6 @@ class DashboardAPI:
             "response_time_ms": metrics.response_time_ms,
             "component_statuses": {
                 "database": metrics.database_status.value,
-                "redis": metrics.redis_status.value,
                 "ml_models": metrics.ml_models_status.value,
                 "rl_agent": metrics.rl_agent_status.value,
                 "dex_connections": metrics.dex_connections_status.value

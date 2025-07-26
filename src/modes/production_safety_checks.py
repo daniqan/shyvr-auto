@@ -160,7 +160,7 @@ class SafetyCheckConfig:
     # Configuration validation
     require_all_env_vars: bool = True
     require_database_connection: bool = True
-    require_redis_connection: bool = True
+    require_redis_connection: bool = False  # Redis removed from system
     
     # Timeouts
     check_timeout_seconds: int = 60
@@ -201,7 +201,7 @@ class ProductionSafetyChecker:
         
         # Required environment variables
         self.required_env_vars = [
-            "DB_HOST", "DB_PASSWORD", "REDIS_HOST",
+            "DB_HOST", "DB_PASSWORD",
             "BIRDEYE_API_KEY", "HELIUS_API_KEY",
             "SOLANA_PRIVATE_KEY", "SECRET_KEY"
         ]
@@ -419,9 +419,6 @@ class ProductionSafetyChecker:
         result = await self._check_database_configuration()
         results.append(result)
         
-        # Check Redis configuration
-        result = await self._check_redis_configuration()
-        results.append(result)
         
         # Check trading configuration
         result = await self._check_trading_configuration()
@@ -847,44 +844,6 @@ class ProductionSafetyChecker:
                 execution_time_ms=(time.time() - start_time) * 1000
             )
     
-    async def _check_redis_configuration(self) -> SafetyCheckResult:
-        """Check Redis configuration."""
-        start_time = time.time()
-        
-        try:
-            redis_host = os.getenv("REDIS_HOST")
-            
-            if not redis_host:
-                return SafetyCheckResult(
-                    check_id="config_redis",
-                    name="Redis Configuration",
-                    category=SafetyCheckCategory.CONFIGURATION,
-                    status=SafetyCheckStatus.FAILED,
-                    message="Redis configuration incomplete",
-                    details={"missing": "REDIS_HOST"},
-                    execution_time_ms=(time.time() - start_time) * 1000
-                )
-            
-            # TODO: Test actual Redis connection
-            
-            return SafetyCheckResult(
-                check_id="config_redis",
-                name="Redis Configuration",
-                category=SafetyCheckCategory.CONFIGURATION,
-                status=SafetyCheckStatus.PASSED,
-                message="Redis configuration validated",
-                execution_time_ms=(time.time() - start_time) * 1000
-            )
-            
-        except Exception as e:
-            return SafetyCheckResult(
-                check_id="config_redis",
-                name="Redis Configuration",
-                category=SafetyCheckCategory.CONFIGURATION,
-                status=SafetyCheckStatus.FAILED,
-                message=f"Redis configuration check failed: {str(e)}",
-                execution_time_ms=(time.time() - start_time) * 1000
-            )
     
     async def _check_trading_configuration(self) -> SafetyCheckResult:
         """Check trading configuration."""

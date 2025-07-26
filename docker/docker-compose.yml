@@ -22,20 +22,6 @@ services:
     networks:
       - rlte_network
 
-  # Redis for caching (optional)
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - rlte_network
 
   # Main RLTE application
   rlte:
@@ -50,9 +36,6 @@ services:
       DB_USER: rlte_user
       DB_PASSWORD: ${DB_PASSWORD:-dev_password_change_in_prod}
       
-      # Redis configuration
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       
       # Application configuration
       ENVIRONMENT: development
@@ -77,8 +60,6 @@ services:
       - ../config:/app/config
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -118,7 +99,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   rlte_network:

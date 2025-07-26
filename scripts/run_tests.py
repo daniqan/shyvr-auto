@@ -44,8 +44,6 @@ def setup_test_environment():
         "DB_NAME": "test_rlte",
         "DB_USER": "test_user",
         "DB_PASSWORD": "test_password",
-        "REDIS_HOST": "localhost",
-        "REDIS_PORT": "6379",
         "TELEGRAM_TOKEN": "test_token",
         "AGENT_MODEL_TYPE": "mock"
     }

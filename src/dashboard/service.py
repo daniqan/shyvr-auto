@@ -193,7 +193,6 @@ class DashboardService:
                 response_time_ms=avg_response_time,
                 last_updated=datetime.utcnow(),
                 database_status=SystemStatus.HEALTHY,  # TODO: Check actual DB status
-                redis_status=SystemStatus.HEALTHY,     # TODO: Check actual Redis status
                 ml_models_status=SystemStatus.HEALTHY, # TODO: Check ML models
                 rl_agent_status=SystemStatus.HEALTHY,  # TODO: Check RL agent
                 dex_connections_status=SystemStatus.HEALTHY,  # TODO: Check DEX connections

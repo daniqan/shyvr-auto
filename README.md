@@ -22,7 +22,7 @@
 
 <!-- Database & Storage -->
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?style=for-the-badge&logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis-Caching-dc382d?style=for-the-badge&logo=redis&logoColor=white)
+![In-Memory](https://img.shields.io/badge/In--Memory-Caching-4CAF50?style=for-the-badge&logo=memory&logoColor=white)
 
 <!-- Blockchain & Crypto -->
 ![Multi-Chain](https://img.shields.io/badge/Multi--Chain-Solana%20%7C%20Ethereum%20%7C%20Base-blueviolet?style=for-the-badge&logo=blockchain&logoColor=white)
@@ -536,7 +536,7 @@ graph TB
     subgraph "🗄️ DATA LAYER"
         LIVE_DATA[📡 Live Market Data<br/>• BirdEye API<br/>• Jupiter Prices<br/>• Blockchain Data]
         
-        STORAGE_SYSTEM[💾 Storage System<br/>• PostgreSQL Database<br/>• Redis Cache<br/>• Configuration Store]
+        STORAGE_SYSTEM[💾 Storage System<br/>• PostgreSQL Database<br/>• In-Memory Cache<br/>• Configuration Store]
         
         EXTERNAL_APIS[🌐 External APIs<br/>• DEX Integration<br/>• Social Media<br/>• News Sources]
     end
@@ -632,7 +632,7 @@ graph TB
 
 #### 🗄️ Data Layer
 - **Live Market Data**: Real-time feeds from BirdEye API, Jupiter prices, and blockchain data sources
-- **Storage System**: Enterprise-grade PostgreSQL database with Redis caching and configuration management
+- **Storage System**: Enterprise-grade PostgreSQL database with in-memory caching and configuration management
 - **External APIs**: Comprehensive integration with DEX protocols, social media feeds, and news sources
 
 #### ⛓️ Blockchain Networks
@@ -886,7 +886,7 @@ The Shyvr AI Reinforcement Learning Trading Engine (RLTE) has achieved **complet
 - **✅ Google Cloud Run**: Auto-scaling containerized deployment
 - **✅ Google Cloud Secret Manager**: Secure API key and wallet management
 - **✅ PostgreSQL Database**: Production-grade data persistence
-- **✅ Redis Caching**: High-performance data caching layer
+- **✅ In-Memory Caching**: High-performance data caching layer
 - **✅ CI/CD Pipeline**: Automated testing, building, and deployment
 - **✅ Monitoring Stack**: Health checks, logging, and alerting systems
 

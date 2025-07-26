@@ -115,7 +115,6 @@ async def health_check():
             "environment": config.app.environment,
             "components": {
                 "database": "not_implemented",
-                "redis": "not_implemented", 
                 "ml_models": "not_implemented",
                 "rl_agent": "not_implemented"
             }

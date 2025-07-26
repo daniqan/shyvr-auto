@@ -33,7 +33,6 @@ class TestSystemMetrics:
             response_time_ms=25.0,
             last_updated=now,
             database_status=SystemStatus.HEALTHY,
-            redis_status=SystemStatus.HEALTHY,
             ml_models_status=SystemStatus.HEALTHY,
             rl_agent_status=SystemStatus.HEALTHY,
             dex_connections_status=SystemStatus.HEALTHY,

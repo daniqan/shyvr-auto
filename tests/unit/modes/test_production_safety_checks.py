@@ -357,7 +357,6 @@ def mock_production_environment():
     return {
         "environment": "production",
         "database_url": "postgresql://prod-server/rlte_db",
-        "redis_url": "redis://prod-redis:6379",
         "api_keys": {
             "birdeye": "prod_birdeye_key",
             "jupiter": "prod_jupiter_key",

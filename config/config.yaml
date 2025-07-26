@@ -18,11 +18,6 @@ database:
   max_overflow: ${DB_MAX_OVERFLOW:20}
   echo: false  # Set to true for SQL query logging
   
-redis:
-  host: "${REDIS_HOST:localhost}"
-  port: ${REDIS_PORT:6379}
-  db: ${REDIS_DB:0}
-  password: "${REDIS_PASSWORD:}"
   
 apis:
   helius:
@@ -367,4 +362,4 @@ security:
   jwt_algorithm: "HS256"
   jwt_expiry_hours: 24
   api_key_length: 32
-  rate_limit_storage: "redis"  # redis or memory
+  rate_limit_storage: "memory"  # memory storage for rate limiting

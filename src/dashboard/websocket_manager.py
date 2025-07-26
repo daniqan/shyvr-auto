@@ -384,7 +384,6 @@ class WebSocketManager:
                     "last_updated": data.system_metrics.last_updated.isoformat(),
                     "component_statuses": {
                         "database": data.system_metrics.database_status.value,
-                        "redis": data.system_metrics.redis_status.value,
                         "ml_models": data.system_metrics.ml_models_status.value,
                         "rl_agent": data.system_metrics.rl_agent_status.value,
                         "dex_connections": data.system_metrics.dex_connections_status.value

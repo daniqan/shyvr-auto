@@ -58,7 +58,7 @@
 ### Technical Implementation
 - ✅ **Async Architecture**: Non-blocking I/O for high throughput
 - ✅ **Rate Limiting**: Intelligent API request management
-- ✅ **Caching Strategy**: Redis-based caching for performance
+- ✅ **Caching Strategy**: In-memory caching for performance
 - ✅ **Error Handling**: Robust exception handling and recovery
 - ✅ **Data Models**: Type-safe data structures with validation
 

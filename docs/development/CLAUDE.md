@@ -598,7 +598,7 @@ src/
 - **Pre-deployment Validation**: 7 categories of comprehensive safety checks
 - **Security Validation**: API keys, wallet security, and configuration validation
 - **Performance Benchmarks**: System resource and latency validation
-- **Infrastructure Checks**: Database, Redis, and network connectivity
+- **Infrastructure Checks**: Database and network connectivity
 - **Deployment Approval**: Manual approval workflow with comprehensive reporting
 
 ### 🛡️ Safety and Integration Features
@@ -639,7 +639,7 @@ src/
 - **Security Checks**: API keys, wallet security, file permissions
 - **Configuration Validation**: All required environment variables and settings
 - **Performance Benchmarks**: CPU, memory, network, and API response times
-- **Infrastructure Health**: Database, Redis, and monitoring system connectivity
+- **Infrastructure Health**: Database and monitoring system connectivity
 - **Trading Safety**: Risk management, emergency stops, and position limits
 
 #### System Health

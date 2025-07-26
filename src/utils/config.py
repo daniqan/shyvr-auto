@@ -38,13 +38,6 @@ class DatabaseConfig(BaseModel):
         )
 
 
-class RedisConfig(BaseModel):
-    """Redis configuration"""
-
-    host: str = "localhost"
-    port: int = 6379
-    db: int = 0
-    password: str | None = None
 
 
 class APIConfig(BaseModel):
@@ -136,7 +129,6 @@ class RLTEConfig(BaseModel):
 
     app: AppConfig = field(default_factory=AppConfig)
     database: DatabaseConfig
-    redis: RedisConfig = field(default_factory=RedisConfig)
     telegram: TelegramConfig
     agent: AgentConfig = field(default_factory=AgentConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
