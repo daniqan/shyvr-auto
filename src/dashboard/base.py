@@ -98,6 +98,8 @@ class Position:
     leverage: float
     entry_time: datetime
     last_updated: datetime
+    mode: TradingMode = TradingMode.ANALYSIS
+    is_simulated: bool = True
 
 
 @dataclass
@@ -116,6 +118,8 @@ class Trade:
     execution_time_ms: float
     timestamp: datetime
     status: str  # "completed", "pending", "failed"
+    mode: TradingMode = TradingMode.ANALYSIS
+    is_simulated: bool = True
 
 
 @dataclass
@@ -147,6 +151,10 @@ class PortfolioStatus:
     
     last_updated: datetime
     
+    # Mode context for clear distinction
+    mode: TradingMode = TradingMode.ANALYSIS
+    is_simulated: bool = True
+    
     @classmethod
     def create_default(cls) -> "PortfolioStatus":
         """Create default portfolio status"""
@@ -168,7 +176,9 @@ class PortfolioStatus:
             position_count=0,
             recent_trades=[],
             chain_balances={},
-            last_updated=datetime.utcnow()
+            last_updated=datetime.utcnow(),
+            mode=TradingMode.ANALYSIS,
+            is_simulated=True
         )
 
 
@@ -204,6 +214,9 @@ class TradingStatus:
     
     last_updated: datetime
     
+    # Mode context for clear distinction
+    is_simulated: bool = True
+    
     @classmethod
     def create_default(cls) -> "TradingStatus":
         """Create default trading status"""
@@ -226,7 +239,8 @@ class TradingStatus:
             tokens_analyzed_today=0,
             tokens_in_watchlist=0,
             high_confidence_signals=0,
-            last_updated=datetime.utcnow()
+            last_updated=datetime.utcnow(),
+            is_simulated=True
         )
 
 

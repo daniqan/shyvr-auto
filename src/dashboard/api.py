@@ -481,7 +481,10 @@ class DashboardAPI:
                 "positions": [self._serialize_position(pos) for pos in status.active_positions]
             },
             "chain_balances": {k: str(v) for k, v in status.chain_balances.items()},
-            "last_updated": status.last_updated.isoformat()
+            "last_updated": status.last_updated.isoformat(),
+            # Mode context for clear distinction
+            "mode": status.mode.value,
+            "is_simulated": status.is_simulated
         }
     
     def _serialize_trading_status(self, status) -> Dict[str, Any]:
@@ -513,7 +516,9 @@ class DashboardAPI:
                 "tokens_in_watchlist": status.tokens_in_watchlist,
                 "high_confidence_signals": status.high_confidence_signals
             },
-            "last_updated": status.last_updated.isoformat()
+            "last_updated": status.last_updated.isoformat(),
+            # Mode context for clear distinction
+            "is_simulated": status.is_simulated
         }
     
     def _serialize_ml_rl_status(self, status) -> Dict[str, Any]:
@@ -555,7 +560,10 @@ class DashboardAPI:
             "unrealized_pnl_pct": str(position.unrealized_pnl_pct),
             "leverage": position.leverage,
             "entry_time": position.entry_time.isoformat(),
-            "last_updated": position.last_updated.isoformat()
+            "last_updated": position.last_updated.isoformat(),
+            # Mode context for clear distinction
+            "mode": position.mode.value,
+            "is_simulated": position.is_simulated
         }
     
     def _serialize_trade(self, trade) -> Dict[str, Any]:
@@ -573,7 +581,10 @@ class DashboardAPI:
             "slippage_pct": str(trade.slippage_pct),
             "execution_time_ms": trade.execution_time_ms,
             "status": trade.status,
-            "timestamp": trade.timestamp.isoformat()
+            "timestamp": trade.timestamp.isoformat(),
+            # Mode context for clear distinction
+            "mode": trade.mode.value,
+            "is_simulated": trade.is_simulated
         }
     
     def _serialize_ml_model(self, model) -> Dict[str, Any]:

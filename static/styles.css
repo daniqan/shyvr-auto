@@ -17,6 +17,17 @@
     --danger-color: #ef4444;
     --info-color: #06b6d4;
     
+    /* Mode-specific Colors */
+    --simulation-color: #f59e0b;
+    --simulation-bg: #fef3c7;
+    --simulation-border: #fcd34d;
+    --live-color: #dc2626;
+    --live-bg: #fee2e2;
+    --live-border: #f87171;
+    --analysis-color: #2563eb;
+    --analysis-bg: #dbeafe;
+    --analysis-border: #60a5fa;
+    
     /* Background Colors */
     --bg-primary: #f8fafc;
     --bg-secondary: #ffffff;
@@ -1158,4 +1169,312 @@ select:focus-visible {
     .card {
         border: 2px solid #000000;
     }
+}
+
+/* Mode-Specific Styling for Dashboard Mode Distinction */
+
+/* Mode Banner */
+.mode-banner {
+    position: sticky;
+    top: 70px;
+    z-index: 99;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 2px solid;
+    margin-bottom: var(--spacing-md);
+    animation: pulse 2s infinite;
+}
+
+.mode-banner.simulation {
+    background-color: var(--simulation-bg);
+    color: var(--simulation-color);
+    border-color: var(--simulation-border);
+}
+
+.mode-banner.live {
+    background-color: var(--live-bg);
+    color: var(--live-color);
+    border-color: var(--live-border);
+}
+
+.mode-banner.analysis {
+    background-color: var(--analysis-bg);
+    color: var(--analysis-color);
+    border-color: var(--analysis-border);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+/* Mode-specific Card Styling */
+.card.simulation-mode {
+    border-left: 4px solid var(--simulation-color);
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--simulation-bg) 1%, var(--bg-card) 2%);
+}
+
+.card.live-mode {
+    border-left: 4px solid var(--live-color);
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--live-bg) 1%, var(--bg-card) 2%);
+}
+
+.card.analysis-mode {
+    border-left: 4px solid var(--analysis-color);
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--analysis-bg) 1%, var(--bg-card) 2%);
+}
+
+/* Mode Badge */
+.mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.mode-badge.simulation {
+    background-color: var(--simulation-bg);
+    color: var(--simulation-color);
+    border: 1px solid var(--simulation-border);
+}
+
+.mode-badge.live {
+    background-color: var(--live-bg);
+    color: var(--live-color);
+    border: 1px solid var(--live-border);
+}
+
+.mode-badge.analysis {
+    background-color: var(--analysis-bg);
+    color: var(--analysis-color);
+    border: 1px solid var(--analysis-border);
+}
+
+.mode-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
+}
+
+/* Simulated Value Indicators */
+.simulated-value {
+    position: relative;
+}
+
+.simulated-value::before {
+    content: 'SIM';
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background-color: var(--simulation-color);
+    color: white;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.05em;
+}
+
+.live-value::before {
+    content: 'LIVE';
+    background-color: var(--live-color);
+}
+
+/* Mode-specific Table Rows */
+.table-row.simulation-mode {
+    background-color: rgba(245, 158, 11, 0.05);
+    border-left: 3px solid var(--simulation-color);
+}
+
+.table-row.live-mode {
+    background-color: rgba(220, 38, 38, 0.05);
+    border-left: 3px solid var(--live-color);
+}
+
+.table-row.analysis-mode {
+    background-color: rgba(37, 99, 235, 0.05);
+    border-left: 3px solid var(--analysis-color);
+}
+
+/* Trading Mode Selector Styling */
+.mode-selector {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.mode-option {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-md);
+    border: 2px solid var(--border-color);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.mode-option:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.mode-option input[type="radio"] {
+    margin: 0;
+    accent-color: var(--primary-color);
+}
+
+.mode-option input[type="radio"]:checked + label {
+    font-weight: 600;
+}
+
+.mode-option.simulation input[type="radio"]:checked + label {
+    color: var(--simulation-color);
+}
+
+.mode-option.live input[type="radio"]:checked + label {
+    color: var(--live-color);
+}
+
+.mode-option.analysis input[type="radio"]:checked + label {
+    color: var(--analysis-color);
+}
+
+.mode-option.simulation:has(input:checked) {
+    border-color: var(--simulation-border);
+    background-color: var(--simulation-bg);
+}
+
+.mode-option.live:has(input:checked) {
+    border-color: var(--live-border);
+    background-color: var(--live-bg);
+}
+
+.mode-option.analysis:has(input:checked) {
+    border-color: var(--analysis-border);
+    background-color: var(--analysis-bg);
+}
+
+/* Navigation Mode Indicator */
+.nav-logo .mode-indicator {
+    font-size: 0.7rem;
+    margin-left: var(--spacing-sm);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.nav-logo .mode-indicator.simulation {
+    background-color: var(--simulation-color);
+    color: white;
+}
+
+.nav-logo .mode-indicator.live {
+    background-color: var(--live-color);
+    color: white;
+}
+
+.nav-logo .mode-indicator.analysis {
+    background-color: var(--analysis-color);
+    color: white;
+}
+
+/* Portfolio Value Styling */
+.portfolio-value.simulated {
+    color: var(--simulation-color);
+    font-weight: 600;
+}
+
+.portfolio-value.live {
+    color: var(--live-color);
+    font-weight: 600;
+}
+
+.portfolio-value::after {
+    content: attr(data-mode);
+    margin-left: var(--spacing-xs);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    opacity: 0.8;
+}
+
+/* Warning Overlays */
+.simulation-warning {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, var(--simulation-color), #f97316);
+    color: white;
+    padding: var(--spacing-xs) var(--spacing-lg);
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 1000;
+    animation: warningPulse 3s infinite;
+}
+
+.live-warning {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, var(--live-color), #dc2626);
+    color: white;
+    padding: var(--spacing-xs) var(--spacing-lg);
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 1000;
+    animation: warningPulse 3s infinite;
+}
+
+@keyframes warningPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.9; }
+}
+
+/* Mode-specific Activity Feed */
+.activity-item.simulation::before {
+    content: '[SIM]';
+    color: var(--simulation-color);
+    font-weight: 600;
+    margin-right: var(--spacing-xs);
+}
+
+.activity-item.live::before {
+    content: '[LIVE]';
+    color: var(--live-color);
+    font-weight: 600;
+    margin-right: var(--spacing-xs);
+}
+
+.activity-item.analysis::before {
+    content: '[ANALYSIS]';
+    color: var(--analysis-color);
+    font-weight: 600;
+    margin-right: var(--spacing-xs);
+}
+
+/* Dark mode adaptations for mode colors */
+[data-theme="dark"] {
+    --simulation-bg: rgba(245, 158, 11, 0.1);
+    --simulation-border: #f59e0b;
+    --live-bg: rgba(220, 38, 38, 0.1);
+    --live-border: #dc2626;
+    --analysis-bg: rgba(37, 99, 235, 0.1);
+    --analysis-border: #2563eb;
 }

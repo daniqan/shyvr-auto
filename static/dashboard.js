@@ -329,12 +329,105 @@ class DashboardApp {
         this.dashboardData = data;
         this.lastUpdateTime = new Date();
         
+        // Update mode-specific UI first
+        this.updateModeDisplay(data);
+        
         // Update all UI elements
         this.updateOverviewTab(data);
         this.updateTradingTab(data);
         this.updatePortfolioTab(data);
         this.updateMLRLTab(data);
         this.updateSystemTab(data);
+    }
+    
+    /**
+     * Update mode-specific display elements
+     */
+    updateModeDisplay(data) {
+        const tradingMode = data.trading_status.mode;
+        const isSimulated = data.trading_status.is_simulated;
+        const portfolioMode = data.portfolio_status.mode;
+        const portfolioIsSimulated = data.portfolio_status.is_simulated;
+        
+        // Update navigation mode indicator
+        const navModeIndicator = document.getElementById('navModeIndicator');
+        navModeIndicator.textContent = tradingMode.toUpperCase();
+        navModeIndicator.className = `mode-indicator ${tradingMode}`;
+        
+        // Update mode banner
+        const modeBanner = document.getElementById('modeBanner');
+        const modeBannerText = document.getElementById('modeBannerText');
+        
+        if (tradingMode === 'simulation') {
+            modeBanner.style.display = 'block';
+            modeBanner.className = 'mode-banner simulation';
+            modeBannerText.textContent = 'SIMULATION MODE - ALL TRADES ARE SIMULATED';
+        } else if (tradingMode === 'live') {
+            modeBanner.style.display = 'block';
+            modeBanner.className = 'mode-banner live';
+            modeBannerText.textContent = 'LIVE TRADING MODE - REAL MONEY AT RISK';
+        } else {
+            modeBanner.style.display = 'block';
+            modeBanner.className = 'mode-banner analysis';
+            modeBannerText.textContent = 'ANALYSIS MODE - NO TRADING ACTIVE';
+        }
+        
+        // Update portfolio mode badge
+        const portfolioModeBadge = document.getElementById('portfolioModeBadge');
+        portfolioModeBadge.textContent = portfolioMode.toUpperCase();
+        portfolioModeBadge.className = `mode-badge ${portfolioMode}`;
+        
+        // Update trading mode badge
+        const tradingModeBadge = document.getElementById('tradingModeBadge');
+        tradingModeBadge.textContent = tradingMode.toUpperCase();
+        tradingModeBadge.className = `mode-badge ${tradingMode}`;
+        
+        // Update card styling based on mode
+        this.updateCardModeClasses(tradingMode);
+        
+        // Update portfolio value indicators
+        this.updatePortfolioValueModeIndicators(portfolioMode, portfolioIsSimulated);
+    }
+    
+    /**
+     * Update card CSS classes based on trading mode
+     */
+    updateCardModeClasses(mode) {
+        const cards = [
+            'portfolioSummaryCard',
+            'tradingActivityCard'
+        ];
+        
+        cards.forEach(cardId => {
+            const card = document.getElementById(cardId);
+            if (card) {
+                // Remove existing mode classes
+                card.classList.remove('simulation-mode', 'live-mode', 'analysis-mode');
+                // Add current mode class
+                card.classList.add(`${mode}-mode`);
+            }
+        });
+    }
+    
+    /**
+     * Update portfolio value mode indicators
+     */
+    updatePortfolioValueModeIndicators(mode, isSimulated) {
+        const portfolioValueElements = document.querySelectorAll('.portfolio-value');
+        
+        portfolioValueElements.forEach(element => {
+            // Remove existing mode classes
+            element.classList.remove('simulated', 'live');
+            
+            // Set data attribute for CSS content
+            if (isSimulated) {
+                element.setAttribute('data-mode', 'SIM');
+                element.classList.add('simulated');
+            } else {
+                element.setAttribute('data-mode', 'LIVE');
+                element.classList.add('live');
+            }
+        });
     }
     
     /**
@@ -523,9 +616,10 @@ class DashboardApp {
             const pnl = parseFloat(pos.unrealized_pnl);
             const pnlPct = parseFloat(pos.unrealized_pnl_pct);
             const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+            const modeClass = pos.mode ? `${pos.mode}-mode` : 'analysis-mode';
             
             return `
-                <tr>
+                <tr class="table-row ${modeClass}">
                     <td>${pos.symbol}</td>
                     <td>${pos.chain}</td>
                     <td>${pos.size}</td>
@@ -639,16 +733,17 @@ class DashboardApp {
      */
     updateActivityFeed(data) {
         const feed = document.getElementById('activityFeed');
+        const currentMode = data.trading_status.mode;
         
         // Add new activities (this would come from the backend)
         const activities = [
-            { time: new Date().toLocaleTimeString(), message: 'Dashboard data updated' },
-            { time: new Date(Date.now() - 60000).toLocaleTimeString(), message: `Trading mode: ${data.trading_status.mode}` },
-            { time: new Date(Date.now() - 120000).toLocaleTimeString(), message: `Portfolio value: ${this.formatCurrency(data.portfolio_status.total_value_usd)}` }
+            { time: new Date().toLocaleTimeString(), message: 'Dashboard data updated', mode: currentMode },
+            { time: new Date(Date.now() - 60000).toLocaleTimeString(), message: `Trading mode: ${currentMode}`, mode: currentMode },
+            { time: new Date(Date.now() - 120000).toLocaleTimeString(), message: `Portfolio value: ${this.formatCurrency(data.portfolio_status.total_value_usd)}`, mode: currentMode }
         ];
         
         feed.innerHTML = activities.map(activity => `
-            <div class="activity-item">
+            <div class="activity-item ${activity.mode}">
                 <span class="activity-time">${activity.time}</span>
                 <span class="activity-message">${activity.message}</span>
             </div>
@@ -891,17 +986,20 @@ class DashboardApp {
             return;
         }
         
-        tbody.innerHTML = trades.map(trade => `
-            <tr>
-                <td>${new Date(trade.timestamp).toLocaleTimeString()}</td>
-                <td>${trade.symbol}</td>
-                <td>${trade.side.toUpperCase()}</td>
-                <td>${trade.size}</td>
-                <td>${this.formatCurrency(trade.price)}</td>
-                <td class="pnl ${trade.pnl >= 0 ? 'positive' : 'negative'}">${this.formatCurrency(trade.pnl || 0)}</td>
-                <td><span class="status-badge ${trade.status}">${trade.status.toUpperCase()}</span></td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = trades.map(trade => {
+            const modeClass = trade.mode ? `${trade.mode}-mode` : 'analysis-mode';
+            return `
+                <tr class="table-row ${modeClass}">
+                    <td>${new Date(trade.timestamp).toLocaleTimeString()}</td>
+                    <td>${trade.symbol}</td>
+                    <td>${trade.side.toUpperCase()}</td>
+                    <td>${trade.size}</td>
+                    <td>${this.formatCurrency(trade.price)}</td>
+                    <td class="pnl ${trade.pnl >= 0 ? 'positive' : 'negative'}">${this.formatCurrency(trade.pnl || 0)}</td>
+                    <td><span class="status-badge ${trade.status}">${trade.status.toUpperCase()}</span></td>
+                </tr>
+            `;
+        }).join('');
     }
     
     /**

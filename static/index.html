@@ -14,6 +14,7 @@
             <div class="nav-logo">
                 <h1>Shyvr RLTE</h1>
                 <span class="nav-subtitle">AI Trading Dashboard</span>
+                <span class="mode-indicator" id="navModeIndicator">ANALYSIS</span>
             </div>
             <div class="nav-controls">
                 <div class="connection-status" id="connectionStatus">
@@ -26,6 +27,11 @@
             </div>
         </div>
     </nav>
+
+    <!-- Mode Banner for Clear Distinction -->
+    <div class="mode-banner" id="modeBanner" style="display: none;">
+        <span id="modeBannerText">SIMULATION MODE - ALL TRADES ARE SIMULATED</span>
+    </div>
 
     <!-- Main Content -->
     <main class="main-content">
@@ -73,22 +79,23 @@
                     </div>
 
                     <!-- Portfolio Summary Card -->
-                    <div class="card portfolio-summary-card">
+                    <div class="card portfolio-summary-card" id="portfolioSummaryCard">
                         <div class="card-header">
                             <h3>Portfolio Summary</h3>
+                            <span class="mode-badge" id="portfolioModeBadge">ANALYSIS</span>
                         </div>
                         <div class="card-content">
                             <div class="metric-large">
                                 <span class="metric-label">Total Value</span>
-                                <span class="metric-value large" id="portfolioTotalValue">$0.00</span>
+                                <span class="metric-value large portfolio-value" id="portfolioTotalValue" data-mode="">$0.00</span>
                             </div>
                             <div class="metric-row">
                                 <span class="metric-label">Daily P&L:</span>
-                                <span class="metric-value pnl" id="portfolioDailyPnl">$0.00 (0%)</span>
+                                <span class="metric-value pnl portfolio-value" id="portfolioDailyPnl" data-mode="">$0.00 (0%)</span>
                             </div>
                             <div class="metric-row">
                                 <span class="metric-label">Unrealized P&L:</span>
-                                <span class="metric-value pnl" id="portfolioUnrealizedPnl">$0.00</span>
+                                <span class="metric-value pnl portfolio-value" id="portfolioUnrealizedPnl" data-mode="">$0.00</span>
                             </div>
                             <div class="metric-row">
                                 <span class="metric-label">Active Positions:</span>
@@ -98,9 +105,10 @@
                     </div>
 
                     <!-- Trading Activity Card -->
-                    <div class="card trading-activity-card">
+                    <div class="card trading-activity-card" id="tradingActivityCard">
                         <div class="card-header">
                             <h3>Trading Activity</h3>
+                            <span class="mode-badge" id="tradingModeBadge">ANALYSIS</span>
                         </div>
                         <div class="card-content">
                             <div class="metric-row">
@@ -113,7 +121,7 @@
                             </div>
                             <div class="metric-row">
                                 <span class="metric-label">Volume Today:</span>
-                                <span class="metric-value" id="tradingVolumeToday">$0.00</span>
+                                <span class="metric-value portfolio-value" id="tradingVolumeToday" data-mode="">$0.00</span>
                             </div>
                             <div class="metric-row">
                                 <span class="metric-label">Win Rate:</span>
@@ -194,15 +202,15 @@
                         </div>
                         <div class="card-content">
                             <div class="mode-selector">
-                                <div class="mode-option">
+                                <div class="mode-option analysis">
                                     <input type="radio" id="modeAnalysis" name="tradingMode" value="analysis" checked>
                                     <label for="modeAnalysis">Analysis</label>
                                 </div>
-                                <div class="mode-option">
+                                <div class="mode-option simulation">
                                     <input type="radio" id="modeSimulation" name="tradingMode" value="simulation">
                                     <label for="modeSimulation">Simulation</label>
                                 </div>
-                                <div class="mode-option">
+                                <div class="mode-option live">
                                     <input type="radio" id="modeLive" name="tradingMode" value="live">
                                     <label for="modeLive">Live Trading</label>
                                 </div>
