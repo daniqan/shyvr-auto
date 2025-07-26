@@ -49,7 +49,7 @@
 
 AI-augmented cryptocurrency trading bot with machine learning, reinforcement learning, multi-chain wallet integration, and DEX trading capabilities for automated cryptocurrency trading across Solana, Ethereum, and Base networks.
 
-## =� Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 - Docker and Docker Compose
@@ -93,7 +93,7 @@ This script will:
 ./scripts/set_webhook.sh https://your-service-url.run.app/webhook
 ```
 
-## <� Architecture
+## 🏗️ Architecture
 
 ### Three-Mode Operation
 - **Mode 1: Analysis & Reporting** - Comprehensive token analysis with ML predictions
@@ -285,7 +285,7 @@ modes:
       require_confirmation: true
 ```
 
-## =' Configuration
+## ⚙️ Configuration
 
 ### Required Secrets (Google Cloud Secret Manager)
 ```bash
@@ -314,7 +314,7 @@ gcloud secrets create DB_PASSWORD --data-file=<(echo 'your_db_password')
 - `config/config.yaml` - Main configuration
 - `.env.example` - Environment variable template
 
-## >� Testing
+## 🧪 Testing
 
 ```bash
 # Run all tests with coverage
@@ -329,7 +329,7 @@ uv run python scripts/run_tests.py --performance
 uv run python scripts/run_tests.py --lint --format
 ```
 
-## =� Monitoring
+## 📊 Monitoring
 
 ### Health Checks
 - Health endpoint: `https://your-service-url.run.app/health`
@@ -344,7 +344,7 @@ gcloud run logs tail shyvr-rlte --region us-central1
 gcloud run logs tail shyvr-rlte --region us-central1 --filter="RL_AGENT"
 ```
 
-## = Security & Safety
+## 🔒 Security & Safety
 
 ### Non-Custodial Design
 - Users maintain control of private keys
@@ -364,7 +364,7 @@ Live trading mode is **disabled by default** and requires:
 3. Risk limit acknowledgment
 4. Manual activation per trading session
 
-## <� Performance Targets
+## 📈 Performance Targets
 
 ### Phase 1 (Completed) - Foundation
 -  88% test coverage
@@ -433,7 +433,7 @@ Live trading mode is **disabled by default** and requires:
 - 🔄 Live Trading Mode: Production trading mode (planned)
 - 🔄 Mode integration with existing ML-RL pipeline (in progress)
 
-## =� Development
+## 💻 Development
 
 ### Project Structure
 ```
@@ -459,7 +459,7 @@ shyvrai-rlte/
 3. Use conventional commit messages
 4. Code must pass all linting and formatting checks
 
-## =� Roadmap
+## 🗓️ Roadmap
 
 - **Phase 1**: Foundation & Setup ✅ 
 - **Phase 2**: Discovery & Evaluation ✅
@@ -481,11 +481,11 @@ shyvrai-rlte/
 - **Simulation Trading**: Virtual portfolio with realistic execution simulation
 - **Next Focus**: Complete analysis mode implementation and live trading integration
 
-## =� License
+## 📄 License
 
 This project is for educational and research purposes. See LICENSE file for details.
 
-## � Disclaimer
+## ⚠️ Disclaimer
 
 This software is for educational purposes only. Cryptocurrency trading involves substantial risk of loss. Users are solely responsible for their trading decisions and any financial outcomes.
 
