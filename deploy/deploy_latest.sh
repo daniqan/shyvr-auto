@@ -50,10 +50,9 @@ OPTIONAL_SECRETS=(
     "X_API_KEY" 
     "X_API_SECRET"
     
-    # Blockchain APIs
+    # Blockchain APIs (Note: Base now uses Etherscan API v2, same key as Ethereum)
     "ETHERSCAN_API_KEY" 
     "HELIUS_API_KEY" 
-    "BASESCAN_API_KEY"
     "BIRDEYE_API_KEY"
     
     # AI/ML APIs
