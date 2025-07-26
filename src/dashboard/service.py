@@ -98,30 +98,80 @@ class DashboardService:
     async def _initialize_components(self) -> None:
         """Initialize system components"""
         try:
-            # Initialize mode manager
-            self.mode_manager = ModeManager()
+            # Create mock/default configuration for components
+            from ..modes.mode_manager import ModeManagerConfig
+            from ..portfolio.base import Portfolio, PortfolioConfig
+            from decimal import Decimal
+            from uuid import uuid4
             
-            # Initialize health monitor
-            self.health_monitor = SystemHealthMonitor()
-            
-            # Initialize portfolio manager
-            self.portfolio_manager = PortfolioManager()
-            
-            # Initialize ML model manager
-            self.model_manager = ModelManager()
-            
-            # Initialize RL agent (with mock config for now)
-            from ..rl_agent.base import RLConfig, RLAgentBase
-            rl_config = RLConfig()
-            self.rl_agent = DQNTradingAgent(rl_config)
-            
-            # Initialize ML-RL bridge
-            self.ml_rl_bridge = MLRLBridge(
-                ml_analyzer=self.model_manager,
-                rl_agent=self.rl_agent
+            # Create mock portfolio for dashboard
+            portfolio_config = PortfolioConfig(
+                initial_balance=Decimal("10000.00"),
+                base_currency="USDC"
+            )
+            mock_portfolio = Portfolio(
+                portfolio_id=uuid4(),
+                name="Dashboard Mock Portfolio",
+                config=portfolio_config,
+                cash_balance=Decimal("10000.00"),
+                total_value=Decimal("10000.00")
             )
             
-            logger.info("Dashboard components initialized")
+            # Create mode manager config
+            mode_manager_config = ModeManagerConfig(
+                max_concurrent_modes=1,
+                enable_mode_switching=True,
+                auto_recovery=True
+            )
+            
+            # Initialize mode manager with required arguments
+            self.mode_manager = ModeManager(mode_manager_config, mock_portfolio)
+            
+            # Initialize health monitor (if it exists and needs no args)
+            try:
+                self.health_monitor = SystemHealthMonitor()
+            except Exception as e:
+                logger.warning("Failed to initialize health monitor", error=str(e))
+                self.health_monitor = None
+            
+            # Initialize portfolio manager (if it exists and needs no args)
+            try:
+                self.portfolio_manager = PortfolioManager()
+            except Exception as e:
+                logger.warning("Failed to initialize portfolio manager", error=str(e))
+                self.portfolio_manager = None
+            
+            # Initialize ML model manager (if it exists and needs no args)
+            try:
+                self.model_manager = ModelManager()
+            except Exception as e:
+                logger.warning("Failed to initialize ML model manager", error=str(e))
+                self.model_manager = None
+            
+            # Initialize RL agent (with mock config for now)
+            try:
+                from ..rl_agent.base import RLConfig, RLAgentBase
+                rl_config = RLConfig()
+                self.rl_agent = DQNTradingAgent(rl_config)
+            except Exception as e:
+                logger.warning("Failed to initialize RL agent", error=str(e))
+                self.rl_agent = None
+            
+            # Initialize ML-RL bridge only if both components are available
+            try:
+                if self.model_manager and self.rl_agent:
+                    self.ml_rl_bridge = MLRLBridge(
+                        ml_analyzer=self.model_manager,
+                        rl_agent=self.rl_agent
+                    )
+                else:
+                    logger.info("ML-RL bridge not initialized due to missing components")
+                    self.ml_rl_bridge = None
+            except Exception as e:
+                logger.warning("Failed to initialize ML-RL bridge", error=str(e))
+                self.ml_rl_bridge = None
+            
+            logger.info("Dashboard components initialized successfully")
             
         except Exception as e:
             logger.error("Failed to initialize components", error=str(e))

@@ -168,16 +168,34 @@ def main():
         # Load configuration to get settings
         config = init_config()
         
+        # Get host and port from config with fallbacks
+        host = getattr(config.app, 'host', '0.0.0.0')
+        port = getattr(config.app, 'port', 8080)
+        
+        print(f"Starting Shyvr RLTE on {host}:{port}")
+        print(f"Environment: {config.app.environment}")
+        print(f"Dashboard URL: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
+        
         # Run the FastAPI app
         uvicorn.run(
             "main:app",
-            host="0.0.0.0",
-            port=8080,
+            host=host,
+            port=port,
             log_level=config.app.log_level.lower(),
             reload=config.app.debug,
             workers=1  # Single worker for now
         )
         
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print(f"Error: Port {port if 'port' in locals() else 8080} is already in use.")
+            print("Solutions:")
+            print("1. Kill the existing process using the port")
+            print("2. Use a different port: PORT=8081 python main.py")
+            print("3. Find the process: lsof -i :8080")
+        else:
+            print(f"Network error: {e}")
+        sys.exit(1)
     except ConfigurationError as e:
         print(f"Configuration error: {e}")
         sys.exit(1)
