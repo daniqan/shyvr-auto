@@ -35,6 +35,14 @@ apis:
     timeout: 5
     mock_enabled: true
     
+  # Base chain uses Etherscan API v2 (same API key as Ethereum) 
+  basescan:
+    api_key: "test_etherscan_key"  # Consolidated: Base now uses Etherscan API v2
+    base_url: "http://localhost:8081/mock/basescan"
+    rate_limit: 100
+    timeout: 5
+    mock_enabled: true
+    
   birdeye:
     api_key: "test_birdeye_key"
     base_url: "http://localhost:8081/mock/birdeye"
@@ -48,13 +56,6 @@ apis:
     api_secret: "test_x_secret"
     base_url: "http://localhost:8081/mock/x"
     rate_limit: 1000
-    timeout: 5
-    mock_enabled: true
-    
-  basescan:
-    api_key: "test_basescan_key"
-    base_url: "http://localhost:8081/mock/basescan"
-    rate_limit: 100
     timeout: 5
     mock_enabled: true
 
