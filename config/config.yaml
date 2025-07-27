@@ -340,17 +340,128 @@ cache:
   user_data_ttl: 3600  # 1 hour for user data
   
 monitoring:
+  # General monitoring settings
+  enabled: true
   sentry_dsn: "${SENTRY_DSN:}"
-  prometheus_enabled: false
   health_check_interval: 30
   
-  alerts:
-    email: "${ALERT_EMAIL:}"
-    telegram_channel: "${ALERT_TELEGRAM_CHANNEL:}"
-    thresholds:
-      error_rate: 0.05      # 5% error rate
-      response_time: 5.0    # 5 seconds
-      memory_usage: 0.8     # 80% memory usage
+  # Prometheus metrics collection
+  prometheus:
+    enabled: true
+    metrics_path: "/metrics"
+    collection_interval: 30  # seconds
+    push_gateway_url: "${PROMETHEUS_PUSH_GATEWAY:}"  # Optional push gateway
+    
+  # Metrics collection settings
+  metrics:
+    trading:
+      enabled: true
+      collect_pnl: true
+      collect_volume: true
+      collect_success_rate: true
+      collect_positions: true
+      histogram_buckets: [10, 50, 100, 500, 1000, 5000, 10000, 50000, 100000]
+      
+    safety:
+      enabled: true
+      collect_risk_level: true
+      collect_emergency_stops: true
+      collect_liquidations: true
+      collect_drawdown: true
+      collect_violations: true
+      risk_level_thresholds: [0.5, 0.7, 0.8, 0.9, 0.95]
+      
+    system:
+      enabled: true
+      collect_response_times: true
+      collect_error_rates: true
+      collect_memory_usage: true
+      collect_database_performance: true
+      response_time_buckets: [0.1, 0.5, 1.0, 2.5, 5.0, 10.0]
+      
+    agent:
+      enabled: true
+      collect_model_performance: true
+      collect_decision_accuracy: true
+      collect_learning_progress: true
+      
+  # Alerting configuration
+  alerting:
+    enabled: true
+    
+    # Telegram bot alerting
+    telegram:
+      enabled: true
+      bot_token: "${TELEGRAM_MONITORING_BOT_TOKEN:}"
+      chat_id: "${TELEGRAM_MONITORING_CHAT_ID:}"
+      alert_levels: ["warning", "error", "critical"]
+      format_html: true
+      
+    # Email alerting (optional)
+    email:
+      enabled: false
+      smtp_host: "${ALERT_SMTP_HOST:}"
+      smtp_port: ${ALERT_SMTP_PORT:587}
+      smtp_user: "${ALERT_SMTP_USER:}"
+      smtp_password: "${ALERT_SMTP_PASSWORD:}"
+      from_address: "${ALERT_FROM_EMAIL:}"
+      to_addresses: []  # List of email addresses
+      
+    # Webhook alerting (optional)
+    webhook:
+      enabled: false
+      url: "${ALERT_WEBHOOK_URL:}"
+      headers: {}
+      
+  # Alert thresholds
+  thresholds:
+    # Trading performance
+    trading:
+      max_daily_loss_pct: 20.0        # Alert if daily loss exceeds 20%
+      min_success_rate: 0.3           # Alert if success rate below 30%
+      max_drawdown_pct: 25.0          # Alert if drawdown exceeds 25%
+      no_trading_minutes: 30          # Alert if no trades for 30 minutes
+      
+    # Risk management
+    safety:
+      critical_risk_level: 0.9        # Critical alert at 90% risk
+      high_risk_level: 0.8            # Warning alert at 80% risk
+      max_open_positions: 10          # Alert if too many positions
+      low_margin_ratio: 1.2           # Alert if margin ratio below 1.2
+      
+    # System health
+    system:
+      max_response_time: 5.0          # Alert if response time > 5s
+      max_error_rate: 0.05            # Alert if error rate > 5%
+      max_memory_usage: 0.85          # Alert if memory usage > 85%
+      max_db_connection_time: 2.0     # Alert if DB connection > 2s
+      
+    # Application health
+    application:
+      max_startup_time: 60            # Alert if startup takes > 60s
+      min_uptime_hours: 0.5           # Alert if uptime < 30 minutes
+      max_restart_count: 3            # Alert if > 3 restarts per hour
+      
+  # Grafana dashboard settings
+  grafana:
+    enabled: true
+    dashboard_url: "${GRAFANA_DASHBOARD_URL:http://localhost:3000}"
+    api_key: "${GRAFANA_API_KEY:}"
+    organization: "${GRAFANA_ORG:Main Org.}"
+    
+  # Data retention
+  retention:
+    metrics_days: 30                  # Keep metrics for 30 days
+    alerts_days: 90                   # Keep alert history for 90 days
+    logs_days: 7                      # Keep detailed logs for 7 days
+    
+  # Performance monitoring
+  performance:
+    enable_profiling: false           # CPU/memory profiling
+    profile_sample_rate: 0.1          # 10% sampling rate
+    slow_query_threshold: 1.0         # Log queries slower than 1s
+    monitor_memory_leaks: true
+    gc_monitoring: true
       
 logging:
   level: "${LOG_LEVEL:INFO}"
