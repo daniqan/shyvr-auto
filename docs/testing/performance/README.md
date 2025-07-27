@@ -102,8 +102,8 @@ This performance documentation is part of the comprehensive [hybrid testing stra
 
 ### Project Documentation
 - [Project README](../../../README.md)
-- [CLAUDE.md Development Context](../../../CLAUDE.md)
-- [Progress Tracking](../../../PROGRESS.md)
+- [CLAUDE.md Development Context](../../development/CLAUDE.md)
+- [Progress Tracking](../../development/PROGRESS.md)
 
 ### Test Implementation
 - [Performance Tests Directory](../../../tests/performance/)
