@@ -27,6 +27,10 @@ class DashboardApp {
             apiKey: null
         };
         
+        // Temporary fix: Use the current admin API key for testing
+        // This will be replaced by proper API key fetching
+        this.tempApiKey = null;
+        
         // Notification queue
         this.notifications = [];
         
@@ -58,6 +62,16 @@ class DashboardApp {
         if (saved) {
             this.settings = { ...this.settings, ...JSON.parse(saved) };
         }
+        
+        // Apply dark mode if enabled
+        if (this.settings.darkMode) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            document.getElementById('darkModeToggle').checked = true;
+        }
+        
+        // Apply other settings
+        document.getElementById('refreshInterval').value = this.settings.refreshInterval / 1000;
+        document.getElementById('soundNotificationsToggle').checked = this.settings.soundNotifications;
     }
     
     /**
@@ -79,17 +93,6 @@ class DashboardApp {
                 console.error('Failed to initialize API key:', error);
             }
         }
-    }
-        
-        // Apply dark mode if enabled
-        if (this.settings.darkMode) {
-            document.documentElement.setAttribute('data-theme', 'dark');
-            document.getElementById('darkModeToggle').checked = true;
-        }
-        
-        // Apply other settings
-        document.getElementById('refreshInterval').value = this.settings.refreshInterval / 1000;
-        document.getElementById('soundNotificationsToggle').checked = this.settings.soundNotifications;
     }
     
     /**
@@ -1233,15 +1236,30 @@ class DashboardApp {
      */
     async fetchDashboardData() {
         try {
+            // Use API key from settings or temp key
+            const apiKey = this.settings.apiKey || this.tempApiKey;
+            
+            if (!apiKey) {
+                console.warn('No API key available for authentication');
+                return;
+            }
+            
             const response = await fetch('/dashboard/data', {
                 headers: {
-                    'Authorization': `Bearer ${this.settings.apiKey}`
+                    'Authorization': `Bearer ${apiKey}`
                 }
             });
             
             if (response.ok) {
                 const data = await response.json();
                 this.updateDashboardData(data);
+            } else {
+                console.error('Dashboard data fetch failed:', response.status, response.statusText);
+                
+                // If 401, try to refresh API key
+                if (response.status === 401) {
+                    await this.initializeApiKey();
+                }
             }
         } catch (error) {
             console.error('Failed to fetch dashboard data:', error);
