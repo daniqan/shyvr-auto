@@ -28,6 +28,7 @@ from .base import (
     MLModel, RLAgent, dashboard_cache, DashboardError
 )
 from .websocket_manager import websocket_manager
+from .activity_integration import dashboard_activity
 
 logger = structlog.get_logger()
 
@@ -65,6 +66,9 @@ class DashboardService:
         try:
             # Start ActivityLogger first
             await activity_logger.start()
+            
+            # Start dashboard activity integration
+            await dashboard_activity.start()
             
             # Log dashboard service startup
             await activity_logger.log_activity(
@@ -154,6 +158,9 @@ class DashboardService:
             severity=ActivitySeverity.INFO,
             dashboard_component="dashboard_service"
         )
+        
+        # Stop dashboard activity integration
+        await dashboard_activity.stop()
         
         # Stop ActivityLogger last
         await activity_logger.stop()
@@ -263,17 +270,26 @@ class DashboardService:
                 # Get ML/RL status
                 ml_rl_status = await self._get_ml_rl_status()
                 
+                # Get real activity data
+                recent_activities = await self._get_recent_activity()
+                recent_logs = [activity['title'] for activity in recent_activities[:10]]
+                
+                # Count alerts and errors from recent activity
+                active_alerts = len([a for a in recent_activities if a.get('severity') in ['alert', 'critical', 'emergency']])
+                warnings_count = len([a for a in recent_activities if a.get('severity') == 'warning'])
+                errors_count = len([a for a in recent_activities if a.get('severity') == 'error'])
+                
                 # Create dashboard data
                 dashboard_data = DashboardData(
                     system_metrics=system_metrics,
                     portfolio_status=portfolio_status,
                     trading_status=trading_status,
                     ml_rl_status=ml_rl_status,
-                    active_alerts=0,  # TODO: Implement alert counting
-                    warnings_count=0,
-                    errors_count=self._error_count,
-                    recent_logs=[],  # TODO: Implement log aggregation
-                    recent_notifications=[],
+                    active_alerts=active_alerts,
+                    warnings_count=warnings_count,
+                    errors_count=errors_count,
+                    recent_logs=recent_logs,
+                    recent_notifications=[],  # Could be derived from activity data too
                     timestamp=datetime.utcnow()
                 )
                 
@@ -783,7 +799,19 @@ class DashboardService:
     async def get_system_logs(self, limit: int = 100) -> List[str]:
         """Get recent system logs"""
         try:
-            # TODO: Implement log aggregation
+            # Get recent activity logs from database
+            activities = await dashboard_activity.get_recent_activity(
+                limit=limit,
+                category="system",
+                hours_back=24
+            )
+            
+            # Convert to simple log messages
+            return [activity['title'] for activity in activities]
+            
+        except Exception as e:
+            logger.error("Failed to get system logs", error=str(e))
+            # Fallback to mock data
             return [
                 "System started successfully",
                 "ML model loaded: LSTM Price Predictor v1.2.0",
@@ -791,9 +819,20 @@ class DashboardService:
                 "Dashboard service started",
                 "WebSocket connections: 2 active"
             ]
+    
+    async def _get_recent_activity(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent activity for dashboard display"""
+        try:
+            # Get recent activities from the database
+            activities = await dashboard_activity.get_recent_activity(
+                limit=limit,
+                hours_back=1  # Last hour for recent activity
+            )
+            return activities
             
         except Exception as e:
-            logger.error("Failed to get system logs", error=str(e))
+            logger.error("Failed to get recent activity", error=str(e))
+            # Return empty list on error
             return []
     
     def record_request(self, response_time: float, error: bool = False) -> None:

@@ -5,17 +5,20 @@ Dashboard API Routes
 import asyncio
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, validator
 import structlog
+import csv
+import io
 
 from .auth import User, require_read, require_write, require_admin, require_trading
 from .service import dashboard_service
 from .websocket_manager import websocket_manager
 from .base import DashboardData, DashboardError
+from .activity_integration import dashboard_activity
 from ..logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
@@ -137,6 +140,28 @@ class DashboardAPI:
             self.get_system_health,
             methods=["GET"],
             dependencies=[Depends(require_read)]
+        )
+        
+        # Activity log endpoints
+        self.router.add_api_route(
+            "/activity/logs",
+            self.get_activity_logs,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/activity/stats",
+            self.get_activity_stats,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/activity/export",
+            self.export_activity_logs,
+            methods=["GET"],
+            dependencies=[Depends(require_admin)]
         )
         
         # WebSocket endpoint
@@ -461,6 +486,282 @@ class DashboardAPI:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve system health"
+            )
+    
+    async def get_activity_logs(
+        self,
+        limit: int = Query(100, ge=1, le=1000, description="Number of logs to return"),
+        offset: int = Query(0, ge=0, description="Offset for pagination"),
+        category: Optional[str] = Query(None, description="Filter by category"),
+        severity: Optional[str] = Query(None, description="Filter by severity"),
+        user_id: Optional[int] = Query(None, description="Filter by user ID"),
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to look back"),
+        search: Optional[str] = Query(None, description="Search in title and description"),
+        source: Optional[str] = Query(None, description="Filter by source component"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get activity logs with filtering and pagination"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # Log API call
+            await activity_logger.log_api_call(
+                api_name="dashboard_api",
+                endpoint="/dashboard/activity/logs",
+                method="GET",
+                status_code=200,
+                response_time_ms=0,
+                success=True,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "username": user.username,
+                    "limit": limit,
+                    "offset": offset,
+                    "category": category,
+                    "severity": severity,
+                    "hours_back": hours_back
+                }
+            )
+            
+            # Get activity logs from database
+            async with performance_tracker(
+                source="dashboard_api",
+                operation="get_activity_logs",
+                category=ActivityCategory.API,
+                metadata={"user": user.username, "endpoint": "/dashboard/activity/logs"}
+            ) as tracker:
+                
+                # Build query filters
+                filters = {}
+                if category:
+                    filters['category'] = category
+                if severity:
+                    filters['severity'] = severity
+                if user_id:
+                    filters['user_id'] = user_id
+                if source:
+                    filters['source'] = source
+                
+                # Get logs from activity integration
+                logs = await dashboard_activity.get_recent_activity(
+                    limit=limit + offset,  # Get extra to handle offset
+                    category=category,
+                    severity=severity,
+                    user_id=user_id,
+                    hours_back=hours_back
+                )
+                
+                # Apply search filter if provided
+                if search:
+                    search_lower = search.lower()
+                    logs = [
+                        log for log in logs 
+                        if search_lower in log.get('title', '').lower() 
+                        or search_lower in log.get('description', '').lower()
+                    ]
+                
+                # Apply pagination
+                total_count = len(logs)
+                paginated_logs = logs[offset:offset + limit]
+                
+                # Calculate response time
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="activity_logs_retrieved",
+                    title=f"Activity logs retrieved by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/dashboard/activity/logs",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "logs_returned": len(paginated_logs),
+                        "total_available": total_count,
+                        "filters_applied": filters
+                    }
+                )
+                
+                return {
+                    "logs": paginated_logs,
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": total_count,
+                        "has_more": offset + limit < total_count
+                    },
+                    "filters": filters,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            # Record error
+            response_time = asyncio.get_event_loop().time() - start_time
+            dashboard_service.record_request(response_time, error=True)
+            
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="activity_logs_failed",
+                title=f"Failed to retrieve activity logs for {user.username}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/activity/logs",
+                http_method="GET",
+                http_status=500,
+                response_time_ms=int(response_time * 1000),
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to get activity logs", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve activity logs"
+            )
+    
+    async def get_activity_stats(
+        self,
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get activity statistics and metrics"""
+        try:
+            # Get error summary
+            error_stats = await dashboard_activity.get_error_summary(hours_back)
+            
+            # Get performance metrics
+            performance_stats = await dashboard_activity.get_performance_metrics(hours_back)
+            
+            # Get user activity stats if user_id is available
+            user_stats = None
+            if hasattr(user, 'user_id') and user.user_id:
+                try:
+                    user_numeric_id = int(user.user_id.split('-')[-1], 16) % 10000
+                    user_stats = await dashboard_activity.get_user_activity_stats(
+                        user_numeric_id, 
+                        days_back=max(1, hours_back // 24)
+                    )
+                except (ValueError, AttributeError):
+                    user_stats = None
+            
+            return {
+                "time_range": {
+                    "hours_back": hours_back,
+                    "start_time": (datetime.utcnow() - timedelta(hours=hours_back)).isoformat(),
+                    "end_time": datetime.utcnow().isoformat()
+                },
+                "error_summary": error_stats,
+                "performance_metrics": performance_stats,
+                "user_stats": user_stats,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get activity stats", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve activity statistics"
+            )
+    
+    async def export_activity_logs(
+        self,
+        format: str = Query("csv", regex="^(csv|json)$", description="Export format"),
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to export"),
+        category: Optional[str] = Query(None, description="Filter by category"),
+        severity: Optional[str] = Query(None, description="Filter by severity"),
+        user: User = Depends(require_admin)
+    ) -> StreamingResponse:
+        """Export activity logs in CSV or JSON format"""
+        try:
+            # Log export request
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_api",
+                event_type="activity_export_request",
+                title=f"Activity log export requested by {user.username}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/activity/export",
+                http_method="GET",
+                metadata={
+                    "username": user.username,
+                    "format": format,
+                    "hours_back": hours_back,
+                    "category": category,
+                    "severity": severity
+                }
+            )
+            
+            # Get activity logs (no limit for export)
+            logs = await dashboard_activity.get_recent_activity(
+                limit=10000,  # Large limit for export
+                category=category,
+                severity=severity,
+                hours_back=hours_back
+            )
+            
+            if format == "csv":
+                # Create CSV export
+                output = io.StringIO()
+                
+                if logs:
+                    fieldnames = logs[0].keys()
+                    writer = csv.DictWriter(output, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(logs)
+                
+                content = output.getvalue()
+                output.close()
+                
+                # Create streaming response
+                def generate():
+                    yield content
+                
+                filename = f"activity_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+                return StreamingResponse(
+                    generate(),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"}
+                )
+            
+            else:  # JSON format
+                content = json.dumps({
+                    "exported_at": datetime.utcnow().isoformat(),
+                    "export_parameters": {
+                        "hours_back": hours_back,
+                        "category": category,
+                        "severity": severity
+                    },
+                    "total_records": len(logs),
+                    "logs": logs
+                }, indent=2, default=str)
+                
+                def generate():
+                    yield content
+                
+                filename = f"activity_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+                return StreamingResponse(
+                    generate(),
+                    media_type="application/json",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"}
+                )
+                
+        except Exception as e:
+            logger.error("Failed to export activity logs", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to export activity logs"
             )
     
     async def websocket_endpoint(self, websocket: WebSocket, connection_id: str):

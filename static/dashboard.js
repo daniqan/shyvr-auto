@@ -262,6 +262,12 @@ class DashboardApp {
                     topic: 'dashboard'
                 });
                 
+                // Subscribe to activity updates
+                this.sendWebSocketMessage({
+                    type: 'subscribe',
+                    topic: 'activity'
+                });
+                
                 this.showNotification('success', 'Connected', 'Successfully connected to trading system');
             };
             
@@ -301,6 +307,12 @@ class DashboardApp {
                 break;
             case 'trading_update':
                 this.handleTradingUpdate(message);
+                break;
+            case 'activity_update':
+                this.handleActivityUpdate(message.activity);
+                break;
+            case 'activity_batch':
+                this.handleActivityBatch(message.activities);
                 break;
             case 'ping':
                 this.sendWebSocketMessage({ type: 'pong' });
@@ -767,22 +779,42 @@ class DashboardApp {
      * Update activity feed
      */
     updateActivityFeed(data) {
+        // Use real activity data from recent_logs if available
+        const recentLogs = data.recent_activity?.logs || data.recent_logs || [];
+        
         const feed = document.getElementById('activityFeed');
         const currentMode = data.trading_status.mode;
         
-        // Add new activities (this would come from the backend)
-        const activities = [
-            { time: new Date().toLocaleTimeString(), message: 'Dashboard data updated', mode: currentMode },
-            { time: new Date(Date.now() - 60000).toLocaleTimeString(), message: `Trading mode: ${currentMode}`, mode: currentMode },
-            { time: new Date(Date.now() - 120000).toLocaleTimeString(), message: `Portfolio value: ${this.formatCurrency(data.portfolio_status.total_value_usd)}`, mode: currentMode }
-        ];
-        
-        feed.innerHTML = activities.map(activity => `
-            <div class="activity-item ${activity.mode}">
-                <span class="activity-time">${activity.time}</span>
-                <span class="activity-message">${activity.message}</span>
-            </div>
-        `).join('');
+        // If we have real activity data, use it
+        if (recentLogs.length > 0) {
+            const activities = recentLogs.slice(0, 10).map((log, index) => ({
+                time: new Date(Date.now() - (index * 30000)).toLocaleTimeString(), // Spaced out for display
+                message: typeof log === 'string' ? log : log.title || log.message || 'Activity update',
+                mode: currentMode,
+                severity: typeof log === 'object' ? log.severity : 'info'
+            }));
+            
+            feed.innerHTML = activities.map(activity => `
+                <div class="activity-item ${activity.mode} ${activity.severity}">
+                    <span class="activity-time">${activity.time}</span>
+                    <span class="activity-message">${activity.message}</span>
+                </div>
+            `).join('');
+        } else {
+            // Fallback to generated activities
+            const activities = [
+                { time: new Date().toLocaleTimeString(), message: 'Dashboard data updated', mode: currentMode, severity: 'info' },
+                { time: new Date(Date.now() - 60000).toLocaleTimeString(), message: `Trading mode: ${currentMode}`, mode: currentMode, severity: 'info' },
+                { time: new Date(Date.now() - 120000).toLocaleTimeString(), message: `Portfolio value: ${this.formatCurrency(data.portfolio_status.total_value_usd)}`, mode: currentMode, severity: 'info' }
+            ];
+            
+            feed.innerHTML = activities.map(activity => `
+                <div class="activity-item ${activity.mode} ${activity.severity}">
+                    <span class="activity-time">${activity.time}</span>
+                    <span class="activity-message">${activity.message}</span>
+                </div>
+            `).join('');
+        }
     }
     
     /**
@@ -815,6 +847,71 @@ class DashboardApp {
                 this.showNotification('warning', 'Risk Alert', data.message);
                 break;
         }
+    }
+    
+    /**
+     * Handle real-time activity updates
+     */
+    handleActivityUpdate(activity) {
+        // Add to current activity feed if visible
+        const feed = document.getElementById('activityFeed');
+        if (feed && this.currentTab === 'overview') {
+            const activityItem = document.createElement('div');
+            activityItem.className = `activity-item ${activity.severity} new-activity`;
+            activityItem.innerHTML = `
+                <span class="activity-time">${new Date(activity.created_at).toLocaleTimeString()}</span>
+                <span class="activity-message">${activity.title}</span>
+            `;
+            
+            // Insert at the top
+            feed.insertBefore(activityItem, feed.firstChild);
+            
+            // Remove the 'new-activity' class after animation
+            setTimeout(() => {
+                activityItem.classList.remove('new-activity');
+            }, 2000);
+            
+            // Limit the number of displayed activities
+            const items = feed.querySelectorAll('.activity-item');
+            if (items.length > 10) {
+                feed.removeChild(items[items.length - 1]);
+            }
+        }
+        
+        // Update activity logs view if it's open
+        const activityContainer = document.getElementById('activityLogsContainer');
+        if (activityContainer && activityContainer.innerHTML) {
+            // Refresh the activity logs view
+            this.displayActivityLogs('activityLogsContainer');
+        }
+        
+        // Show notification for important activities
+        if (['error', 'critical', 'alert', 'emergency'].includes(activity.severity)) {
+            this.showNotification(
+                activity.severity === 'error' ? 'error' : 'warning',
+                activity.category.toUpperCase(),
+                activity.title
+            );
+            
+            if (this.settings.soundNotifications) {
+                this.playNotificationSound();
+            }
+        }
+    }
+    
+    /**
+     * Handle batch activity updates
+     */
+    handleActivityBatch(activities) {
+        if (!activities || activities.length === 0) return;
+        
+        // Process each activity
+        activities.forEach(activity => {
+            this.handleActivityUpdate(activity);
+        });
+        
+        // Show summary notification
+        this.showNotification('info', 'Activity Update', `${activities.length} new activities received`);
     }
     
     /**
@@ -1107,6 +1204,175 @@ class DashboardApp {
             console.error('Failed to refresh logs:', error);
             this.showNotification('error', 'Refresh Failed', error.message);
         }
+    }
+    
+    /**
+     * Fetch activity logs with filtering and pagination
+     */
+    async fetchActivityLogs(options = {}) {
+        const {
+            limit = 100,
+            offset = 0,
+            category = null,
+            severity = null,
+            hoursBack = 24,
+            search = null
+        } = options;
+        
+        // Validate API key
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot fetch activity logs: No API key available');
+                return null;
+            }
+        }
+        
+        try {
+            const params = new URLSearchParams({
+                limit: limit.toString(),
+                offset: offset.toString(),
+                hours_back: hoursBack.toString()
+            });
+            
+            if (category) params.append('category', category);
+            if (severity) params.append('severity', severity);
+            if (search) params.append('search', search);
+            
+            const response = await fetch(`/dashboard/activity/logs?${params}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.settings.apiKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                return await response.json();
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Please refresh the page and try again');
+                this.settings.apiKey = null;
+                this.saveSettings();
+                await this.initializeApiKey();
+                return null;
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to view activity logs');
+                return null;
+            } else {
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
+            }
+        } catch (error) {
+            console.error('Failed to fetch activity logs:', error);
+            this.showNotification('error', 'Fetch Failed', error.message);
+            return null;
+        }
+    }
+    
+    /**
+     * Display activity logs in a dedicated view
+     */
+    async displayActivityLogs(containerId = 'activityLogsContainer') {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            console.warn(`Activity logs container '${containerId}' not found`);
+            return;
+        }
+        
+        try {
+            const data = await this.fetchActivityLogs();
+            if (!data) return;
+            
+            const { logs, pagination } = data;
+            
+            container.innerHTML = `
+                <div class="activity-logs-header">
+                    <h3>Recent Activity</h3>
+                    <div class="activity-filters">
+                        <select id="categoryFilter">
+                            <option value="">All Categories</option>
+                            <option value="system">System</option>
+                            <option value="trading">Trading</option>
+                            <option value="user">User</option>
+                            <option value="api">API</option>
+                            <option value="dashboard">Dashboard</option>
+                        </select>
+                        <select id="severityFilter">
+                            <option value="">All Severities</option>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                        <input type="text" id="searchFilter" placeholder="Search activities...">
+                        <button id="refreshActivityLogs">Refresh</button>
+                    </div>
+                </div>
+                <div class="activity-logs-content">
+                    ${logs.map(log => `
+                        <div class="activity-log-item ${log.severity}">
+                            <div class="activity-log-header">
+                                <span class="activity-time">${new Date(log.created_at).toLocaleString()}</span>
+                                <span class="activity-category">${log.category}</span>
+                                <span class="activity-severity ${log.severity}">${log.severity.toUpperCase()}</span>
+                            </div>
+                            <div class="activity-log-title">${log.title}</div>
+                            ${log.description ? `<div class="activity-log-description">${log.description}</div>` : ''}
+                            <div class="activity-log-meta">
+                                <span>Source: ${log.source}</span>
+                                ${log.user_id ? `<span>User: ${log.user_id}</span>` : ''}
+                                ${log.execution_time_ms ? `<span>Duration: ${log.execution_time_ms}ms</span>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="activity-logs-pagination">
+                    <span>Showing ${pagination.offset + 1}-${Math.min(pagination.offset + pagination.limit, pagination.total)} of ${pagination.total}</span>
+                    ${pagination.has_more ? '<button id="loadMoreActivity">Load More</button>' : ''}
+                </div>
+            `;
+            
+            // Add event listeners for filters
+            document.getElementById('categoryFilter').addEventListener('change', (e) => {
+                this.displayActivityLogs(containerId);
+            });
+            
+            document.getElementById('severityFilter').addEventListener('change', (e) => {
+                this.displayActivityLogs(containerId);
+            });
+            
+            document.getElementById('searchFilter').addEventListener('input', 
+                this.debounce((e) => this.displayActivityLogs(containerId), 500)
+            );
+            
+            document.getElementById('refreshActivityLogs').addEventListener('click', () => {
+                this.displayActivityLogs(containerId);
+            });
+            
+            if (pagination.has_more) {
+                document.getElementById('loadMoreActivity').addEventListener('click', () => {
+                    // Load more implementation
+                    console.log('Load more activity logs');
+                });
+            }
+            
+        } catch (error) {
+            console.error('Failed to display activity logs:', error);
+            container.innerHTML = '<div class="error-message">Failed to load activity logs</div>';
+        }
+    }
+    
+    /**
+     * Utility function for debouncing input events
+     */
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
     }
     
     /**

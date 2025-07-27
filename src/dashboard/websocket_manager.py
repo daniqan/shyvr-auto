@@ -367,6 +367,27 @@ class WebSocketManager:
         
         await self.connection_manager.broadcast_to_topic(message, "trading")
     
+    async def send_activity_update(self, activity: Dict[str, Any]) -> None:
+        """Send real-time activity update to subscribers"""
+        message = {
+            "type": "activity_update",
+            "activity": activity,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        await self.connection_manager.broadcast_to_topic(message, "activity")
+    
+    async def send_activity_batch(self, activities: List[Dict[str, Any]]) -> None:
+        """Send batch of activity updates"""
+        message = {
+            "type": "activity_batch",
+            "activities": activities,
+            "count": len(activities),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        await self.connection_manager.broadcast_to_topic(message, "activity")
+    
     def _serialize_dashboard_data(self, data: DashboardData) -> Dict[str, Any]:
         """Serialize dashboard data for JSON transmission"""
         try:
