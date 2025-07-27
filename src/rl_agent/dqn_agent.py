@@ -20,6 +20,10 @@ from .base import (
     RLAgentBase, TradeAction, MarketState, AgentConfig,
     RLTrainingError, RLPredictionError, RLModelError
 )
+from src.logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    performance_tracker
+)
 
 logger = structlog.get_logger()
 
@@ -139,38 +143,80 @@ class DQNTradingAgent(RLAgentBase):
         Returns:
             Tuple of (action, confidence_score)
         """
-        try:
-            # Convert state to tensor
-            state_tensor = self._state_to_tensor(state)
-            
-            # Epsilon-greedy action selection
-            if random.random() > self.epsilon:
-                # Exploitation: use network to select action
-                with torch.no_grad():
-                    q_values = self.q_network(state_tensor)
-                    action_idx = q_values.argmax().item()
-                    confidence = torch.softmax(q_values, dim=1).max().item()
-            else:
-                # Exploration: random action
-                action_idx = random.randrange(self.output_size)
-                confidence = 1.0 / self.output_size  # Uniform confidence for random action
-            
-            action = self._index_to_action(action_idx)
-            
-            # Update epsilon for next prediction
-            self._update_epsilon()
-            
-            self.logger.debug("Action predicted",
-                            action=action.value,
-                            confidence=confidence,
-                            epsilon=self.epsilon,
-                            exploration=random.random() <= self.epsilon)
-            
-            return action, confidence
-            
-        except Exception as e:
-            self.logger.error("Action prediction failed", error=str(e))
-            raise RLPredictionError(f"Failed to predict action: {str(e)}")
+        async with performance_tracker(
+            source="dqn_agent",
+            operation="predict_action",
+            category=ActivityCategory.ML_RL
+        ) as tracker:
+            try:
+                # Convert state to tensor
+                state_tensor = self._state_to_tensor(state)
+                
+                # Epsilon-greedy action selection
+                is_exploration = random.random() <= self.epsilon
+                
+                if not is_exploration:
+                    # Exploitation: use network to select action
+                    with torch.no_grad():
+                        q_values = self.q_network(state_tensor)
+                        action_idx = q_values.argmax().item()
+                        confidence = torch.softmax(q_values, dim=1).max().item()
+                else:
+                    # Exploration: random action
+                    action_idx = random.randrange(self.output_size)
+                    confidence = 1.0 / self.output_size  # Uniform confidence for random action
+                
+                action = self._index_to_action(action_idx)
+                
+                # Log action prediction
+                await activity_logger.log_activity(
+                    category=ActivityCategory.ML_RL,
+                    action=ActivityAction.EXECUTE,
+                    source="dqn_agent",
+                    event_type="action_predicted",
+                    title=f"DQN agent predicted action: {action.value}",
+                    severity=ActivitySeverity.DEBUG,
+                    metadata={
+                        "predicted_action": action.value,
+                        "confidence": confidence,
+                        "epsilon": self.epsilon,
+                        "is_exploration": is_exploration,
+                        "q_values_max": float(q_values.max().item()) if not is_exploration else None,
+                        "episode": getattr(self, 'current_episode', 0),
+                        "steps_done": self.steps_done
+                    }
+                )
+                
+                # Update epsilon for next prediction
+                self._update_epsilon()
+                
+                self.logger.debug("Action predicted",
+                                action=action.value,
+                                confidence=confidence,
+                                epsilon=self.epsilon,
+                                exploration=is_exploration)
+                
+                return action, confidence
+                
+            except Exception as e:
+                # Log prediction failure
+                await activity_logger.log_error(
+                    category=ActivityCategory.ML_RL,
+                    source="dqn_agent",
+                    event_type="action_prediction_failed",
+                    title="DQN agent failed to predict action",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    metadata={
+                        "epsilon": self.epsilon,
+                        "steps_done": self.steps_done,
+                        "episode": getattr(self, 'current_episode', 0)
+                    }
+                )
+                
+                self.logger.error("Action prediction failed", error=str(e))
+                raise RLPredictionError(f"Failed to predict action: {str(e)}")
     
     async def train_step(self, batch_experiences: List[Dict]) -> Dict[str, float]:
         """

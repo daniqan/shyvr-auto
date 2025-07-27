@@ -36,6 +36,10 @@ from src.wallet.base import (
     WalletTransactionError
 )
 from src.utils.base import Chain
+from src.logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    ChainType, performance_tracker
+)
 
 logger = structlog.get_logger()
 
@@ -132,36 +136,108 @@ class DEXWalletBridge:
         Raises:
             DEXError: If quote generation fails
         """
-        try:
-            self.logger.info(
-                "Requesting swap quote",
-                input_token=input_token,
-                output_token=output_token,
-                amount=str(amount),
-                swap_type=swap_type.value
-            )
-            
-            quote = await self.dex_client.get_quote(
-                input_token=input_token,
-                output_token=output_token,
-                amount=amount,
-                swap_type=swap_type,
-                slippage_bps=slippage_bps
-            )
-            
-            self.logger.info(
-                "Generated swap quote",
-                quote_id=quote.quote_id,
-                price=str(quote.price),
-                price_impact_bps=quote.price_impact_bps,
-                output_amount=str(quote.output_amount)
-            )
-            
-            return quote
-            
-        except Exception as e:
-            self.logger.error("Failed to get swap quote", error=str(e))
-            raise DEXError(f"Quote generation failed: {e}")
+        # Map Chain to ChainType for logging
+        chain_map = {
+            Chain.SOLANA: ChainType.SOLANA,
+            Chain.ETHEREUM: ChainType.ETHEREUM,
+            Chain.BASE: ChainType.BASE
+        }
+        
+        async with performance_tracker(
+            source="dex_wallet_bridge",
+            operation="get_quote",
+            category=ActivityCategory.TRADING
+        ) as tracker:
+            try:
+                # Log quote request
+                await activity_logger.log_activity(
+                    category=ActivityCategory.TRADING,
+                    action=ActivityAction.READ,
+                    source="dex_wallet_bridge",
+                    event_type="quote_request",
+                    title=f"Requesting swap quote: {input_token} -> {output_token}",
+                    severity=ActivitySeverity.INFO,
+                    token_address=input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=amount,
+                    metadata={
+                        "input_token": input_token,
+                        "output_token": output_token,
+                        "amount": str(amount),
+                        "swap_type": swap_type.value,
+                        "slippage_bps": slippage_bps,
+                        "dex_client": self.dex_client.name
+                    }
+                )
+                
+                self.logger.info(
+                    "Requesting swap quote",
+                    input_token=input_token,
+                    output_token=output_token,
+                    amount=str(amount),
+                    swap_type=swap_type.value
+                )
+                
+                quote = await self.dex_client.get_quote(
+                    input_token=input_token,
+                    output_token=output_token,
+                    amount=amount,
+                    swap_type=swap_type,
+                    slippage_bps=slippage_bps
+                )
+                
+                # Log successful quote generation
+                await activity_logger.log_activity(
+                    category=ActivityCategory.TRADING,
+                    action=ActivityAction.SUCCESS,
+                    source="dex_wallet_bridge",
+                    event_type="quote_generated",
+                    title=f"Quote generated for {input_token} -> {output_token}",
+                    severity=ActivitySeverity.INFO,
+                    token_address=input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=amount,
+                    metadata={
+                        "quote_id": quote.quote_id,
+                        "price": str(quote.price),
+                        "price_impact_bps": quote.price_impact_bps,
+                        "output_amount": str(quote.output_amount),
+                        "route": quote.route[:100] if hasattr(quote, 'route') and quote.route else None  # Truncate route data
+                    }
+                )
+                
+                self.logger.info(
+                    "Generated swap quote",
+                    quote_id=quote.quote_id,
+                    price=str(quote.price),
+                    price_impact_bps=quote.price_impact_bps,
+                    output_amount=str(quote.output_amount)
+                )
+                
+                return quote
+                
+            except Exception as e:
+                # Log quote generation failure
+                await activity_logger.log_error(
+                    category=ActivityCategory.TRADING,
+                    source="dex_wallet_bridge",
+                    event_type="quote_generation_failed",
+                    title=f"Failed to generate quote for {input_token} -> {output_token}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    token_address=input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=amount,
+                    metadata={
+                        "input_token": input_token,
+                        "output_token": output_token,
+                        "amount": str(amount),
+                        "dex_client": self.dex_client.name
+                    }
+                )
+                self.logger.error("Failed to get swap quote", error=str(e))
+                raise DEXError(f"Quote generation failed: {e}")
     
     async def execute_swap(
         self,
@@ -189,58 +265,154 @@ class DEXWalletBridge:
             InsufficientBalanceError: If insufficient balance
             SwapExecutionError: If swap execution fails
         """
+        # Map Chain to ChainType for logging
+        chain_map = {
+            Chain.SOLANA: ChainType.SOLANA,
+            Chain.ETHEREUM: ChainType.ETHEREUM,
+            Chain.BASE: ChainType.BASE
+        }
+        
         start_time = datetime.now()
         
-        try:
-            self.logger.info(
-                "Starting swap execution",
-                quote_id=quote.quote_id,
-                input_token=quote.input_token,
-                output_token=quote.output_token,
-                input_amount=str(quote.input_amount)
-            )
-            
-            # Step 1: Pre-execution validation
-            if enable_pre_checks:
-                await self._perform_pre_execution_checks(quote)
-            
-            # Step 2: Account preparation (Solana-specific)
-            if self.chain == Chain.SOLANA and self.config.enable_account_preparation:
-                await self._prepare_swap_accounts(quote)
-            
-            # Step 3: Prepare swap transaction via DEX
-            swap_result = await self._prepare_swap_transaction(quote)
-            
-            # Step 4: Execute transaction via wallet
-            transaction_result = await self._execute_swap_transaction(swap_result)
-            
-            # Step 5: Update swap result with transaction details
-            swap_result.transaction_hash = transaction_result.transaction_hash
-            swap_result.status = SwapStatus.PENDING if transaction_result.status == TransactionStatus.PENDING else SwapStatus.CONFIRMED
-            
-            execution_time = (datetime.now() - start_time).total_seconds()
-            
-            self.logger.info(
-                "Swap execution completed",
-                quote_id=quote.quote_id,
-                transaction_hash=swap_result.transaction_hash,
-                execution_time=execution_time,
-                status=swap_result.status.value
-            )
-            
-            return swap_result
-            
-        except InsufficientBalanceError:
-            raise
-        except Exception as e:
-            execution_time = (datetime.now() - start_time).total_seconds()
-            self.logger.error(
-                "Swap execution failed",
-                quote_id=quote.quote_id,
-                execution_time=execution_time,
-                error=str(e)
-            )
-            raise SwapExecutionError(f"Swap execution failed: {e}")
+        # Log swap execution initiation
+        await activity_logger.log_activity(
+            category=ActivityCategory.TRADING,
+            action=ActivityAction.EXECUTE,
+            source="dex_wallet_bridge",
+            event_type="swap_execution_started",
+            title=f"Starting swap execution: {quote.input_token} -> {quote.output_token}",
+            severity=ActivitySeverity.INFO,
+            token_address=quote.input_token,
+            chain=chain_map.get(self.chain, ChainType.SOLANA),
+            amount_usd=quote.input_amount,
+            metadata={
+                "quote_id": quote.quote_id,
+                "input_token": quote.input_token,
+                "output_token": quote.output_token,
+                "input_amount": str(quote.input_amount),
+                "expected_output": str(quote.output_amount),
+                "price": str(quote.price),
+                "price_impact_bps": quote.price_impact_bps,
+                "enable_pre_checks": enable_pre_checks
+            }
+        )
+        
+        async with performance_tracker(
+            source="dex_wallet_bridge",
+            operation="execute_swap",
+            category=ActivityCategory.TRADING,
+            metadata={"quote_id": quote.quote_id}
+        ) as tracker:
+            try:
+                self.logger.info(
+                    "Starting swap execution",
+                    quote_id=quote.quote_id,
+                    input_token=quote.input_token,
+                    output_token=quote.output_token,
+                    input_amount=str(quote.input_amount)
+                )
+                
+                # Step 1: Pre-execution validation
+                if enable_pre_checks:
+                    await self._perform_pre_execution_checks(quote)
+                
+                # Step 2: Account preparation (Solana-specific)
+                if self.chain == Chain.SOLANA and self.config.enable_account_preparation:
+                    await self._prepare_swap_accounts(quote)
+                
+                # Step 3: Prepare swap transaction via DEX
+                swap_result = await self._prepare_swap_transaction(quote)
+                
+                # Step 4: Execute transaction via wallet
+                transaction_result = await self._execute_swap_transaction(swap_result)
+                
+                # Step 5: Update swap result with transaction details
+                swap_result.transaction_hash = transaction_result.transaction_hash
+                swap_result.status = SwapStatus.PENDING if transaction_result.status == TransactionStatus.PENDING else SwapStatus.CONFIRMED
+                
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Log successful swap execution
+                await activity_logger.log_activity(
+                    category=ActivityCategory.TRADING,
+                    action=ActivityAction.SUCCESS,
+                    source="dex_wallet_bridge",
+                    event_type="swap_executed",
+                    title=f"Swap executed successfully: {quote.input_token} -> {quote.output_token}",
+                    severity=ActivitySeverity.INFO,
+                    token_address=quote.input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=quote.input_amount,
+                    execution_time_ms=int(execution_time * 1000),
+                    metadata={
+                        "quote_id": quote.quote_id,
+                        "transaction_hash": swap_result.transaction_hash,
+                        "status": swap_result.status.value,
+                        "execution_time_seconds": execution_time,
+                        "input_amount": str(quote.input_amount),
+                        "output_amount": str(quote.output_amount)
+                    }
+                )
+                
+                self.logger.info(
+                    "Swap execution completed",
+                    quote_id=quote.quote_id,
+                    transaction_hash=swap_result.transaction_hash,
+                    execution_time=execution_time,
+                    status=swap_result.status.value
+                )
+                
+                return swap_result
+                
+            except InsufficientBalanceError as e:
+                # Log insufficient balance error
+                await activity_logger.log_error(
+                    category=ActivityCategory.TRADING,
+                    source="dex_wallet_bridge",
+                    event_type="swap_insufficient_balance",
+                    title=f"Insufficient balance for swap: {quote.input_token} -> {quote.output_token}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.WARNING,
+                    token_address=quote.input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=quote.input_amount,
+                    metadata={
+                        "quote_id": quote.quote_id,
+                        "required_amount": str(quote.input_amount)
+                    }
+                )
+                raise
+            except Exception as e:
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Log swap execution failure
+                await activity_logger.log_error(
+                    category=ActivityCategory.TRADING,
+                    source="dex_wallet_bridge",
+                    event_type="swap_execution_failed",
+                    title=f"Swap execution failed: {quote.input_token} -> {quote.output_token}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    token_address=quote.input_token,
+                    chain=chain_map.get(self.chain, ChainType.SOLANA),
+                    amount_usd=quote.input_amount,
+                    execution_time_ms=int(execution_time * 1000),
+                    metadata={
+                        "quote_id": quote.quote_id,
+                        "execution_time_seconds": execution_time,
+                        "failure_stage": "execution"
+                    }
+                )
+                
+                self.logger.error(
+                    "Swap execution failed",
+                    quote_id=quote.quote_id,
+                    execution_time=execution_time,
+                    error=str(e)
+                )
+                raise SwapExecutionError(f"Swap execution failed: {e}")
     
     async def _perform_pre_execution_checks(self, quote: SwapQuote) -> None:
         """

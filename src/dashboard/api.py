@@ -16,6 +16,10 @@ from .auth import User, require_read, require_write, require_admin, require_trad
 from .service import dashboard_service
 from .websocket_manager import websocket_manager
 from .base import DashboardData, DashboardError
+from ..logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    performance_tracker
+)
 
 logger = structlog.get_logger()
 
@@ -145,25 +149,103 @@ class DashboardAPI:
         """Get complete dashboard data"""
         start_time = asyncio.get_event_loop().time()
         
-        try:
-            data = await dashboard_service.get_dashboard_data()
-            
-            # Record request metrics
-            response_time = asyncio.get_event_loop().time() - start_time
-            dashboard_service.record_request(response_time)
-            
-            return self._serialize_dashboard_data(data)
-            
-        except Exception as e:
-            # Record error
-            response_time = asyncio.get_event_loop().time() - start_time
-            dashboard_service.record_request(response_time, error=True)
-            
-            logger.error("Failed to get dashboard data", error=str(e), user=user.username)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve dashboard data"
-            )
+        # Log API call
+        await activity_logger.log_api_call(
+            api_name="dashboard_api",
+            endpoint="/dashboard/data",
+            method="GET",
+            status_code=200,  # Will be updated if there's an error
+            response_time_ms=0,  # Will be updated later
+            success=True,  # Will be updated if there's an error
+            user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+            metadata={
+                "username": user.username,
+                "user_permissions": list(user.permissions)
+            }
+        )
+        
+        async with performance_tracker(
+            source="dashboard_api",
+            operation="get_dashboard_data",
+            category=ActivityCategory.API,
+            metadata={"user": user.username, "endpoint": "/dashboard/data"}
+        ) as tracker:
+            try:
+                # Log API request
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.READ,
+                    source="dashboard_api",
+                    event_type="api_request",
+                    title=f"Dashboard data requested by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/dashboard/data",
+                    http_method="GET",
+                    metadata={
+                        "username": user.username,
+                        "user_permissions": list(user.permissions)
+                    }
+                )
+                
+                data = await dashboard_service.get_dashboard_data()
+                
+                # Record request metrics
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful API response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="api_response_success",
+                    title=f"Dashboard data successfully served to {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/dashboard/data",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "response_time_seconds": response_time,
+                        "data_elements": ["system_metrics", "portfolio_status", "trading_status", "ml_rl_status"]
+                    }
+                )
+                
+                return self._serialize_dashboard_data(data)
+                
+            except Exception as e:
+                # Record error
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time, error=True)
+                
+                # Log API error
+                await activity_logger.log_error(
+                    category=ActivityCategory.API,
+                    source="dashboard_api",
+                    event_type="api_request_failed",
+                    title=f"Failed to serve dashboard data to {user.username}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/dashboard/data",
+                    http_method="GET",
+                    http_status=500,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "response_time_seconds": response_time
+                    }
+                )
+                
+                logger.error("Failed to get dashboard data", error=str(e), user=user.username)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to retrieve dashboard data"
+                )
     
     async def get_system_metrics(self, user: User = Depends(require_read)) -> Dict[str, Any]:
         """Get system metrics"""

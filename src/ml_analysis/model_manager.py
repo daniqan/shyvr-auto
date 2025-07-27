@@ -6,7 +6,7 @@ Coordinates multiple ML models and provides ensemble predictions
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 import structlog
 
@@ -17,6 +17,10 @@ from .base import (
 )
 from .lstm_model import LSTMPricePredictor
 from .feature_engineer import FeatureEngineer
+from src.logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    performance_tracker
+)
 
 
 logger = structlog.get_logger()
@@ -49,6 +53,17 @@ class ModelManager:
     def _initialize_models(self):
         """Initialize available ML models"""
         try:
+            # Log model initialization start
+            asyncio.create_task(activity_logger.log_activity(
+                category=ActivityCategory.ML_RL,
+                action=ActivityAction.START,
+                source="model_manager",
+                event_type="model_initialization",
+                title="Initializing ML models",
+                severity=ActivitySeverity.INFO,
+                metadata={"model_dir": str(self.model_dir)}
+            ))
+            
             # Initialize LSTM model
             lstm_config = self.config.get('lstm', {})
             self._models[ModelType.LSTM] = LSTMPricePredictor(lstm_config)
@@ -62,11 +77,37 @@ class ModelManager:
                     'last_updated': datetime.now().timestamp()
                 }
             
+            # Log successful model initialization
+            asyncio.create_task(activity_logger.log_activity(
+                category=ActivityCategory.ML_RL,
+                action=ActivityAction.SUCCESS,
+                source="model_manager",
+                event_type="models_initialized",
+                title="ML models initialized successfully",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "initialized_models": [model_type.value for model_type in self._models.keys()],
+                    "model_count": len(self._models),
+                    "model_dir": str(self.model_dir)
+                }
+            ))
+            
             self.logger.info("Models initialized", 
                            models=list(self._models.keys()),
                            model_dir=str(self.model_dir))
             
         except Exception as e:
+            # Log model initialization failure
+            asyncio.create_task(activity_logger.log_error(
+                category=ActivityCategory.ML_RL,
+                source="model_manager",
+                event_type="model_initialization_failed",
+                title="Failed to initialize ML models",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                metadata={"model_dir": str(self.model_dir)}
+            ))
             self.logger.error("Model initialization failed", error=str(e))
             raise MLAnalysisError(f"Failed to initialize models: {str(e)}")
     
@@ -90,36 +131,112 @@ class ModelManager:
         if cache_key in self._ensemble_cache:
             cached_time, cached_result = self._ensemble_cache[cache_key]
             if datetime.now() - cached_time < timedelta(minutes=self._cache_ttl_minutes):
+                # Log cache hit
+                await activity_logger.log_activity(
+                    category=ActivityCategory.ML_RL,
+                    action=ActivityAction.READ,
+                    source="model_manager",
+                    event_type="prediction_cache_hit",
+                    title=f"Returning cached prediction for {token.address}",
+                    severity=ActivitySeverity.DEBUG,
+                    token_address=token.address,
+                    metadata={
+                        "cache_key": cache_key,
+                        "cached_time": cached_time.isoformat(),
+                        "use_ensemble": use_ensemble,
+                        "confidence": cached_result.confidence
+                    }
+                )
                 self.logger.debug("Returning cached prediction", token=token.address)
                 return cached_result
         
-        try:
-            if use_ensemble and len(self._models) > 1:
-                result = await self._ensemble_prediction(token, historical_data)
-            else:
-                # Use best performing single model
-                best_model = self._get_best_model()
-                result = await best_model.analyze_token(token, historical_data)
-            
-            # Cache the result
-            self._ensemble_cache[cache_key] = (datetime.now(), result)
-            
-            # Update model performance tracking
-            await self._update_performance_tracking(result)
-            
-            self.logger.info("Token analysis completed",
-                           token=token.address,
-                           model_type=result.model_type.value if hasattr(result.model_type, 'value') else str(result.model_type),
-                           confidence=result.confidence,
-                           direction=result.direction.value)
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error("Token analysis failed", 
-                            token=token.address, 
-                            error=str(e))
-            raise MLAnalysisError(f"Analysis failed for {token.address}: {str(e)}")
+        # Log analysis start
+        await activity_logger.log_activity(
+            category=ActivityCategory.ML_RL,
+            action=ActivityAction.EXECUTE,
+            source="model_manager",
+            event_type="token_analysis_started",
+            title=f"Starting ML analysis for token {token.address}",
+            severity=ActivitySeverity.INFO,
+            token_address=token.address,
+            metadata={
+                "token_symbol": token.symbol,
+                "token_name": token.name,
+                "use_ensemble": use_ensemble,
+                "has_historical_data": historical_data is not None,
+                "available_models": [model_type.value for model_type in self._models.keys()]
+            }
+        )
+        
+        async with performance_tracker(
+            source="model_manager",
+            operation="analyze_token",
+            category=ActivityCategory.ML_RL,
+            metadata={"token": token.address, "use_ensemble": use_ensemble}
+        ) as tracker:
+            try:
+                if use_ensemble and len(self._models) > 1:
+                    result = await self._ensemble_prediction(token, historical_data)
+                else:
+                    # Use best performing single model
+                    best_model = self._get_best_model()
+                    result = await best_model.analyze_token(token, historical_data)
+                
+                # Cache the result
+                self._ensemble_cache[cache_key] = (datetime.now(), result)
+                
+                # Update model performance tracking
+                await self._update_performance_tracking(result)
+                
+                # Log successful analysis
+                await activity_logger.log_activity(
+                    category=ActivityCategory.ML_RL,
+                    action=ActivityAction.SUCCESS,
+                    source="model_manager",
+                    event_type="token_analysis_completed",
+                    title=f"ML analysis completed for token {token.address}",
+                    severity=ActivitySeverity.INFO,
+                    token_address=token.address,
+                    metadata={
+                        "model_type": result.model_type.value if hasattr(result, 'model_type') and hasattr(result.model_type, 'value') else str(getattr(result, 'model_type', 'unknown')),
+                        "confidence": result.confidence,
+                        "direction": result.direction.value if hasattr(result, 'direction') and hasattr(result.direction, 'value') else str(getattr(result, 'direction', 'unknown')),
+                        "use_ensemble": use_ensemble,
+                        "cached": True
+                    }
+                )
+                
+                self.logger.info("Token analysis completed",
+                               token=token.address,
+                               model_type=result.model_type.value if hasattr(result, 'model_type') and hasattr(result.model_type, 'value') else str(getattr(result, 'model_type', 'unknown')),
+                               confidence=result.confidence,
+                               direction=result.direction.value if hasattr(result, 'direction') and hasattr(result.direction, 'value') else str(getattr(result, 'direction', 'unknown')))
+                
+                return result
+                
+            except Exception as e:
+                # Log analysis failure
+                await activity_logger.log_error(
+                    category=ActivityCategory.ML_RL,
+                    source="model_manager",
+                    event_type="token_analysis_failed",
+                    title=f"ML analysis failed for token {token.address}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    token_address=token.address,
+                    metadata={
+                        "token_symbol": token.symbol,
+                        "token_name": token.name,
+                        "use_ensemble": use_ensemble,
+                        "available_models": [model_type.value for model_type in self._models.keys()]
+                    }
+                )
+                
+                self.logger.error("Token analysis failed", 
+                                token=token.address, 
+                                error=str(e))
+                raise MLAnalysisError(f"Analysis failed for {token.address}: {str(e)}")
     
     async def batch_analyze(self, tokens: List[DiscoveredToken],
                           historical_data: Optional[Dict[str, pd.DataFrame]] = None,

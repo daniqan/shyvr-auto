@@ -17,6 +17,10 @@ from ..portfolio.portfolio_manager import PortfolioManager
 from ..ml_analysis.model_manager import ModelManager
 from ..rl_agent.dqn_agent import DQNTradingAgent
 from ..integration.ml_rl_bridge import MLRLBridge
+from ..logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    TradingMode as LoggingTradingMode, performance_tracker
+)
 
 from .base import (
     DashboardData, SystemMetrics, TradingStatus, PortfolioStatus, 
@@ -59,6 +63,20 @@ class DashboardService:
             return
         
         try:
+            # Start ActivityLogger first
+            await activity_logger.start()
+            
+            # Log dashboard service startup
+            await activity_logger.log_activity(
+                category=ActivityCategory.SYSTEM,
+                action=ActivityAction.START,
+                source="dashboard_service",
+                event_type="service_startup",
+                title="Dashboard service starting",
+                severity=ActivitySeverity.INFO,
+                dashboard_component="dashboard_service"
+            )
+            
             # Initialize system components
             await self._initialize_components()
             
@@ -69,9 +87,31 @@ class DashboardService:
             self._running = True
             self._update_task = asyncio.create_task(self._update_loop())
             
+            # Log successful startup
+            await activity_logger.log_activity(
+                category=ActivityCategory.SYSTEM,
+                action=ActivityAction.SUCCESS,
+                source="dashboard_service",
+                event_type="service_started",
+                title="Dashboard service started successfully",
+                severity=ActivitySeverity.INFO,
+                dashboard_component="dashboard_service"
+            )
+            
             logger.info("Dashboard service started")
             
         except Exception as e:
+            # Log startup failure
+            await activity_logger.log_error(
+                category=ActivityCategory.SYSTEM,
+                source="dashboard_service",
+                event_type="service_startup_failed",
+                title="Dashboard service startup failed",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.CRITICAL,
+                dashboard_component="dashboard_service"
+            )
             logger.error("Failed to start dashboard service", error=str(e))
             raise DashboardError(f"Service startup failed: {e}")
     
@@ -79,6 +119,17 @@ class DashboardService:
         """Stop the dashboard service"""
         if not self._running:
             return
+        
+        # Log shutdown initiation
+        await activity_logger.log_activity(
+            category=ActivityCategory.SYSTEM,
+            action=ActivityAction.STOP,
+            source="dashboard_service",
+            event_type="service_shutdown",
+            title="Dashboard service stopping",
+            severity=ActivitySeverity.INFO,
+            dashboard_component="dashboard_service"
+        )
         
         self._running = False
         
@@ -92,6 +143,20 @@ class DashboardService:
         
         # Stop WebSocket manager
         await websocket_manager.stop()
+        
+        # Log successful shutdown
+        await activity_logger.log_activity(
+            category=ActivityCategory.SYSTEM,
+            action=ActivityAction.SUCCESS,
+            source="dashboard_service",
+            event_type="service_stopped",
+            title="Dashboard service stopped successfully",
+            severity=ActivitySeverity.INFO,
+            dashboard_component="dashboard_service"
+        )
+        
+        # Stop ActivityLogger last
+        await activity_logger.stop()
         
         logger.info("Dashboard service stopped")
     
@@ -180,38 +245,65 @@ class DashboardService:
     
     async def get_dashboard_data(self) -> DashboardData:
         """Get current dashboard data"""
-        try:
-            # Get system metrics
-            system_metrics = await self._get_system_metrics()
-            
-            # Get portfolio status
-            portfolio_status = await self._get_portfolio_status()
-            
-            # Get trading status
-            trading_status = await self._get_trading_status()
-            
-            # Get ML/RL status
-            ml_rl_status = await self._get_ml_rl_status()
-            
-            # Create dashboard data
-            dashboard_data = DashboardData(
-                system_metrics=system_metrics,
-                portfolio_status=portfolio_status,
-                trading_status=trading_status,
-                ml_rl_status=ml_rl_status,
-                active_alerts=0,  # TODO: Implement alert counting
-                warnings_count=0,
-                errors_count=self._error_count,
-                recent_logs=[],  # TODO: Implement log aggregation
-                recent_notifications=[],
-                timestamp=datetime.utcnow()
-            )
-            
-            return dashboard_data
-            
-        except Exception as e:
-            logger.error("Failed to get dashboard data", error=str(e))
-            return DashboardData.create_default()
+        async with performance_tracker(
+            source="dashboard_service",
+            operation="get_dashboard_data",
+            category=ActivityCategory.DASHBOARD
+        ) as tracker:
+            try:
+                # Get system metrics
+                system_metrics = await self._get_system_metrics()
+                
+                # Get portfolio status
+                portfolio_status = await self._get_portfolio_status()
+                
+                # Get trading status
+                trading_status = await self._get_trading_status()
+                
+                # Get ML/RL status
+                ml_rl_status = await self._get_ml_rl_status()
+                
+                # Create dashboard data
+                dashboard_data = DashboardData(
+                    system_metrics=system_metrics,
+                    portfolio_status=portfolio_status,
+                    trading_status=trading_status,
+                    ml_rl_status=ml_rl_status,
+                    active_alerts=0,  # TODO: Implement alert counting
+                    warnings_count=0,
+                    errors_count=self._error_count,
+                    recent_logs=[],  # TODO: Implement log aggregation
+                    recent_notifications=[],
+                    timestamp=datetime.utcnow()
+                )
+                
+                # Log successful data retrieval
+                await activity_logger.log_activity(
+                    category=ActivityCategory.DASHBOARD,
+                    action=ActivityAction.READ,
+                    source="dashboard_service",
+                    event_type="dashboard_data_retrieved",
+                    title="Dashboard data retrieved successfully",
+                    severity=ActivitySeverity.DEBUG,
+                    dashboard_component="data_aggregator"
+                )
+                
+                return dashboard_data
+                
+            except Exception as e:
+                # Log error in data retrieval
+                await activity_logger.log_error(
+                    category=ActivityCategory.DASHBOARD,
+                    source="dashboard_service",
+                    event_type="dashboard_data_error",
+                    title="Failed to retrieve dashboard data",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    dashboard_component="data_aggregator"
+                )
+                logger.error("Failed to get dashboard data", error=str(e))
+                return DashboardData.create_default()
     
     async def _get_system_metrics(self) -> SystemMetrics:
         """Get current system metrics"""
@@ -420,6 +512,19 @@ class DashboardService:
     
     async def switch_trading_mode(self, mode: str, user_id: str) -> bool:
         """Switch trading mode"""
+        # Log mode switch attempt
+        await activity_logger.log_activity(
+            category=ActivityCategory.USER,
+            action=ActivityAction.UPDATE,
+            source="dashboard_service",
+            event_type="mode_switch_attempt",
+            title=f"User attempting to switch to {mode} mode",
+            severity=ActivitySeverity.INFO,
+            user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,  # Extract numeric ID
+            dashboard_component="mode_switcher",
+            metadata={"target_mode": mode, "current_user": user_id}
+        )
+        
         try:
             if mode not in ["analysis", "simulation", "live"]:
                 raise ValueError(f"Invalid mode: {mode}")
@@ -493,6 +598,23 @@ class DashboardService:
                 "info"
             )
             
+            # Log successful mode switch
+            await activity_logger.log_activity(
+                category=ActivityCategory.USER,
+                action=ActivityAction.SUCCESS,
+                source="dashboard_service",
+                event_type="mode_switch_success",
+                title=f"Trading mode successfully switched to {mode}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="mode_switcher",
+                metadata={
+                    "new_mode": mode,
+                    "user": user_id,
+                    "target_mode_type": target_mode_type.value
+                }
+            )
+            
             logger.info(
                 "Trading mode switched",
                 mode=mode,
@@ -502,11 +624,38 @@ class DashboardService:
             return True
             
         except Exception as e:
+            # Log mode switch failure
+            await activity_logger.log_error(
+                category=ActivityCategory.USER,
+                source="dashboard_service",
+                event_type="mode_switch_failed",
+                title=f"Failed to switch trading mode to {mode}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="mode_switcher",
+                metadata={"target_mode": mode, "user": user_id}
+            )
             logger.error("Failed to switch trading mode", error=str(e), mode=mode)
             return False
     
     async def emergency_stop(self, user_id: str) -> bool:
         """Activate emergency stop"""
+        # Log emergency stop activation attempt
+        await activity_logger.log_activity(
+            category=ActivityCategory.SECURITY,
+            action=ActivityAction.EXECUTE,
+            source="dashboard_service",
+            event_type="emergency_stop_attempt",
+            title=f"Emergency stop activation attempted by user {user_id}",
+            severity=ActivitySeverity.CRITICAL,
+            user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+            dashboard_component="emergency_controls",
+            security_level="critical",
+            metadata={"activating_user": user_id}
+        )
+        
         try:
             # TODO: Implement actual emergency stop logic
             
@@ -517,6 +666,20 @@ class DashboardService:
                 "critical"
             )
             
+            # Log successful emergency stop
+            await activity_logger.log_activity(
+                category=ActivityCategory.SECURITY,
+                action=ActivityAction.SUCCESS,
+                source="dashboard_service",
+                event_type="emergency_stop_activated",
+                title=f"Emergency stop successfully activated by user {user_id}",
+                severity=ActivitySeverity.CRITICAL,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="emergency_controls",
+                security_level="critical",
+                metadata={"activating_user": user_id}
+            )
+            
             logger.critical(
                 "Emergency stop activated",
                 user_id=user_id
@@ -525,11 +688,38 @@ class DashboardService:
             return True
             
         except Exception as e:
+            # Log emergency stop failure
+            await activity_logger.log_error(
+                category=ActivityCategory.SECURITY,
+                source="dashboard_service",
+                event_type="emergency_stop_failed",
+                title=f"Failed to activate emergency stop",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.CRITICAL,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="emergency_controls",
+                security_level="critical",
+                metadata={"activating_user": user_id}
+            )
             logger.error("Failed to activate emergency stop", error=str(e))
             return False
     
     async def update_risk_limits(self, limits: Dict[str, Any], user_id: str) -> bool:
         """Update risk management limits"""
+        # Log risk limits update attempt
+        await activity_logger.log_activity(
+            category=ActivityCategory.CONFIGURATION,
+            action=ActivityAction.UPDATE,
+            source="dashboard_service",
+            event_type="risk_limits_update_attempt",
+            title=f"Risk limits update attempted by user {user_id}",
+            severity=ActivitySeverity.INFO,
+            user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+            dashboard_component="risk_management",
+            metadata={"limits": limits, "updating_user": user_id}
+        )
+        
         try:
             # TODO: Implement actual risk limit updates
             
@@ -538,6 +728,19 @@ class DashboardService:
                 "risk_limits_updated",
                 f"Risk limits updated by user {user_id}",
                 "info"
+            )
+            
+            # Log successful risk limits update
+            await activity_logger.log_activity(
+                category=ActivityCategory.CONFIGURATION,
+                action=ActivityAction.SUCCESS,
+                source="dashboard_service",
+                event_type="risk_limits_updated",
+                title=f"Risk limits successfully updated by user {user_id}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="risk_management",
+                metadata={"updated_limits": limits, "updating_user": user_id}
             )
             
             logger.info(
@@ -549,6 +752,19 @@ class DashboardService:
             return True
             
         except Exception as e:
+            # Log risk limits update failure
+            await activity_logger.log_error(
+                category=ActivityCategory.CONFIGURATION,
+                source="dashboard_service",
+                event_type="risk_limits_update_failed",
+                title=f"Failed to update risk limits",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user_id.split('-')[-1]) if '-' in user_id else 1,
+                dashboard_component="risk_management",
+                metadata={"intended_limits": limits, "updating_user": user_id}
+            )
             logger.error("Failed to update risk limits", error=str(e))
             return False
     

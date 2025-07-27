@@ -24,6 +24,10 @@ from src.modes.base import (
 )
 from src.portfolio.base import Portfolio
 from src.rl_agent.base import TradeAction, MarketState
+from src.logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
+    TradingMode as LoggingTradingMode, performance_tracker
+)
 
 
 logger = structlog.get_logger()
@@ -88,6 +92,21 @@ class ModeManager:
     
     async def initialize(self) -> None:
         """Initialize the mode manager."""
+        # Log mode manager initialization start
+        await activity_logger.log_activity(
+            category=ActivityCategory.SYSTEM,
+            action=ActivityAction.START,
+            source="mode_manager",
+            event_type="mode_manager_initialization",
+            title="Mode manager initialization started",
+            severity=ActivitySeverity.INFO,
+            metadata={
+                "portfolio_id": str(self.portfolio.portfolio_id),
+                "max_concurrent_modes": self.config.max_concurrent_modes,
+                "default_modes_count": len(self.config.default_modes)
+            }
+        )
+        
         self.logger.info("Initializing mode manager")
         
         # Initialize any default modes
@@ -99,6 +118,21 @@ class ModeManager:
                     if mode_id:
                         await self.start_mode(mode_id)
             except Exception as e:
+                # Log mode initialization failure
+                await activity_logger.log_error(
+                    category=ActivityCategory.SYSTEM,
+                    source="mode_manager",
+                    event_type="default_mode_init_failed",
+                    title=f"Failed to initialize default mode: {mode_config.mode_type.value}",
+                    error_message=str(e),
+                    exception=e,
+                    severity=ActivitySeverity.ERROR,
+                    metadata={
+                        "mode_type": mode_config.mode_type.value,
+                        "auto_start": mode_config.auto_start
+                    }
+                )
+                
                 self.logger.error(
                     "Failed to initialize default mode",
                     mode_type=mode_config.mode_type.value,
@@ -106,6 +140,21 @@ class ModeManager:
                 )
         
         self._initialized = True
+        
+        # Log successful initialization
+        await activity_logger.log_activity(
+            category=ActivityCategory.SYSTEM,
+            action=ActivityAction.SUCCESS,
+            source="mode_manager",
+            event_type="mode_manager_initialized",
+            title="Mode manager initialized successfully",
+            severity=ActivitySeverity.INFO,
+            metadata={
+                "initialized_modes": len(self.active_modes),
+                "mode_registry": {mode_type.value: str(mode_id) for mode_type, mode_id in self._mode_type_registry.items()}
+            }
+        )
+        
         self.logger.info("Mode manager initialized successfully")
     
     async def register_mode(self, mode_config: ModeConfig) -> UUID:
@@ -244,17 +293,72 @@ class ModeManager:
         if from_mode_id not in self.active_modes or to_mode_id not in self.active_modes:
             raise ModeManagerError("One or both modes not found")
         
-        # Stop the current mode
-        await self.stop_mode(from_mode_id)
+        from_mode = self.active_modes[from_mode_id]
+        to_mode = self.active_modes[to_mode_id]
         
-        # Start the new mode
-        await self.start_mode(to_mode_id)
-        
-        self.logger.info(
-            "Mode switch completed",
-            from_mode=str(from_mode_id),
-            to_mode=str(to_mode_id)
+        # Log mode switch attempt
+        await activity_logger.log_activity(
+            category=ActivityCategory.SYSTEM,
+            action=ActivityAction.UPDATE,
+            source="mode_manager",
+            event_type="mode_switch_started",
+            title=f"Mode switch started: {from_mode.config.mode_type.value} -> {to_mode.config.mode_type.value}",
+            severity=ActivitySeverity.INFO,
+            metadata={
+                "from_mode_id": str(from_mode_id),
+                "to_mode_id": str(to_mode_id),
+                "from_mode_type": from_mode.config.mode_type.value,
+                "to_mode_type": to_mode.config.mode_type.value
+            }
         )
+        
+        try:
+            # Stop the current mode
+            await self.stop_mode(from_mode_id)
+            
+            # Start the new mode
+            await self.start_mode(to_mode_id)
+            
+            # Log successful mode switch
+            await activity_logger.log_activity(
+                category=ActivityCategory.SYSTEM,
+                action=ActivityAction.SUCCESS,
+                source="mode_manager",
+                event_type="mode_switch_completed",
+                title=f"Mode switch completed: {from_mode.config.mode_type.value} -> {to_mode.config.mode_type.value}",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "from_mode_id": str(from_mode_id),
+                    "to_mode_id": str(to_mode_id),
+                    "from_mode_type": from_mode.config.mode_type.value,
+                    "to_mode_type": to_mode.config.mode_type.value
+                }
+            )
+            
+            self.logger.info(
+                "Mode switch completed",
+                from_mode=str(from_mode_id),
+                to_mode=str(to_mode_id)
+            )
+            
+        except Exception as e:
+            # Log mode switch failure
+            await activity_logger.log_error(
+                category=ActivityCategory.SYSTEM,
+                source="mode_manager",
+                event_type="mode_switch_failed",
+                title=f"Mode switch failed: {from_mode.config.mode_type.value} -> {to_mode.config.mode_type.value}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                metadata={
+                    "from_mode_id": str(from_mode_id),
+                    "to_mode_id": str(to_mode_id),
+                    "from_mode_type": from_mode.config.mode_type.value,
+                    "to_mode_type": to_mode.config.mode_type.value
+                }
+            )
+            raise
     
     def get_mode_status(self, mode_id: UUID) -> Optional[ModeStatus]:
         """Get the status of a specific mode."""

@@ -17,6 +17,9 @@ import structlog
 
 from ..utils.config import get_config
 from .base import DashboardError
+from ..logging.activity_logger import (
+    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity
+)
 
 logger = structlog.get_logger()
 
@@ -123,6 +126,24 @@ class DashboardAuth:
         api_key = self._generate_api_key()
         self._api_keys[api_key] = user_id
         
+        # Log user creation
+        import asyncio
+        asyncio.create_task(activity_logger.log_activity(
+            category=ActivityCategory.SECURITY,
+            action=ActivityAction.CREATE,
+            source="dashboard_auth",
+            event_type="user_created",
+            title=f"New user created: {username}",
+            severity=ActivitySeverity.INFO,
+            user_id=int(user_id.split('-')[-1], 16) % 10000,  # Convert hex to reasonable int
+            metadata={
+                "username": username,
+                "user_id": user_id,
+                "permissions": list(permissions),
+                "api_key_generated": True
+            }
+        ))
+        
         logger.info(
             "User created",
             username=username,
@@ -136,11 +157,62 @@ class DashboardAuth:
         """Authenticate using API key"""
         user_id = self._api_keys.get(api_key)
         if not user_id:
+            # Log failed API key authentication
+            import asyncio
+            asyncio.create_task(activity_logger.log_activity(
+                category=ActivityCategory.SECURITY,
+                action=ActivityAction.VIOLATION,
+                source="dashboard_auth",
+                event_type="invalid_api_key",
+                title="Invalid API key authentication attempt",
+                severity=ActivitySeverity.WARNING,
+                security_level="elevated",
+                metadata={
+                    "api_key_prefix": api_key[:8] + "..." if len(api_key) > 8 else "short_key",
+                    "reason": "api_key_not_found"
+                }
+            ))
             return None
         
         user = self._users.get(user_id)
         if not user or not user.is_active:
+            # Log inactive user authentication attempt
+            import asyncio
+            asyncio.create_task(activity_logger.log_activity(
+                category=ActivityCategory.SECURITY,
+                action=ActivityAction.VIOLATION,
+                source="dashboard_auth",
+                event_type="inactive_user_access",
+                title="Authentication attempt with inactive user",
+                severity=ActivitySeverity.WARNING,
+                user_id=int(user_id.split('-')[-1], 16) % 10000 if user_id else None,
+                security_level="elevated",
+                metadata={
+                    "user_id": user_id,
+                    "user_exists": user is not None,
+                    "user_active": user.is_active if user else False,
+                    "reason": "user_inactive_or_not_found"
+                }
+            ))
             return None
+        
+        # Log successful API key authentication
+        import asyncio
+        asyncio.create_task(activity_logger.log_activity(
+            category=ActivityCategory.SECURITY,
+            action=ActivityAction.ACCESS,
+            source="dashboard_auth",
+            event_type="api_key_auth_success",
+            title=f"Successful API key authentication: {user.username}",
+            severity=ActivitySeverity.INFO,
+            user_id=int(user_id.split('-')[-1], 16) % 10000,
+            metadata={
+                "username": user.username,
+                "user_id": user_id,
+                "permissions": list(user.permissions),
+                "last_login": user.last_login.isoformat() if user.last_login else None
+            }
+        ))
         
         return user
     
@@ -163,6 +235,26 @@ class DashboardAuth:
         
         # Update user last login
         user.last_login = datetime.utcnow()
+        
+        # Log session creation
+        import asyncio
+        asyncio.create_task(activity_logger.log_activity(
+            category=ActivityCategory.SECURITY,
+            action=ActivityAction.LOGIN,
+            source="dashboard_auth",
+            event_type="session_created",
+            title=f"User session created: {user.username}",
+            severity=ActivitySeverity.INFO,
+            user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+            session_id=session_id,
+            metadata={
+                "username": user.username,
+                "user_id": user.user_id,
+                "session_id": session_id,
+                "expires_at": expires_at.isoformat(),
+                "permissions": list(user.permissions)
+            }
+        ))
         
         logger.info(
             "Session created",
@@ -194,6 +286,25 @@ class DashboardAuth:
         if session_id in self._sessions:
             session = self._sessions[session_id]
             del self._sessions[session_id]
+            
+            # Log session revocation
+            import asyncio
+            asyncio.create_task(activity_logger.log_activity(
+                category=ActivityCategory.SECURITY,
+                action=ActivityAction.LOGOUT,
+                source="dashboard_auth",
+                event_type="session_revoked",
+                title=f"User session revoked: {session.username}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(session.user_id.split('-')[-1], 16) % 10000,
+                session_id=session_id,
+                metadata={
+                    "username": session.username,
+                    "user_id": session.user_id,
+                    "session_id": session_id,
+                    "session_duration_minutes": int((datetime.utcnow() - session.created_at).total_seconds() / 60)
+                }
+            ))
             
             logger.info(
                 "Session revoked",
