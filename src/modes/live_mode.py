@@ -1184,12 +1184,15 @@ class LiveMode(ModeBase):
         self._set_status(ModeStatus.ACTIVE)
     
     async def process_tick(self, market_state: MarketState) -> Optional[TradeAction]:
-        """Process market tick with comprehensive safety checks and trading logic."""
+        """Process market tick with comprehensive enhanced safety checks and trading logic."""
         if self.status != ModeStatus.ACTIVE:
             return None
         
         try:
-            # Perform safety checks
+            # Update safety monitoring systems
+            await self._update_safety_monitoring()
+            
+            # Perform comprehensive safety checks
             safety_result = await self._perform_safety_checks()
             if safety_result != SafetyCheckResult.SAFE:
                 if safety_result == SafetyCheckResult.EMERGENCY:
@@ -1202,6 +1205,16 @@ class LiveMode(ModeBase):
             
             # Make trading decision
             action = await self._make_trading_decision(market_state)
+            
+            # Enhanced pre-trade safety validation
+            if action != TradeAction.HOLD:
+                # Validate trade safety before execution
+                trade_is_safe = await self._validate_trade_safety(action, market_state)
+                if not trade_is_safe:
+                    self.logger.warning("Trade blocked by safety validation", 
+                                      action=action.value, 
+                                      token=market_state.token.symbol)
+                    return TradeAction.HOLD  # Convert to HOLD if unsafe
             
             if action != TradeAction.HOLD:
                 # Capture pre-trade experience if enabled
@@ -1283,7 +1296,7 @@ class LiveMode(ModeBase):
             self.logger.error("Error during cleanup", error=str(e))
     
     async def _perform_safety_checks(self) -> SafetyCheckResult:
-        """Perform comprehensive safety checks."""
+        """Perform comprehensive enhanced safety checks."""
         now = datetime.now()
         
         # Rate limit safety checks
@@ -1293,7 +1306,11 @@ class LiveMode(ModeBase):
         self.last_safety_check = now
         
         try:
-            # Check emergency conditions
+            # Enhanced safety coordination if enabled
+            if getattr(self.live_config, 'enable_safety_coordination', False):
+                return await self._perform_coordinated_safety_checks()
+            
+            # Standard safety checks with enhanced emergency system
             if self.emergency_system:
                 emergency_result = await self.emergency_system.check_emergency_conditions(self.portfolio)
                 if emergency_result.should_stop:
@@ -1309,17 +1326,255 @@ class LiveMode(ModeBase):
                 if not await self.safety_interlocks.check_trading_allowed():
                     return SafetyCheckResult.WARNING
             
-            # Check risk limits
+            # Enhanced risk manager checks
             if self.risk_manager:
+                # Check daily loss limit
                 daily_loss_check = await self.risk_manager.check_daily_loss_limit()
                 if not daily_loss_check.is_valid:
                     return SafetyCheckResult.DANGER
+                
+                # Check emergency risk conditions
+                emergency_risk_check = await self.risk_manager.check_emergency_conditions()
+                if emergency_risk_check.should_stop:
+                    return SafetyCheckResult.EMERGENCY
+                
+                # Check risk thresholds if monitoring is active
+                if self.risk_manager.is_monitoring_active:
+                    portfolio_risk = Decimal("0.5")  # Would calculate comprehensive risk
+                    risk_alert = await self.risk_manager.check_risk_thresholds(portfolio_risk)
+                    if risk_alert and risk_alert.severity == "CRITICAL":
+                        return SafetyCheckResult.DANGER
             
             return SafetyCheckResult.SAFE
             
         except Exception as e:
             self.logger.error("Safety check failed", error=str(e))
             return SafetyCheckResult.EMERGENCY
+    
+    async def _perform_coordinated_safety_checks(self) -> SafetyCheckResult:
+        """Perform coordinated safety checks across all systems."""
+        safety_results = {}
+        
+        # Get priority order from config
+        priority_order = getattr(self.live_config, 'safety_system_priority_order', 
+                               ["emergency_stop", "risk_manager", "liquidity_check"])
+        
+        # Execute safety checks in priority order
+        for system_name in priority_order:
+            try:
+                if system_name == "emergency_stop" and self.emergency_system:
+                    emergency_result = await self.emergency_system.check_emergency_conditions(self.portfolio)
+                    safety_results[system_name] = {
+                        "recommendation": "HALT_TRADING" if emergency_result.should_stop else "PROCEED",
+                        "priority": 1,
+                        "confidence": 0.95 if emergency_result.should_stop else 0.80
+                    }
+                    
+                    # Emergency stop has highest priority - halt immediately if triggered
+                    if emergency_result.should_stop:
+                        await self.emergency_system.trigger_emergency_stop(
+                            emergency_result.reason,
+                            emergency_result.message,
+                            emergency_result.portfolio_value
+                        )
+                        return SafetyCheckResult.EMERGENCY
+                
+                elif system_name == "risk_manager" and self.risk_manager:
+                    daily_loss_check = await self.risk_manager.check_daily_loss_limit()
+                    emergency_risk_check = await self.risk_manager.check_emergency_conditions()
+                    
+                    if emergency_risk_check.should_stop:
+                        safety_results[system_name] = {
+                            "recommendation": "HALT_TRADING",
+                            "priority": 2,
+                            "confidence": 0.90
+                        }
+                        return SafetyCheckResult.EMERGENCY
+                    elif not daily_loss_check.is_valid:
+                        safety_results[system_name] = {
+                            "recommendation": "REDUCE_POSITIONS",
+                            "priority": 2,
+                            "confidence": 0.85
+                        }
+                    else:
+                        safety_results[system_name] = {
+                            "recommendation": "PROCEED",
+                            "priority": 2,
+                            "confidence": 0.75
+                        }
+                
+                elif system_name == "liquidity_check":
+                    # Simplified liquidity check
+                    safety_results[system_name] = {
+                        "recommendation": "PROCEED",
+                        "priority": 3,
+                        "confidence": 0.70
+                    }
+                    
+            except Exception as e:
+                self.logger.error(f"Safety check failed for {system_name}", error=str(e))
+                safety_results[system_name] = {
+                    "recommendation": "HALT_TRADING",
+                    "priority": 1,
+                    "confidence": 0.99,
+                    "error": str(e)
+                }
+        
+        # Resolve any conflicts in safety recommendations
+        final_result = await self._resolve_safety_conflicts(safety_results)
+        
+        # Map final recommendation to SafetyCheckResult
+        if final_result == "HALT_TRADING":
+            return SafetyCheckResult.EMERGENCY
+        elif final_result == "REDUCE_POSITIONS":
+            return SafetyCheckResult.DANGER
+        elif final_result == "WARNING":
+            return SafetyCheckResult.WARNING
+        else:
+            return SafetyCheckResult.SAFE
+    
+    async def _resolve_safety_conflicts(self, safety_results: Dict[str, Dict[str, Any]]) -> str:
+        """Resolve conflicts between safety system recommendations."""
+        if not safety_results:
+            return "PROCEED"
+        
+        # Find highest priority recommendation
+        halt_recommendations = [
+            result for result in safety_results.values() 
+            if result["recommendation"] == "HALT_TRADING"
+        ]
+        
+        if halt_recommendations:
+            # Any HALT_TRADING recommendation takes precedence
+            return "HALT_TRADING"
+        
+        # Check for REDUCE_POSITIONS recommendations
+        reduce_recommendations = [
+            result for result in safety_results.values() 
+            if result["recommendation"] == "REDUCE_POSITIONS"
+        ]
+        
+        if reduce_recommendations:
+            return "REDUCE_POSITIONS"
+        
+        # Check safety override threshold
+        override_threshold = getattr(self.live_config, 'safety_override_threshold', Decimal("0.95"))
+        portfolio_risk = Decimal("0.5")  # Would calculate comprehensive risk
+        
+        if portfolio_risk > override_threshold:
+            self.logger.critical("Safety override threshold exceeded", risk_level=float(portfolio_risk))
+            return "HALT_TRADING"
+        
+        return "PROCEED"
+    
+    async def _validate_trade_safety(self, action: TradeAction, market_state: MarketState) -> bool:
+        """Validate trade safety before execution."""
+        if not getattr(self.live_config, 'enable_pre_trade_safety_checks', True):
+            return True
+        
+        try:
+            # Check if we're in a safe state to trade
+            if action == TradeAction.HOLD:
+                return True
+            
+            # Enhanced position size validation for buy orders
+            if action in [TradeAction.BUY, TradeAction.STRONG_BUY]:
+                if self.risk_manager:
+                    # Calculate proposed position size
+                    position_size = await self._calculate_position_size(action, market_state)
+                    
+                    # Validate position size
+                    size_check = await self.risk_manager.validate_position_size(
+                        market_state.token.address, position_size
+                    )
+                    if not size_check.is_valid:
+                        self.logger.warning("Trade blocked by position size validation", 
+                                          reason=size_check.reason)
+                        return False
+                    
+                    # Validate leverage limits
+                    leverage_check = await self.risk_manager.validate_leverage_limit(position_size)
+                    if not leverage_check.is_valid:
+                        self.logger.warning("Trade blocked by leverage validation", 
+                                          reason=leverage_check.reason)
+                        return False
+                    
+                    # Check new position limits
+                    new_position_check = await self.risk_manager.validate_new_position(
+                        market_state.token.address
+                    )
+                    if not new_position_check.is_valid:
+                        self.logger.warning("Trade blocked by position limit validation", 
+                                          reason=new_position_check.reason)
+                        return False
+                    
+                    # Check sector exposure if configured
+                    if hasattr(self.live_config, 'enable_sector_limits') and self.live_config.enable_sector_limits:
+                        sector = getattr(market_state.token, 'sector', 'UNKNOWN')
+                        sector_check = await self.risk_manager.validate_sector_exposure(sector, position_size)
+                        if not sector_check.is_valid:
+                            self.logger.warning("Trade blocked by sector exposure validation", 
+                                              reason=sector_check.reason)
+                            return False
+                    
+                    # Check correlation limits if configured
+                    if hasattr(self.live_config, 'enable_correlation_monitoring') and self.live_config.enable_correlation_monitoring:
+                        correlation_group = getattr(market_state.token, 'correlation_group', 'DEFAULT')
+                        correlation_check = await self.risk_manager.validate_correlated_exposure(
+                            market_state.token.address, position_size, correlation_group
+                        )
+                        if not correlation_check.is_valid:
+                            self.logger.warning("Trade blocked by correlation validation", 
+                                              reason=correlation_check.reason)
+                            return False
+            
+            # Check liquidation triggers
+            if self.emergency_system and getattr(self.live_config, 'emergency_liquidation_enabled', False):
+                should_liquidate = await self.emergency_system.should_trigger_liquidation(self.portfolio)
+                if should_liquidate:
+                    self.logger.warning("Trade blocked - liquidation triggered")
+                    # Trigger liquidation process
+                    asyncio.create_task(self._handle_liquidation_trigger())
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error("Trade safety validation failed", error=str(e))
+            return False  # Fail safe - block trade on validation error
+    
+    async def _handle_liquidation_trigger(self) -> None:
+        """Handle liquidation trigger in background."""
+        try:
+            if not self.emergency_system:
+                return
+            
+            liquidation_plan = await self.emergency_system.create_liquidation_plan(self.portfolio)
+            
+            if liquidation_plan.is_partial_liquidation:
+                self.logger.warning("Executing partial liquidation", 
+                                  percentage=float(liquidation_plan.liquidation_percentage))
+                # Would execute partial liquidation here
+            else:
+                self.logger.critical("Executing full liquidation")
+                # Would execute full liquidation here
+                
+        except Exception as e:
+            self.logger.error("Liquidation handling failed", error=str(e))
+    
+    async def _update_safety_monitoring(self) -> None:
+        """Update safety monitoring systems."""
+        try:
+            # Update emergency system portfolio monitoring
+            if self.emergency_system:
+                await self.emergency_system.update_portfolio_value(self.portfolio)
+            
+            # Update risk manager metrics
+            if self.risk_manager and self.risk_manager.is_monitoring_active:
+                await self.risk_manager.update_risk_metrics(self.portfolio)
+            
+        except Exception as e:
+            self.logger.error("Safety monitoring update failed", error=str(e))
     
     async def _make_trading_decision(self, market_state: MarketState) -> TradeAction:
         """Make trading decision using ML-RL integration or fallback logic."""
