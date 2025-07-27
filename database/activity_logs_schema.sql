@@ -8,6 +8,13 @@
 -- - Rich metadata and context tracking
 
 -- =============================================================================
+-- EXTENSIONS
+-- =============================================================================
+
+-- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- =============================================================================
 -- ENUMS AND TYPES
 -- =============================================================================
 
@@ -61,6 +68,40 @@ CREATE TYPE activity_action AS ENUM (
     'success',    -- Operation success
     'failure'     -- Operation failure
 );
+
+-- Trading mode types
+CREATE TYPE trading_mode AS ENUM (
+    'analysis',   -- Analysis mode only
+    'simulation', -- Simulation trading
+    'live'        -- Live trading with real funds
+);
+
+-- Chain types for blockchain identification
+CREATE TYPE chain_type AS ENUM (
+    'ethereum',   -- Ethereum mainnet
+    'solana',     -- Solana mainnet
+    'base'        -- Base chain
+);
+
+-- =============================================================================
+-- USERS TABLE (Required for foreign key references)
+-- =============================================================================
+
+CREATE TABLE users (
+    telegram_user_id BIGINT PRIMARY KEY,
+    username VARCHAR(100),
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    is_active BOOLEAN DEFAULT TRUE,
+    is_admin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for user lookups
+CREATE INDEX idx_users_username ON users (username) WHERE username IS NOT NULL;
+CREATE INDEX idx_users_active ON users (is_active, last_seen_at DESC);
 
 -- =============================================================================
 -- MAIN ACTIVITY LOGS TABLE
