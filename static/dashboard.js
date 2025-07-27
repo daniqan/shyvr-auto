@@ -36,8 +36,9 @@ class DashboardApp {
     /**
      * Initialize the dashboard application
      */
-    init() {
+    async init() {
         this.loadSettings();
+        await this.initializeApiKey(); // Get API key first
         this.setupEventListeners();
         this.setupTabs();
         this.connectWebSocket();
@@ -57,6 +58,28 @@ class DashboardApp {
         if (saved) {
             this.settings = { ...this.settings, ...JSON.parse(saved) };
         }
+    }
+    
+    /**
+     * Initialize API key from backend
+     */
+    async initializeApiKey() {
+        if (!this.settings.apiKey) {
+            try {
+                const response = await fetch('/api/auth/key');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.api_key) {
+                        this.settings.apiKey = data.api_key;
+                        this.saveSettings();
+                        console.log('API key initialized successfully');
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to initialize API key:', error);
+            }
+        }
+    }
         
         // Apply dark mode if enabled
         if (this.settings.darkMode) {

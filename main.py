@@ -11,7 +11,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import uvicorn
 
 # Add src to Python path
@@ -96,6 +96,24 @@ async def shutdown_event():
 async def root():
     """Root endpoint - serve dashboard"""
     return FileResponse("static/index.html")
+
+
+@app.get("/api/auth/key")
+async def get_api_key():
+    """Get the admin API key for dashboard authentication"""
+    try:
+        from src.dashboard.auth import dashboard_auth
+        
+        # Find admin API key
+        for api_key, user_id in dashboard_auth._api_keys.items():
+            if user_id == "admin-001":  # Admin user ID
+                return {"api_key": api_key}
+        
+        return {"error": "Admin API key not found"}
+        
+    except Exception as e:
+        logger.error("Failed to get API key", error=str(e))
+        return {"error": str(e)}
 
 
 @app.get("/api")
