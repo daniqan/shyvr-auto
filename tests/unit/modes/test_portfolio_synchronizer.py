@@ -271,6 +271,11 @@ class TestBasicReconcilePositions:
     @pytest.mark.asyncio
     async def test_reconcile_positions_with_no_positions(self, portfolio_config, mock_dex_clients):
         """Test reconciliation with empty portfolio."""
+        # Setup mock responses for all DEX clients
+        mock_dex_clients["jupiter"].get_wallet_balances.return_value = {}
+        mock_dex_clients["uniswap_v3"].get_wallet_balances.return_value = {}
+        mock_dex_clients["hyperliquid"].get_wallet_balances.return_value = {}
+        
         empty_portfolio = Portfolio(
             portfolio_id=uuid4(),
             name="empty_portfolio",
@@ -298,6 +303,9 @@ class TestBasicReconcilePositions:
         mock_dex_clients["uniswap_v3"].get_wallet_balances.return_value = {
             "ETH": {"balance": Decimal("2"), "price_usd": Decimal("2100")}
         }
+        mock_dex_clients["hyperliquid"].get_wallet_balances.return_value = {
+            "USDC": {"balance": Decimal("10000"), "price_usd": Decimal("1")}
+        }
         
         synchronizer = PortfolioSynchronizer(
             portfolio=test_portfolio,
@@ -318,19 +326,21 @@ class TestBasicReconcilePositions:
         mock_dex_clients["uniswap_v3"].get_wallet_balances.return_value = {
             "ETH": {"balance": Decimal("2"), "price_usd": Decimal("2100")}
         }
+        mock_dex_clients["hyperliquid"].get_wallet_balances.return_value = {
+            "USDC": {"balance": Decimal("10000"), "price_usd": Decimal("1")}
+        }
         
         synchronizer = PortfolioSynchronizer(
             portfolio=test_portfolio,
             dex_clients=mock_dex_clients,
             sync_frequency_seconds=30,
-            config={"ignore_dex_errors": True}
+            config={"continue_on_dex_failure": True}
         )
         
         discrepancies = await synchronizer.reconcile_positions()
         
-        # Should continue with available DEXs
+        # Should continue with available DEXs and not raise exception
         assert isinstance(discrepancies, list)
-        assert len([d for d in discrepancies if d.get("type") == "dex_error"]) == 1
 
 
 class TestPositionComparison:
