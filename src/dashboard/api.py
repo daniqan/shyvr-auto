@@ -105,6 +105,13 @@ class DashboardAPI:
             dependencies=[Depends(require_read)]
         )
         
+        self.router.add_api_route(
+            "/backtest/results",
+            self.get_backtest_results,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
         # Control endpoints
         self.router.add_api_route(
             "/trading/mode",
@@ -352,6 +359,97 @@ class DashboardAPI:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve ML/RL status"
+            )
+    
+    async def get_backtest_results(self, 
+                                   strategy_name: Optional[str] = Query(None, description="Filter by strategy name"),
+                                   start_date: Optional[str] = Query(None, description="Filter by start date (YYYY-MM-DD)"),
+                                   end_date: Optional[str] = Query(None, description="Filter by end date (YYYY-MM-DD)"),
+                                   min_sharpe_ratio: Optional[float] = Query(None, description="Filter by minimum Sharpe ratio"),
+                                   user: User = Depends(require_read)) -> Dict[str, Any]:
+        """Get backtest results from analysis mode"""
+        try:
+            # Log API request
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_api",
+                event_type="backtest_results_request",
+                title=f"Backtest results requested by {user.username}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/backtest/results",
+                http_method="GET",
+                metadata={
+                    "username": user.username,
+                    "strategy_name": strategy_name,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "min_sharpe_ratio": min_sharpe_ratio
+                }
+            )
+            
+            # Get backtest results from service
+            backtest_results = await dashboard_service.get_backtest_results(
+                strategy_name=strategy_name,
+                start_date=start_date,
+                end_date=end_date,
+                min_sharpe_ratio=min_sharpe_ratio
+            )
+            
+            if backtest_results is None:
+                return {
+                    "backtest_results": None,
+                    "message": "No backtest results available",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            
+            # Log successful response
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.SUCCESS,
+                source="dashboard_api",
+                event_type="backtest_results_success",
+                title=f"Backtest results successfully served to {user.username}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/backtest/results",
+                http_method="GET",
+                http_status=200,
+                metadata={
+                    "username": user.username,
+                    "strategy_name": backtest_results.get("strategy_name"),
+                    "total_return": backtest_results.get("total_return"),
+                    "sharpe_ratio": backtest_results.get("sharpe_ratio"),
+                    "total_trades": backtest_results.get("total_trades")
+                }
+            )
+            
+            return {
+                "backtest_results": backtest_results,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="backtest_results_failed",
+                title=f"Failed to serve backtest results to {user.username}",
+                error_message=str(e),
+                exception=e,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/backtest/results",
+                http_method="GET",
+                http_status=500,
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to get backtest results", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve backtest results"
             )
     
     async def switch_trading_mode(self, request: TradingModeRequest,

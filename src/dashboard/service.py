@@ -835,6 +835,96 @@ class DashboardService:
             # Return empty list on error
             return []
     
+    async def get_backtest_results(self, strategy_name: Optional[str] = None, 
+                                   start_date: Optional[str] = None,
+                                   end_date: Optional[str] = None,
+                                   min_sharpe_ratio: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """Get backtest results from analysis mode"""
+        try:
+            # Get analysis mode from mode manager
+            if not self.mode_manager:
+                logger.warning("Mode manager not initialized")
+                return None
+                
+            analysis_mode = self.mode_manager.get_mode_by_type("analysis")
+            if not analysis_mode:
+                logger.info("No analysis mode found or active")
+                return None
+                
+            # Check if backtest engine is available
+            if not hasattr(analysis_mode, 'backtest_engine') or not analysis_mode.backtest_engine:
+                logger.info("No backtest engine available in analysis mode")
+                return None
+            
+            # Get backtest results
+            if strategy_name:
+                raw_results = analysis_mode.backtest_engine.get_results_by_strategy(strategy_name)
+            else:
+                raw_results = analysis_mode.backtest_engine.get_latest_results()
+                
+            if not raw_results:
+                return None
+                
+            # Transform and serialize the results
+            return self._serialize_backtest_results(raw_results)
+            
+        except Exception as e:
+            logger.error("Failed to get backtest results", error=str(e))
+            return None
+    
+    def _serialize_backtest_results(self, raw_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize backtest results for API response"""
+        try:
+            # Handle datetime serialization
+            serialized_equity_curve = []
+            if "equity_curve" in raw_results:
+                for point in raw_results["equity_curve"]:
+                    serialized_point = {
+                        "timestamp": point["timestamp"].isoformat() if hasattr(point["timestamp"], 'isoformat') else str(point["timestamp"]),
+                        "value": float(point["value"]) if hasattr(point["value"], '__float__') else point["value"]
+                    }
+                    serialized_equity_curve.append(serialized_point)
+            
+            # Handle trade history serialization  
+            serialized_trade_history = []
+            if "trade_history" in raw_results:
+                for trade in raw_results["trade_history"]:
+                    serialized_trade = trade.copy()
+                    if "timestamp" in trade:
+                        serialized_trade["timestamp"] = trade["timestamp"].isoformat() if hasattr(trade["timestamp"], 'isoformat') else str(trade["timestamp"])
+                    serialized_trade_history.append(serialized_trade)
+            
+            # Build the serialized result
+            result = {
+                "strategy_name": raw_results.get("strategy_name", "Unknown"),
+                "total_return": raw_results.get("total_return", 0.0),
+                "annual_return": raw_results.get("annual_return", 0.0),
+                "max_drawdown": raw_results.get("max_drawdown", 0.0),
+                "sharpe_ratio": raw_results.get("sharpe_ratio", 0.0),
+                "volatility": raw_results.get("volatility", 0.0),
+                "win_rate": raw_results.get("win_rate", 0.0),
+                "total_trades": raw_results.get("total_trades", 0),
+                "profitable_trades": raw_results.get("profitable_trades", 0),
+                "losing_trades": raw_results.get("losing_trades", 0),
+                "avg_trade_duration_hours": raw_results.get("avg_trade_duration_hours", 0.0),
+                "avg_profit_per_trade": raw_results.get("avg_profit_per_trade", 0.0),
+                "equity_curve": serialized_equity_curve,
+                "trade_history": serialized_trade_history,
+                "performance_metrics": raw_results.get("performance_metrics", {})
+            }
+            
+            # Add start/end dates if available
+            if "start_date" in raw_results:
+                result["start_date"] = raw_results["start_date"].isoformat() if hasattr(raw_results["start_date"], 'isoformat') else str(raw_results["start_date"])
+            if "end_date" in raw_results:
+                result["end_date"] = raw_results["end_date"].isoformat() if hasattr(raw_results["end_date"], 'isoformat') else str(raw_results["end_date"])
+                
+            return result
+            
+        except Exception as e:
+            logger.error("Failed to serialize backtest results", error=str(e))
+            return raw_results  # Return as-is if serialization fails
+
     def record_request(self, response_time: float, error: bool = False) -> None:
         """Record API request metrics"""
         self._request_count += 1
