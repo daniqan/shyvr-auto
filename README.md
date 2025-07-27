@@ -490,164 +490,135 @@ This software is for educational purposes only. Cryptocurrency trading involves 
 
 ## 🏗️ System Architecture
 
-The Shyvr RLTE follows a layered microservices architecture designed for scalability, safety, and performance. The diagram below illustrates the high-level system architecture with clear separation of concerns and key data flows.
+This diagram illustrates the high-level structure of the Shyvr-RLTE project, followed by an explanation of the components and their interactions.
 
 ```mermaid
-graph TB
-    %% User Interface Layer
-    subgraph "👤 USER INTERFACE LAYER"
-        DASHBOARD[📊 Web Dashboard<br/>Portfolio & Analytics]
-        TELEGRAM_UI[💬 Telegram Bot<br/>Commands & Notifications]
-        API_ENDPOINTS[🔌 REST API<br/>External Integration]
-        HEALTH_MONITORING[📋 Health Endpoints<br/>System Status]
+graph TD
+    subgraph "User & External Interfaces"
+        User["👤 User"]
+        ExternalAPI["💽 External APIs <br> (Market Data, Sentiment)"]
     end
 
-    %% Intelligence Layer - The AI Brain
-    subgraph "🧠 INTELLIGENCE LAYER"
-        AI_BRAIN[🤖 AI/ML Brain<br/><b>LSTM + DQN Hybrid</b><br/>• Price Prediction (1h, 4h, 24h)<br/>• Trading Decisions<br/>• Risk Assessment<br/>• Pattern Recognition]
-        
-        DISCOVERY[🔍 Token Discovery<br/>Multi-Chain Scanner<br/>• Solana • Ethereum • Base]
-        
-        ANALYSIS[📈 Market Analysis<br/>Fundamental + Technical<br/>• Security Evaluation<br/>• Liquidity Analysis<br/>• Social Sentiment]
+    subgraph "Presentation & API Layer"
+        direction LR
+        DashboardUI["🖥️ Dashboard UI <br> (static/index.html)"]
+        FastAPI["🚀 FastAPI Server <br> (main.py)"]
+        DashboardAPI["🔌 Dashboard API <br> (src/dashboard/api.py)"]
     end
 
-    %% Trading Layer
-    subgraph "💰 TRADING LAYER"
-        MODE_CONTROLLER[⚙️ Mode Controller<br/><b>Analysis • Simulation • Live</b>]
-        
-        PORTFOLIO_ENGINE[💼 Portfolio Engine<br/>• Position Management<br/>• P&L Tracking<br/>• Risk Sizing]
-        
-        EXECUTION_ENGINE[⚡ Execution Engine<br/>• Multi-DEX Routing<br/>• Optimal Pricing<br/>• Transaction Builder]
-        
-        WALLET_MANAGER[🔐 Wallet Manager<br/>• Multi-Chain Support<br/>• Secure Key Management<br/>• Transaction Signing]
+    subgraph "Core Application Logic"
+        ModeManager["🕹️ Mode Manager <br> (src/modes/mode_manager.py)"]
+        LiveMode["📡 Live Trading Mode <br> (src/modes/live_mode.py)"]
+        SimulationMode["🧪 Simulation Mode <br> (src/modes/simulation_mode.py)"]
+        AnalysisMode["📊 Analysis Mode <br> (src/modes/analysis_mode.py)"]
     end
 
-    %% Safety Layer - Critical Protection
-    subgraph "🛡️ SAFETY LAYER"
-        RISK_GUARD[🚨 Risk Guardian<br/><b>Always Active</b><br/>• Position Limits<br/>• Loss Prevention<br/>• Circuit Breakers]
-        
-        EMERGENCY_SYSTEM[🆘 Emergency System<br/>• Market Anomaly Detection<br/>• Automatic Shutdown<br/>• Recovery Procedures]
-        
-        COMPLIANCE[✅ Compliance Engine<br/>• Audit Trails<br/>• Regulatory Reports<br/>• Trade Validation]
+    subgraph "Decision Engine (The Brain)"
+        MLRLBridge["🧠 ML-RL Bridge <br> (src/integration/ml_rl_bridge.py)"]
+        DQNAgent["🤖 DQN Agent (RL) <br> (src/rl_agent/dqn_agent.py)"]
+        ModelManager["⚙️ Model Manager (ML) <br> (src/ml_analysis/model_manager.py)"]
+        FeatureEngineer["🛠️ Feature Engineer <br> (src/ml_analysis/feature_engineer.py)"]
     end
 
-    %% Data Layer
-    subgraph "🗄️ DATA LAYER"
-        LIVE_DATA[📡 Live Market Data<br/>• BirdEye API<br/>• Jupiter Prices<br/>• Blockchain Data]
-        
-        STORAGE_SYSTEM[💾 Storage System<br/>• PostgreSQL Database<br/>• In-Memory Cache<br/>• Configuration Store]
-        
-        EXTERNAL_APIS[🌐 External APIs<br/>• DEX Integration<br/>• Social Media<br/>• News Sources]
+    subgraph "Trading & Execution Layer"
+        direction LR
+        DEXWalletBridge["🌉 DEX-Wallet Bridge <br> (src/trading/dex_wallet_bridge.py)"]
+        DEXClients["🏪 DEX Clients <br> (src/dex/)"]
+        Wallets["🔒 Wallets <br> (src/wallet/)"]
+        Portfolio["💼 Portfolio Manager <br> (src/portfolio/)"]
     end
 
-    %% Blockchain Infrastructure
-    subgraph "⛓️ BLOCKCHAIN NETWORKS"
-        SOLANA_NET[🟣 Solana<br/>Jupiter DEX]
-        ETHEREUM_NET[🔵 Ethereum<br/>Uniswap V3]
-        BASE_NET[🔶 Base<br/>Native DEXs]
+    subgraph "Continuous Learning Loop (Offline/Background)"
+        ContinuousLearningEngine["🔄 Continuous Learning Engine <br> (src/modes/continuous_learning.py)"]
+        DQNTrainingPipeline["🏭 DQN Training Pipeline <br> (src/rl_agent/training_pipeline.py)"]
+        ExperienceCollector["📥 Experience Collector <br> (src/modes/experience_collector.py)"]
+        ExperienceReplayBuffer["💾 Experience Replay Buffer <br> (src/rl_agent/experience_replay.py)"]
     end
 
-    %% Key Data Flows - Simplified
-    %% User Layer to Intelligence
-    DASHBOARD --> MODE_CONTROLLER
-    TELEGRAM_UI --> MODE_CONTROLLER
-    API_ENDPOINTS --> MODE_CONTROLLER
+    subgraph "Shared Services"
+        direction LR
+        Config["📄 Configuration <br> (src/utils/config.py)"]
+        ActivityLogger["📝 Activity Logger <br> (src/logging/activity_logger.py)"]
+        Database["🗄️ PostgreSQL DB <br> (database/)"]
+    end
 
-    %% Intelligence Layer Flows
-    DISCOVERY --> ANALYSIS
-    ANALYSIS --> AI_BRAIN
-    AI_BRAIN --> MODE_CONTROLLER
+    %% Define Relationships
+    User -- "Interacts with" --> DashboardUI
+    DashboardUI -- "Communicates via" --> FastAPI
+    FastAPI -- "Routes to" --> DashboardAPI
+    DashboardAPI -- "Controls" --> ModeManager
 
-    %% Trading Layer Flows
-    MODE_CONTROLLER --> PORTFOLIO_ENGINE
-    PORTFOLIO_ENGINE --> EXECUTION_ENGINE
-    EXECUTION_ENGINE --> WALLET_MANAGER
+    ModeManager -- "Activates/Deactivates" --> LiveMode
+    ModeManager -- "Activates/Deactivates" --> SimulationMode
+    ModeManager -- "Activates/Deactivates" --> AnalysisMode
 
-    %% Safety Layer Protection (bidirectional)
-    RISK_GUARD <--> PORTFOLIO_ENGINE
-    RISK_GUARD <--> EXECUTION_ENGINE
-    EMERGENCY_SYSTEM <--> MODE_CONTROLLER
-    COMPLIANCE <--> EXECUTION_ENGINE
+    LiveMode -- "Gets Trading Decision" --> MLRLBridge
+    SimulationMode -- "Gets Trading Decision" --> MLRLBridge
 
-    %% Data Layer Integration
-    LIVE_DATA --> DISCOVERY
-    LIVE_DATA --> ANALYSIS
-    STORAGE_SYSTEM <--> PORTFOLIO_ENGINE
-    EXTERNAL_APIS --> LIVE_DATA
+    MLRLBridge -- "Gets RL Action" --> DQNAgent
+    MLRLBridge -- "Gets ML Prediction" --> ModelManager
+    ModelManager -- "Uses" --> FeatureEngineer
+    FeatureEngineer -- "Fetches data from" --> ExternalAPI
 
-    %% Blockchain Connections
-    WALLET_MANAGER --> SOLANA_NET
-    WALLET_MANAGER --> ETHEREUM_NET
-    WALLET_MANAGER --> BASE_NET
-    EXTERNAL_APIS --> SOLANA_NET
-    EXTERNAL_APIS --> ETHEREUM_NET
-    EXTERNAL_APIS --> BASE_NET
+    LiveMode -- "Executes Trades via" --> DEXWalletBridge
+    DEXWalletBridge -- "Uses" --> DEXClients
+    DEXWalletBridge -- "Uses" --> Wallets
+    LiveMode -- "Updates & Reads" --> Portfolio
+    SimulationMode -- "Updates & Reads" --> Portfolio
 
-    %% System Health
-    HEALTH_MONITORING --> RISK_GUARD
-    HEALTH_MONITORING --> EMERGENCY_SYSTEM
-    HEALTH_MONITORING --> AI_BRAIN
+    ExperienceCollector -- "Collects from" --> LiveMode
+    ExperienceCollector -- "Stores in" --> ExperienceReplayBuffer
+    ContinuousLearningEngine -- "Monitors & Triggers" --> DQNTrainingPipeline
+    DQNTrainingPipeline -- "Samples from" --> ExperienceReplayBuffer
+    DQNTrainingPipeline -- "Retrains" --> DQNAgent
 
-    %% Enhanced Styling with Larger Text and Better Colors
-    classDef userLayer fill:#e3f2fd,stroke:#1565c0,stroke-width:3px,font-size:14px,font-weight:bold
-    classDef intelligenceLayer fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,font-size:14px,font-weight:bold
-    classDef tradingLayer fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,font-size:14px,font-weight:bold
-    classDef safetyLayer fill:#fff3e0,stroke:#f57c00,stroke-width:3px,font-size:14px,font-weight:bold
-    classDef dataLayer fill:#e0f2f1,stroke:#00695c,stroke-width:3px,font-size:14px,font-weight:bold
-    classDef blockchainLayer fill:#fce4ec,stroke:#c2185b,stroke-width:3px,font-size:14px,font-weight:bold
-
-    %% Apply Styles
-    class DASHBOARD,TELEGRAM_UI,API_ENDPOINTS,HEALTH_MONITORING userLayer
-    class AI_BRAIN,DISCOVERY,ANALYSIS intelligenceLayer
-    class MODE_CONTROLLER,PORTFOLIO_ENGINE,EXECUTION_ENGINE,WALLET_MANAGER tradingLayer
-    class RISK_GUARD,EMERGENCY_SYSTEM,COMPLIANCE safetyLayer
-    class LIVE_DATA,STORAGE_SYSTEM,EXTERNAL_APIS dataLayer
-    class SOLANA_NET,ETHEREUM_NET,BASE_NET blockchainLayer
+    %% Shared Services Dependencies
+    ModeManager -- "Uses" --> Config
+    DEXWalletBridge -- "Uses" --> Config
+    DQNAgent -- "Uses" --> Config
+    LiveMode -- "Logs to" --> ActivityLogger
+    DEXWalletBridge -- "Logs to" --> ActivityLogger
+    ActivityLogger -- "Writes to" --> Database
 ```
 
-### Architecture Components Overview
+### Architecture Explanation
 
-#### 👤 User Interface Layer
-- **Web Dashboard**: Portfolio visualization, performance analytics, and system monitoring
-- **Telegram Bot**: Complete trading interface with commands, notifications, and real-time updates
-- **REST API**: External integration endpoints for third-party applications
-- **Health Endpoints**: System status monitoring and configuration management
+This diagram illustrates a modular, event-driven architecture designed for a sophisticated AI trading bot.
 
-#### 🧠 Intelligence Layer - The AI Brain
-- **AI/ML Brain**: Hybrid LSTM + DQN system providing price predictions, trading decisions, risk assessment, and pattern recognition
-- **Token Discovery**: Multi-chain scanning engine across Solana, Ethereum, and Base networks
-- **Market Analysis**: Comprehensive fundamental and technical analysis including security evaluation, liquidity analysis, and social sentiment
+1.  **Presentation & API Layer:**
+    *   The user interacts with the system through a web-based **Dashboard UI**.
+    *   All communication is handled by a **FastAPI Server**, which provides a robust API for the dashboard and any other external clients. The **Dashboard API** contains the specific business logic for UI interactions.
 
-#### 💰 Trading Layer
-- **Mode Controller**: Orchestrates three operational modes - Analysis, Simulation, and Live Trading
-- **Portfolio Engine**: Advanced position management with P&L tracking and intelligent risk sizing
-- **Execution Engine**: Multi-DEX routing with optimal pricing and sophisticated transaction building
-- **Wallet Manager**: Secure multi-chain wallet support with encrypted key management and transaction signing
+2.  **Core Application Logic:**
+    *   The **Mode Manager** is the central controller, responsible for activating, deactivating, and managing the state of the different operational modes.
+    *   The system can run in one of three primary modes:
+        *   **Live Trading Mode:** Executes real trades with actual funds.
+        *   **Simulation Mode:** Paper trades using real-time market data and a virtual portfolio.
+        *   **Analysis Mode:** Performs offline analysis, backtesting, and reporting without executing trades.
 
-#### 🛡️ Safety Layer - Always Active Protection
-- **Risk Guardian**: Continuously active protection with position limits, loss prevention, and circuit breakers
-- **Emergency System**: Advanced market anomaly detection with automatic shutdown and recovery procedures
-- **Compliance Engine**: Complete audit trails, regulatory reporting, and trade validation systems
+3.  **Decision Engine (The "Brain"):**
+    *   When a trading decision is needed, the active mode consults the **ML-RL Bridge**.
+    *   This bridge acts as a mediator, querying both the **ML Model Manager** for market predictions (e.g., will the price go up?) and the **RL DQN Agent** for a specific trading action (e.g., BUY, SELL, HOLD).
+    *   The **Model Manager** uses the **Feature Engineer** to process raw data from external APIs into meaningful features for its prediction models (like the LSTM).
+    *   The bridge then synthesizes these inputs to produce a final, confident trading decision.
 
-#### 🗄️ Data Layer
-- **Live Market Data**: Real-time feeds from BirdEye API, Jupiter prices, and blockchain data sources
-- **Storage System**: Enterprise-grade PostgreSQL database with in-memory caching and configuration management
-- **External APIs**: Comprehensive integration with DEX protocols, social media feeds, and news sources
+4.  **Trading & Execution Layer:**
+    *   Once a decision is made, the active mode uses the **DEX-Wallet Bridge** to execute the trade.
+    *   This bridge abstracts the complexity of interacting with different blockchains. It selects the appropriate **DEX Client** (e.g., Jupiter for Solana) and **Wallet** to prepare, sign, and broadcast the transaction.
+    *   The **Portfolio Manager** is the single source of truth for all assets, open positions, and P&L, which is updated after every trade.
 
-#### ⛓️ Blockchain Networks
-- **Multi-Chain Support**: Native integration with Solana (Jupiter DEX), Ethereum (Uniswap V3), and Base networks
-- **Optimal Routing**: Intelligent transaction routing for best execution across all supported chains
+5.  **Continuous Learning Loop:**
+    *   This is the system's feedback mechanism for autonomous improvement.
+    *   The **Experience Collector** observes the actions taken and outcomes from the `LiveMode`.
+    *   It stores these `(state, action, reward, next_state)` tuples in the **Experience Replay Buffer**.
+    *   The **Continuous Learning Engine** monitors the system's performance and the number of new experiences. When a trigger condition is met (e.g., 1,000 new trades), it initiates the **DQN Training Pipeline**.
+    *   The pipeline samples from the replay buffer to retrain and improve the **DQN Agent**. The newly trained model can then be evaluated and deployed, completing the loop.
 
-### Key Data Flows
-
-1. **User → Intelligence → Trading**: Seamless flow from user interface through AI analysis to trade execution
-2. **Discovery → Analysis → AI Brain**: Token discovery feeds market analysis which powers AI decision-making  
-3. **AI Brain → Mode Controller**: Intelligent decisions route through appropriate operational mode
-4. **Portfolio → Execution → Wallet**: Trade execution flows through portfolio management to secure wallet operations
-5. **Safety Layer Protection**: Continuous bidirectional monitoring across all trading operations
-6. **Multi-Chain Integration**: Unified blockchain interface across Solana, Ethereum, and Base networks
-
-The architecture ensures **sub-second decision making**, **always-active safety protection**, **scalable microservices deployment**, and **complete non-custodial security** for user funds.
+6.  **Shared Services:**
+    *   These are cross-cutting concerns used by all other layers.
+    *   **Configuration:** Provides centralized access to all system parameters.
+    *   **Activity Logger:** A structured logger that captures all significant events and writes them to the **Database** for auditing, debugging, and analysis.
+    *   **Database:** Persists logs, trade history, and potentially model performance metrics.
 
 ## 🔄 System Process Flow
 
