@@ -572,7 +572,7 @@ class ActivityLogger:
                     self._buffer.extend(entries_to_flush)
     
     async def _insert_activities(self, entries: List[ActivityLogEntry]) -> None:
-        """Insert activity entries to database"""
+        """Insert activity entries to database with retry logic"""
         if not self._pool:
             raise RuntimeError("Database pool not initialized")
         
@@ -605,21 +605,52 @@ class ActivityLogger:
         query = f"""
             INSERT INTO activity_logs ({field_names})
             VALUES ({placeholders})
+            ON CONFLICT (activity_id) DO NOTHING
         """
         
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                for data in insert_data:
-                    # Prepare values in correct order
-                    values = []
-                    for field in fields:
-                        value = data.get(field)
-                        # Convert lists to PostgreSQL arrays
-                        if field == 'tags' and value:
-                            value = value
-                        values.append(value)
-                    
-                    await conn.execute(query, *values)
+        max_retries = 3
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                async with self._pool.acquire() as conn:
+                    async with conn.transaction():
+                        for data in insert_data:
+                            # Prepare values in correct order
+                            values = []
+                            for field in fields:
+                                value = data.get(field)
+                                # Convert lists to PostgreSQL arrays
+                                if field == 'tags' and value:
+                                    value = value
+                                # Handle None values properly
+                                values.append(value)
+                            
+                            await conn.execute(query, *values)
+                
+                # Success, break out of retry loop
+                break
+                
+            except asyncpg.PostgresError as e:
+                logger.error(f"PostgreSQL error during activity log insertion (attempt {attempt + 1}): {e}")
+                if attempt == max_retries - 1:
+                    raise  # Re-raise on final attempt
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                
+            except asyncpg.ConnectionFailureError as e:
+                logger.error(f"Database connection failed during activity log insertion (attempt {attempt + 1}): {e}")
+                if attempt == max_retries - 1:
+                    raise  # Re-raise on final attempt
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+                
+            except Exception as e:
+                logger.error(f"Unexpected error during activity log insertion (attempt {attempt + 1}): {e}")
+                if attempt == max_retries - 1:
+                    raise  # Re-raise on final attempt
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
 
 
 # =============================================================================
@@ -650,7 +681,6 @@ async def log_dashboard_action(user_id: int, component: str, action: str, **kwar
         action=ActivityAction.ACCESS,
         component=component,
         title=f"User accessed {component}: {action}",
-        dashboard_component=component,
         dashboard_action=action,
         **kwargs
     )
