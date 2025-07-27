@@ -312,6 +312,56 @@ class TestDQNTradingAgent:
         assert metrics['loss'] >= 0.0
     
     @pytest.mark.asyncio
+    async def test_train_step_returns_td_errors(self, agent_config, sample_market_state, sample_token):
+        """Test that training step returns TD errors for prioritized replay"""
+        agent = DQNTradingAgent(agent_config)
+        
+        # Create sample experiences with indices (for prioritized replay)
+        next_state = MarketState(
+            token=sample_token,
+            price_usd=1.55,
+            price_change_24h=3.0,
+            volume_24h=110000,
+            market_cap=1600000,
+            current_position=0.1,
+            portfolio_value=10050.0
+        )
+        
+        experiences = []
+        for i in range(agent_config.batch_size):
+            exp = {
+                'state': sample_market_state.to_vector(),
+                'action': 1,  # BUY action index
+                'reward': 0.1 + i * 0.01,  # Varying rewards
+                'next_state': next_state.to_vector(),
+                'done': False,
+                'index': i,  # Buffer index for prioritized replay
+                'weight': 1.0  # Importance sampling weight
+            }
+            experiences.append(exp)
+        
+        # Train step
+        metrics = await agent.train_step(experiences)
+        
+        # Should return TD errors for prioritized replay buffer updates
+        assert isinstance(metrics, dict)
+        assert 'td_errors' in metrics
+        assert 'indices' in metrics
+        assert isinstance(metrics['td_errors'], list)
+        assert isinstance(metrics['indices'], list)
+        assert len(metrics['td_errors']) == agent_config.batch_size
+        assert len(metrics['indices']) == agent_config.batch_size
+        
+        # TD errors should be numeric values
+        for td_error in metrics['td_errors']:
+            assert isinstance(td_error, (int, float))
+            assert td_error >= 0.0  # TD errors should be absolute values
+        
+        # Indices should match the input experience indices
+        for i, idx in enumerate(metrics['indices']):
+            assert idx == i
+    
+    @pytest.mark.asyncio
     async def test_train_step_insufficient_batch(self, agent_config, sample_market_state):
         """Test training step with insufficient batch size"""
         agent = DQNTradingAgent(agent_config)

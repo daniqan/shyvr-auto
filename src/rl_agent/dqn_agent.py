@@ -226,7 +226,7 @@ class DQNTradingAgent(RLAgentBase):
             batch_experiences: List of experience dictionaries
             
         Returns:
-            Training metrics dictionary
+            Training metrics dictionary including TD errors for prioritized replay
         """
         try:
             if len(batch_experiences) < self.config.batch_size:
@@ -246,6 +246,14 @@ class DQNTradingAgent(RLAgentBase):
             ])
             dones = torch.BoolTensor([exp['done'] for exp in batch_experiences])
             
+            # Extract importance sampling weights and buffer indices (if using prioritized replay)
+            weights = None
+            buffer_indices = None
+            if 'weight' in batch_experiences[0]:
+                weights = torch.FloatTensor([exp['weight'] for exp in batch_experiences])
+            if 'index' in batch_experiences[0]:
+                buffer_indices = [exp['index'] for exp in batch_experiences]
+            
             # Current Q values
             current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1))
             
@@ -264,8 +272,16 @@ class DQNTradingAgent(RLAgentBase):
                     0.99 * next_q_values * (~dones).float().unsqueeze(1)
                 )
             
-            # Compute loss
-            loss = F.mse_loss(current_q_values, target_q_values)
+            # Calculate TD errors (before applying importance sampling weights)
+            td_errors = torch.abs(current_q_values - target_q_values).squeeze(1)
+            
+            # Apply importance sampling weights if using prioritized replay
+            if weights is not None:
+                # Weighted loss for prioritized experience replay
+                loss = (weights * (current_q_values.squeeze(1) - target_q_values.squeeze(1)) ** 2).mean()
+            else:
+                # Standard MSE loss
+                loss = F.mse_loss(current_q_values, target_q_values)
             
             # Optimize
             self.optimizer.zero_grad()
@@ -287,6 +303,11 @@ class DQNTradingAgent(RLAgentBase):
                 'epsilon': self.epsilon,
                 'steps_done': self.steps_done
             }
+            
+            # Add TD errors and indices for prioritized replay buffer updates
+            if buffer_indices is not None:
+                metrics['td_errors'] = td_errors.detach().cpu().numpy().tolist()
+                metrics['indices'] = buffer_indices
             
             self.logger.debug("Training step completed", **metrics)
             
