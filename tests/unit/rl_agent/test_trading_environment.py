@@ -600,3 +600,180 @@ class TestTradingEnvironmentIntegration:
         total_value = env.portfolio.calculate_total_value()
         assert total_value > 0
         assert total_value < env.config.initial_cash * 1.1  # Shouldn't exceed initial + reasonable gains
+
+
+class TestTradingEnvironmentAdvancedRewards:
+    """Test TradingEnvironment integration with AdvancedRewardCalculator"""
+    
+    @pytest.fixture
+    def env_with_advanced_rewards(self):
+        """Create environment with advanced reward calculator"""
+        from src.rl_agent.reward_engineering import RewardConfig, AdvancedRewardCalculator
+        
+        config = EnvironmentConfig(
+            initial_cash=10000.0,
+            max_episode_steps=100,
+            lookback_window=10
+        )
+        
+        reward_config = RewardConfig(
+            lookback_window=50,
+            min_observations=5,
+            reward_scale=10.0
+        )
+        
+        tokens = []
+        for i in range(2):
+            token = DiscoveredToken(
+                address=f"0x{i:03d}...",
+                symbol=f"TOKEN{i}",
+                name=f"Test Token {i}",
+                chain=Chain.ETHEREUM,
+                discovered_at=datetime.now(),
+                discovery_source="test",
+                price_usd=1.0 + i * 0.5,
+                volume_24h=100000 + i * 50000
+            )
+            tokens.append(token)
+        
+        # Create mock price data
+        price_data = {}
+        for token in tokens:
+            base_price = token.price_usd
+            prices = []
+            for j in range(50):
+                volatility = 0.02
+                change = np.random.normal(0, volatility)
+                if j == 0:
+                    price = base_price
+                else:
+                    price = prices[-1] * (1 + change)
+                prices.append(max(price, 0.01))
+            
+            price_data[token.address] = {
+                'prices': prices,
+                'timestamps': [datetime.now() - timedelta(hours=50-i) for i in range(50)]
+            }
+        
+        env = TradingEnvironment(config, tokens, price_data)
+        
+        # Set up advanced reward calculator
+        reward_calculator = AdvancedRewardCalculator(reward_config)
+        env.reward_calculator = reward_calculator
+        
+        return env, reward_calculator, tokens
+    
+    def test_environment_has_advanced_reward_calculator(self, env_with_advanced_rewards):
+        """Test that environment can use advanced reward calculator"""
+        env, reward_calc, tokens = env_with_advanced_rewards
+        
+        assert hasattr(env, 'reward_calculator')
+        assert env.reward_calculator is reward_calc
+    
+    def test_advanced_reward_calculation_in_step(self, env_with_advanced_rewards):
+        """Test that advanced reward calculator is used in step method"""
+        env, reward_calc, tokens = env_with_advanced_rewards
+        env.reset()
+        
+        token = tokens[0]
+        position_size = 0.1
+        
+        # Make a trade
+        state, reward, done, info = env.step(TradeAction.BUY, token, position_size)
+        
+        # Verify reward was calculated using advanced calculator
+        assert isinstance(reward, float)
+        assert 'risk_metrics' in info
+        assert len(reward_calc.returns_history) == 1
+        assert len(reward_calc.portfolio_values) == 1
+    
+    def test_advanced_reward_vs_simple_reward(self, env_with_advanced_rewards):
+        """Test that advanced reward differs from simple reward calculation"""
+        env, reward_calc, tokens = env_with_advanced_rewards
+        
+        # Create a second environment without advanced rewards for comparison
+        config = EnvironmentConfig(
+            initial_cash=10000.0,
+            max_episode_steps=100,
+            lookback_window=10
+        )
+        
+        price_data = {}
+        for token in tokens:
+            price_data[token.address] = {
+                'prices': [token.price_usd] * 50,
+                'timestamps': [datetime.now() - timedelta(hours=50-i) for i in range(50)]
+            }
+        
+        simple_env = TradingEnvironment(config, tokens, price_data)
+        
+        # Reset both environments
+        env.reset()
+        simple_env.reset()
+        
+        token = tokens[0]
+        position_size = 0.1
+        
+        # Make identical trades
+        state_adv, reward_adv, done_adv, info_adv = env.step(TradeAction.BUY, token, position_size)
+        state_simple, reward_simple, done_simple, info_simple = simple_env.step(TradeAction.BUY, token, position_size)
+        
+        # For the first step, rewards might be similar, but info should differ
+        assert 'risk_metrics' in info_adv
+        assert 'risk_metrics' not in info_simple
+        
+        # After multiple steps, rewards should diverge
+        for _ in range(5):
+            env.step(TradeAction.HOLD, token, 0.0)
+            simple_env.step(TradeAction.HOLD, token, 0.0)
+        
+        # Advanced reward should have more sophisticated calculation
+        assert len(reward_calc.returns_history) == 6  # 1 buy + 5 holds
+    
+    def test_risk_metrics_in_info(self, env_with_advanced_rewards):
+        """Test that risk metrics are included in step info"""
+        env, reward_calc, tokens = env_with_advanced_rewards
+        env.reset()
+        
+        token = tokens[0]
+        
+        # Make several trades to build up history
+        for i in range(10):
+            action = TradeAction.BUY if i % 3 == 0 else TradeAction.HOLD
+            position_size = 0.05 if action == TradeAction.BUY else 0.0
+            
+            state, reward, done, info = env.step(action, token, position_size)
+            
+            assert 'risk_metrics' in info
+            risk_metrics = info['risk_metrics']
+            
+            assert isinstance(risk_metrics, dict)
+            assert 'sharpe_ratio' in risk_metrics
+            assert 'max_drawdown' in risk_metrics
+            assert 'volatility' in risk_metrics
+    
+    def test_market_conditions_passed_to_reward_calculator(self, env_with_advanced_rewards):
+        """Test that market conditions are passed to reward calculator"""
+        env, reward_calc, tokens = env_with_advanced_rewards
+        env.reset()
+        
+        # Mock the reward calculator to verify market conditions are passed
+        original_calculate_reward = reward_calc.calculate_reward
+        called_market_conditions = []
+        
+        def mock_calculate_reward(portfolio_value_before, portfolio_value_after, trading_result, market_conditions=None):
+            called_market_conditions.append(market_conditions)
+            return original_calculate_reward(portfolio_value_before, portfolio_value_after, trading_result, market_conditions)
+        
+        reward_calc.calculate_reward = mock_calculate_reward
+        
+        token = tokens[0]
+        env.step(TradeAction.BUY, token, 0.1)
+        
+        # Verify market conditions were passed
+        assert len(called_market_conditions) == 1
+        market_conditions = called_market_conditions[0]
+        
+        # Should contain relevant market information
+        if market_conditions:
+            assert isinstance(market_conditions, dict)

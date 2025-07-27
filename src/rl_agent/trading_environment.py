@@ -17,6 +17,7 @@ from .base import (
     TradeAction, MarketState, TradingResult,
     RLTrainingError
 )
+from .reward_engineering import AdvancedRewardCalculator, RewardConfig
 from src.discovery.base import DiscoveredToken
 
 logger = structlog.get_logger()
@@ -312,7 +313,8 @@ class TradingEnvironment:
     """Simulated trading environment for RL training"""
     
     def __init__(self, config: EnvironmentConfig, tokens: List[DiscoveredToken], 
-                 historical_data: Dict[str, Dict[str, Any]]):
+                 historical_data: Dict[str, Dict[str, Any]],
+                 reward_calculator: Optional[AdvancedRewardCalculator] = None):
         self.config = config
         self.tokens = tokens
         self.historical_data = historical_data
@@ -330,6 +332,9 @@ class TradingEnvironment:
         # Performance tracking
         self.episode_rewards = []
         self.last_trading_result: Optional[TradingResult] = None
+        
+        # Reward calculation
+        self.reward_calculator = reward_calculator
         
         self.logger = structlog.get_logger().bind(component="TradingEnvironment")
         
@@ -358,6 +363,10 @@ class TradingEnvironment:
         self.episode_rewards = []
         self.last_trading_result = None
         self.current_token_index = 0
+        
+        # Reset reward calculator if present
+        if self.reward_calculator:
+            self.reward_calculator.reset()
         
         # Reset prices to start of historical data
         self._initialize_price_data()
@@ -422,7 +431,7 @@ class TradingEnvironment:
         self._update_prices()
         
         # Calculate reward
-        reward = self._calculate_reward(portfolio_value_before, trading_result)
+        reward, reward_info = self._calculate_reward(portfolio_value_before, trading_result)
         self.episode_rewards.append(reward)
         
         # Check termination conditions
@@ -442,6 +451,9 @@ class TradingEnvironment:
             'max_drawdown': self.portfolio.max_drawdown,
             'episode_step': self.current_step
         }
+        
+        # Add reward-specific info
+        info.update(reward_info)
         
         return next_state, reward, self.done, info
     
@@ -490,36 +502,103 @@ class TradingEnvironment:
                 self.portfolio.update_token_price(token_address, new_price)
     
     def _calculate_reward(self, portfolio_value_before: float, 
-                         trading_result: TradingResult) -> float:
+                         trading_result: TradingResult) -> Tuple[float, Dict[str, Any]]:
         """Calculate reward for the step"""
         
         # Portfolio value change
         current_value = self.portfolio.calculate_total_value()
-        value_change = current_value - portfolio_value_before
         
-        # Base reward: percentage change in portfolio value
-        if portfolio_value_before > 0:
-            return_pct = value_change / portfolio_value_before
+        # Use advanced reward calculator if available
+        if self.reward_calculator:
+            # Prepare market conditions
+            market_conditions = self._get_market_conditions()
+            
+            # Calculate sophisticated reward
+            reward, risk_metrics = self.reward_calculator.calculate_reward(
+                portfolio_value_before=portfolio_value_before,
+                portfolio_value_after=current_value,
+                trading_result=trading_result,
+                market_conditions=market_conditions
+            )
+            
+            # Additional info for environment
+            reward_info = {
+                'risk_metrics': risk_metrics.to_dict(),
+                'reward_type': 'advanced',
+                'market_conditions': market_conditions
+            }
+            
+            return float(reward), reward_info
+        
         else:
-            return_pct = 0.0
+            # Fall back to simple reward calculation
+            value_change = current_value - portfolio_value_before
+            
+            # Base reward: percentage change in portfolio value
+            if portfolio_value_before > 0:
+                return_pct = value_change / portfolio_value_before
+            else:
+                return_pct = 0.0
+            
+            # Scale to reasonable range
+            reward = return_pct * 100  # Convert to percentage points
+            
+            # Penalty for failed trades
+            if trading_result and not trading_result.success:
+                reward -= 1.0  # Penalty for failed execution
+            
+            # Risk-adjusted reward (penalize high drawdown)
+            if self.portfolio.max_drawdown > 0.1:  # 10% drawdown threshold
+                drawdown_penalty = self.portfolio.max_drawdown * 10
+                reward -= drawdown_penalty
+            
+            # Bonus for successful trades with good returns
+            if trading_result and trading_result.success and trading_result.realized_pnl > 0:
+                reward += min(trading_result.realized_pnl / 1000.0, 0.5)  # Cap bonus
+            
+            reward_info = {
+                'reward_type': 'simple'
+            }
+            
+            return float(reward), reward_info
+    
+    def _get_market_conditions(self) -> Dict[str, Any]:
+        """Extract current market conditions for reward calculation"""
+        conditions = {}
         
-        # Scale to reasonable range
-        reward = return_pct * 100  # Convert to percentage points
+        # Calculate portfolio metrics
+        current_value = self.portfolio.calculate_total_value()
+        if len(self.episode_rewards) > 0:
+            recent_returns = self.episode_rewards[-10:]  # Last 10 returns
+            if len(recent_returns) > 1:
+                volatility = np.std(recent_returns)
+                conditions['volatility_regime'] = 'high' if volatility > 2.0 else 'low'
         
-        # Penalty for failed trades
-        if trading_result and not trading_result.success:
-            reward -= 1.0  # Penalty for failed execution
+        # Market trend based on recent price movements
+        if len(self.episode_rewards) >= 5:
+            recent_trend = sum(self.episode_rewards[-5:])
+            if recent_trend > 1.0:
+                conditions['market_trend'] = 'bull'
+            elif recent_trend < -1.0:
+                conditions['market_trend'] = 'bear'
+            else:
+                conditions['market_trend'] = 'sideways'
         
-        # Risk-adjusted reward (penalize high drawdown)
-        if self.portfolio.max_drawdown > 0.1:  # 10% drawdown threshold
-            drawdown_penalty = self.portfolio.max_drawdown * 10
-            reward -= drawdown_penalty
+        # Simplified fear/greed index based on drawdown and volatility
+        drawdown = self.portfolio.max_drawdown
+        if drawdown > 0.15:
+            conditions['fear_greed_index'] = 20  # High fear
+        elif drawdown < 0.05:
+            conditions['fear_greed_index'] = 80  # High greed
+        else:
+            conditions['fear_greed_index'] = 50  # Neutral
         
-        # Bonus for successful trades with good returns
-        if trading_result and trading_result.success and trading_result.realized_pnl > 0:
-            reward += min(trading_result.realized_pnl / 1000.0, 0.5)  # Cap bonus
+        # Portfolio health metrics
+        conditions['portfolio_drawdown'] = drawdown
+        conditions['cash_ratio'] = self.portfolio.cash / current_value if current_value > 0 else 1.0
+        conditions['num_positions'] = len(self.portfolio.positions)
         
-        return float(reward)
+        return conditions
     
     def _check_done(self) -> bool:
         """Check if episode should terminate"""
