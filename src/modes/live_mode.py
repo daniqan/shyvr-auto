@@ -34,6 +34,12 @@ from src.portfolio.base import (
 from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
 from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
+from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLearningConfig
+from src.modes.continuous_learning_loop import (
+    ContinuousLearningLoop, ContinuousLearningLoopConfig, PerformanceFeedbackCapture,
+    ModelHotSwapper, ModelPerformanceMonitor, ModelDeploymentAutomation,
+    LearningLoopOrchestrator, AutonomousLearningSystem
+)
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase, DEXError, DEXConnectionError
 from src.integration.ml_rl_bridge import MLRLBridge, MLRLConfig
@@ -110,6 +116,17 @@ class LiveModeConfig:
     # ML-RL integration
     enable_ml_rl_integration: bool = True
     ml_rl_weight: Decimal = Decimal("0.6")  # 60% ML-RL, 40% traditional signals
+    
+    # Continuous learning integration
+    enable_continuous_learning: bool = True
+    enable_model_hot_swapping: bool = True
+    enable_automated_deployment: bool = True
+    enable_performance_monitoring: bool = True
+    enable_performance_feedback: bool = True
+    learning_check_frequency_seconds: int = 30
+    learning_trigger_threshold: int = 1000
+    deployment_safety_threshold: Decimal = Decimal("0.05")
+    performance_rollback_threshold: Decimal = Decimal("-0.10")
     
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -854,7 +871,16 @@ class LiveMode(ModeBase):
             experience_buffer_size=params.get("experience_buffer_size", 10000),
             enable_rl_feedback=params.get("enable_rl_feedback", True),
             enable_ml_rl_integration=params.get("enable_ml_rl_integration", True),
-            dex_preference_order=params.get("dex_preference_order", ["jupiter", "uniswap_v3", "hyperliquid"])
+            dex_preference_order=params.get("dex_preference_order", ["jupiter", "uniswap_v3", "hyperliquid"]),
+            enable_continuous_learning=params.get("enable_continuous_learning", True),
+            enable_model_hot_swapping=params.get("enable_model_hot_swapping", True),
+            enable_automated_deployment=params.get("enable_automated_deployment", True),
+            enable_performance_monitoring=params.get("enable_performance_monitoring", True),
+            enable_performance_feedback=params.get("enable_performance_feedback", True),
+            learning_check_frequency_seconds=params.get("learning_check_frequency_seconds", 30),
+            learning_trigger_threshold=params.get("learning_trigger_threshold", 1000),
+            deployment_safety_threshold=Decimal(str(params.get("deployment_safety_threshold", 0.05))),
+            performance_rollback_threshold=Decimal(str(params.get("performance_rollback_threshold", -0.10)))
         )
         
         # Core components
@@ -872,6 +898,16 @@ class LiveMode(ModeBase):
         
         # Experience collection
         self.experience_collector: Optional[TradingExperienceCollector] = None
+        
+        # Continuous learning integration
+        self.continuous_learning_engine: Optional[ContinuousLearningEngine] = None
+        self.continuous_learning_loop: Optional[ContinuousLearningLoop] = None
+        self.performance_feedback_capture: Optional[PerformanceFeedbackCapture] = None
+        self.model_hot_swapper: Optional[ModelHotSwapper] = None
+        self.model_performance_monitor: Optional[ModelPerformanceMonitor] = None
+        self.model_deployment_automation: Optional[ModelDeploymentAutomation] = None
+        self.learning_loop_orchestrator: Optional[LearningLoopOrchestrator] = None
+        self.autonomous_learning_system: Optional[AutonomousLearningSystem] = None
         
         # Live mode metrics
         self.live_metrics = LiveModeMetrics(session_start_time=datetime.now())
@@ -931,8 +967,7 @@ class LiveMode(ModeBase):
             if self.live_config.enable_ml_rl_integration:
                 ml_rl_config = MLRLConfig(
                     ml_weight=float(self.live_config.ml_rl_weight),
-                    rl_weight=1.0 - float(self.live_config.ml_rl_weight),
-                    enable_ensemble=True
+                    rl_weight=1.0 - float(self.live_config.ml_rl_weight)
                 )
                 # Would initialize ML-RL bridge here
                 # self.ml_rl_bridge = MLRLBridge(ml_rl_config, ml_analyzer, rl_agent)
@@ -954,8 +989,65 @@ class LiveMode(ModeBase):
                 
                 self.experience_collector = TradingExperienceCollector(experience_config, replay_buffer)
             
+            # Initialize continuous learning integration if enabled
+            if self.live_config.enable_continuous_learning:
+                # Initialize continuous learning engine
+                cl_config = ContinuousLearningConfig(
+                    training_trigger_threshold=self.live_config.learning_trigger_threshold,
+                    min_improvement_threshold=float(self.live_config.deployment_safety_threshold),
+                    performance_rollback_threshold=float(self.live_config.performance_rollback_threshold)
+                )
+                
+                # Create mock DQN agent for integration (would be injected in real implementation)
+                from src.rl_agent.dqn_agent import DQNTradingAgent
+                from src.rl_agent.base import AgentConfig
+                
+                # Create minimal agent config for testing
+                agent_config = AgentConfig()
+                mock_dqn_agent = DQNTradingAgent(config=agent_config)
+                
+                # Initialize continuous learning engine with experience buffer
+                replay_buffer = self.experience_collector.replay_buffer if self.experience_collector else ExperienceReplayBuffer(replay_config)
+                
+                self.continuous_learning_engine = ContinuousLearningEngine(
+                    config=cl_config,
+                    replay_buffer=replay_buffer,
+                    dqn_agent=mock_dqn_agent,
+                    experience_collector=self.experience_collector
+                )
+                
+                # Initialize continuous learning loop configuration
+                cl_loop_config = ContinuousLearningLoopConfig(
+                    enable_continuous_learning=self.live_config.enable_continuous_learning,
+                    enable_model_hot_swapping=self.live_config.enable_model_hot_swapping,
+                    enable_automated_deployment=self.live_config.enable_automated_deployment,
+                    enable_performance_monitoring=self.live_config.enable_performance_monitoring,
+                    enable_performance_feedback=self.live_config.enable_performance_feedback,
+                    learning_check_frequency_seconds=self.live_config.learning_check_frequency_seconds,
+                    learning_trigger_threshold=self.live_config.learning_trigger_threshold,
+                    deployment_safety_threshold=float(self.live_config.deployment_safety_threshold),
+                    performance_rollback_threshold=float(self.live_config.performance_rollback_threshold)
+                )
+                
+                # Initialize continuous learning loop
+                self.continuous_learning_loop = ContinuousLearningLoop(
+                    continuous_learning_engine=self.continuous_learning_engine,
+                    experience_collector=self.experience_collector,
+                    dqn_agent=mock_dqn_agent,
+                    config=cl_loop_config
+                )
+                
+                # Store references to sub-components for direct access
+                self.performance_feedback_capture = self.continuous_learning_loop.performance_capture
+                self.model_hot_swapper = self.continuous_learning_loop.hot_swapper
+                self.model_performance_monitor = self.continuous_learning_loop.performance_monitor
+                self.model_deployment_automation = self.continuous_learning_loop.deployment_automation
+                self.learning_loop_orchestrator = self.continuous_learning_loop.orchestrator
+                self.autonomous_learning_system = self.continuous_learning_loop.autonomous_system
+            
             self._set_status(ModeStatus.INACTIVE)
-            self.logger.info("Live mode initialization completed")
+            self.logger.info("Live mode initialization completed",
+                           continuous_learning_enabled=self.live_config.enable_continuous_learning)
             
         except Exception as e:
             self.logger.error("Live mode initialization failed", error=str(e))
@@ -980,6 +1072,10 @@ class LiveMode(ModeBase):
             if self.experience_collector:
                 await self.experience_collector.start_collection()
             
+            # Start continuous learning loop if enabled
+            if self.continuous_learning_loop:
+                await self.continuous_learning_loop.start()
+            
             # Record session start
             self.start_time = datetime.now()
             self.live_metrics.session_start_time = self.start_time
@@ -999,6 +1095,10 @@ class LiveMode(ModeBase):
         
         try:
             # Stop components in reverse order
+            # Stop continuous learning loop first
+            if self.continuous_learning_loop:
+                await self.continuous_learning_loop.stop()
+            
             if self.experience_collector:
                 await self.experience_collector.stop_collection()
             
@@ -1079,8 +1179,29 @@ class LiveMode(ModeBase):
                     self.live_metrics.total_trades += 1
                     self.live_metrics.successful_trades += 1
                     self.live_metrics.last_trade_time = datetime.now()
+                    
+                    # Capture performance feedback for continuous learning
+                    if (self.performance_feedback_capture and 
+                        self.live_config.enable_performance_feedback):
+                        try:
+                            await self.performance_feedback_capture.capture_trade_performance(
+                                market_state, trading_result,
+                                trading_result.portfolio_value_before or float(self.portfolio.total_value),
+                                trading_result.portfolio_value_after or float(self.portfolio.total_value)
+                            )
+                        except Exception as e:
+                            self.logger.warning("Failed to capture performance feedback", error=str(e))
                 else:
                     self.live_metrics.failed_trades += 1
+            
+            # Check for learning triggers (background check)
+            if (self.continuous_learning_loop and 
+                self.live_config.enable_continuous_learning):
+                try:
+                    # This is a quick check that doesn't block trading
+                    asyncio.create_task(self._check_learning_triggers_background())
+                except Exception as e:
+                    self.logger.warning("Error scheduling learning trigger check", error=str(e))
             
             # Update metrics
             self._update_live_metrics()
@@ -1400,6 +1521,108 @@ class LiveMode(ModeBase):
         })
         
         return result
+    
+    # Continuous Learning Integration Methods
+    
+    async def _check_learning_triggers_background(self) -> None:
+        """Background check for learning triggers (non-blocking)."""
+        try:
+            if self.continuous_learning_loop:
+                should_trigger = await self.continuous_learning_loop.should_trigger_learning()
+                if should_trigger:
+                    self.logger.info("Learning trigger detected, scheduling learning cycle")
+                    # Schedule learning cycle in background
+                    asyncio.create_task(self._trigger_learning_cycle_background())
+        except Exception as e:
+            self.logger.error("Error checking learning triggers", error=str(e))
+    
+    async def _trigger_learning_cycle_background(self) -> None:
+        """Trigger learning cycle in background (non-blocking)."""
+        try:
+            if self.continuous_learning_loop:
+                result = await self.continuous_learning_loop.trigger_learning_cycle()
+                self.logger.info("Background learning cycle completed", result=result)
+        except Exception as e:
+            self.logger.error("Background learning cycle failed", error=str(e))
+    
+    async def trigger_model_swap(self, new_model_path: str) -> bool:
+        """Trigger model hot-swap (for external calls)."""
+        if not self.model_hot_swapper:
+            self.logger.warning("Model hot-swapper not available")
+            return False
+        
+        try:
+            # Check if swap is safe
+            active_positions = len([p for p in self.portfolio.positions.values() 
+                                  if p.status == PositionStatus.OPEN])
+            
+            if await self.model_hot_swapper.can_swap_safely(active_positions):
+                success = await self.model_hot_swapper.swap_model(new_model_path)
+                if success:
+                    self.logger.info("Model hot-swap successful", model_path=new_model_path)
+                return success
+            else:
+                self.logger.info("Model swap deferred due to safety constraints")
+                return False
+        except Exception as e:
+            self.logger.error("Model swap failed", error=str(e))
+            return False
+    
+    async def trigger_learning_cycle(self) -> Dict[str, Any]:
+        """Manually trigger learning cycle (for external calls)."""
+        if not self.learning_loop_orchestrator:
+            raise ValueError("Learning loop orchestrator not available")
+        
+        try:
+            if await self.learning_loop_orchestrator.check_learning_conditions():
+                return await self.learning_loop_orchestrator.execute_learning_cycle()
+            else:
+                return {
+                    "triggered": False,
+                    "reason": "Learning conditions not met"
+                }
+        except Exception as e:
+            self.logger.error("Manual learning cycle failed", error=str(e))
+            raise
+    
+    async def deploy_new_model(self, model_info: Dict[str, Any]) -> bool:
+        """Deploy new model with validation (for external calls)."""
+        if not self.model_deployment_automation:
+            self.logger.warning("Model deployment automation not available")
+            return False
+        
+        try:
+            # Validate model
+            validation_result = await self.model_deployment_automation.validate_new_model(model_info)
+            
+            if validation_result.get("safety_checks_passed", False):
+                return await self.model_deployment_automation.deploy_model(model_info)
+            else:
+                self.logger.warning("Model validation failed", 
+                                  validation_result=validation_result)
+                return False
+        except Exception as e:
+            self.logger.error("Model deployment failed", error=str(e))
+            return False
+    
+    async def check_model_performance(self) -> Dict[str, Any]:
+        """Check current model performance (for external calls)."""
+        if not self.model_performance_monitor:
+            raise ValueError("Model performance monitor not available")
+        
+        try:
+            performance_eval = await self.model_performance_monitor.evaluate_current_performance()
+            
+            # If rollback is needed, trigger it
+            if performance_eval.get("should_rollback", False):
+                self.logger.warning("Performance degradation detected, triggering rollback")
+                rollback_success = await self.model_performance_monitor.rollback_to_previous_model()
+                performance_eval["rollback_executed"] = rollback_success
+            
+            return performance_eval
+        except Exception as e:
+            self.logger.error("Performance check failed", error=str(e))
+            raise
 
 
 # Additional utility classes for position and order management

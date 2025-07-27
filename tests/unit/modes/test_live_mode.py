@@ -1010,5 +1010,382 @@ class TestLiveModeIntegration:
                 collector_instance.capture_post_trade_result.assert_called_once()
 
 
+# Continuous Learning Loop Integration Tests
+class TestContinuousLearningLoopIntegration:
+    """Test suite for continuous learning loop integration in LiveMode."""
+    
+    async def test_continuous_learning_loop_initialization(self, live_mode_config, mock_portfolio):
+        """Test that continuous learning loop is properly initialized in LiveMode."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["learning_check_frequency_seconds"] = 30
+        
+        with patch('src.modes.live_mode.ContinuousLearningLoop') as mock_loop:
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            
+            # Should initialize continuous learning loop
+            mock_loop.assert_called_once()
+            loop_instance = mock_loop.return_value
+            assert live_mode.continuous_learning_loop is loop_instance
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_background_learning_check_triggered(self, live_mode_config, mock_portfolio):
+        """Test that background learning checks are triggered during live trading."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        
+        with patch('src.modes.live_mode.ContinuousLearningLoop') as mock_loop:
+            mock_loop_instance = mock_loop.return_value
+            mock_loop_instance.should_trigger_learning.return_value = True
+            mock_loop_instance.trigger_learning_cycle.return_value = {
+                "training_triggered": True,
+                "new_model_version": "v1.2.0",
+                "performance_improved": True,
+                "model_activated": True
+            }
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate multiple trading ticks to trigger learning check
+            market_state = create_mock_market_state()
+            
+            for _ in range(3):  # Simulate multiple ticks
+                await live_mode.process_tick(market_state)
+                await asyncio.sleep(0.1)  # Small delay to simulate time passage
+            
+            # Should check for learning triggers
+            mock_loop_instance.should_trigger_learning.assert_called()
+            mock_loop_instance.trigger_learning_cycle.assert_called()
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_model_hot_swapping_during_live_trading(self, live_mode_config, mock_portfolio):
+        """Test that models can be hot-swapped during live trading without interruption."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["enable_model_hot_swapping"] = True
+        
+        with patch('src.modes.live_mode.ContinuousLearningLoop') as mock_loop, \
+             patch('src.modes.live_mode.ModelHotSwapper') as mock_swapper:
+            
+            mock_swapper_instance = mock_swapper.return_value
+            mock_swapper_instance.can_swap_safely.return_value = True
+            mock_swapper_instance.swap_model.return_value = True
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Trigger model swap
+            new_model_path = "/models/v1.2.0/model.pth"
+            await live_mode.trigger_model_swap(new_model_path)
+            
+            # Should perform safety checks and swap model
+            mock_swapper_instance.can_swap_safely.assert_called_once()
+            mock_swapper_instance.swap_model.assert_called_once_with(new_model_path)
+            
+            # Trading should continue uninterrupted
+            market_state = create_mock_market_state()
+            action = await live_mode.process_tick(market_state)
+            assert action is not None  # Still able to make trading decisions
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_performance_feedback_capture(self, live_mode_config, mock_portfolio):
+        """Test that trading performance feedback is captured for learning evaluation."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["enable_performance_feedback"] = True
+        
+        with patch('src.modes.live_mode.PerformanceFeedbackCapture') as mock_feedback:
+            mock_feedback_instance = mock_feedback.return_value
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate profitable trade
+            market_state = create_mock_market_state()
+            
+            with patch.object(live_mode, '_execute_live_trade') as mock_execute:
+                trading_result = TradingResult(
+                    action=TradeAction.BUY,
+                    token="TEST_TOKEN",
+                    executed_at=datetime.now(),
+                    price=1.0,
+                    quantity=1000.0,
+                    value_usd=1000.0,
+                    success=True,
+                    realized_pnl=50.0,
+                    portfolio_value_before=50000.0,
+                    portfolio_value_after=50050.0
+                )
+                mock_execute.return_value = trading_result
+                
+                await live_mode.process_tick(market_state)
+                
+                # Should capture performance feedback
+                mock_feedback_instance.capture_trade_performance.assert_called_once()
+                args = mock_feedback_instance.capture_trade_performance.call_args[0]
+                assert args[0] == market_state  # market state
+                assert args[1] == trading_result  # trading result
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_learning_loop_orchestrator_manages_complete_cycle(self, live_mode_config, mock_portfolio):
+        """Test that learning loop orchestrator manages the complete learning cycle."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        
+        with patch('src.modes.live_mode.LearningLoopOrchestrator') as mock_orchestrator:
+            mock_orchestrator_instance = mock_orchestrator.return_value
+            mock_orchestrator_instance.check_learning_conditions.return_value = True
+            mock_orchestrator_instance.execute_learning_cycle.return_value = {
+                "data_preparation": {"status": "completed", "experiences_used": 1500},
+                "training": {"status": "completed", "episodes": 100, "final_reward": 0.85},
+                "validation": {"status": "completed", "improvement": 0.12},
+                "deployment": {"status": "completed", "model_version": "v1.3.0"},
+                "feedback_integration": {"status": "completed", "feedback_samples": 50}
+            }
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Trigger learning cycle
+            await live_mode.trigger_learning_cycle()
+            
+            # Should orchestrate complete cycle
+            mock_orchestrator_instance.check_learning_conditions.assert_called_once()
+            mock_orchestrator_instance.execute_learning_cycle.assert_called_once()
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_model_deployment_automation_with_safety_checks(self, live_mode_config, mock_portfolio):
+        """Test automated model deployment with comprehensive safety checks."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["enable_automated_deployment"] = True
+        live_mode_config.parameters["deployment_safety_threshold"] = 0.05  # 5% improvement required
+        
+        with patch('src.modes.live_mode.ModelDeploymentAutomation') as mock_deployment:
+            mock_deployment_instance = mock_deployment.return_value
+            mock_deployment_instance.validate_new_model.return_value = {
+                "performance_improvement": 0.08,  # 8% improvement
+                "safety_checks_passed": True,
+                "rollback_safety": True,
+                "validation_score": 0.92
+            }
+            mock_deployment_instance.deploy_model.return_value = True
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate new model ready for deployment
+            new_model_info = {
+                "model_path": "/models/v1.4.0/model.pth",
+                "performance_metrics": {"reward": 0.88, "win_rate": 0.68},
+                "training_episodes": 150
+            }
+            
+            await live_mode.deploy_new_model(new_model_info)
+            
+            # Should validate and deploy model
+            mock_deployment_instance.validate_new_model.assert_called_once()
+            mock_deployment_instance.deploy_model.assert_called_once()
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_continuous_learning_integration_with_experience_collection(self, live_mode_config, mock_portfolio):
+        """Test integration between continuous learning and experience collection."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["enable_experience_collection"] = True
+        live_mode_config.parameters["learning_trigger_threshold"] = 1000
+        
+        with patch('src.modes.live_mode.ContinuousLearningLoop') as mock_loop, \
+             patch('src.modes.experience_collector.TradingExperienceCollector') as mock_collector:
+            
+            mock_collector_instance = mock_collector.return_value
+            mock_collector_instance.get_buffer_size.return_value = 1200  # Above threshold
+            mock_collector_instance.should_trigger_training.return_value = True
+            
+            mock_loop_instance = mock_loop.return_value
+            mock_loop_instance.check_experience_buffer.return_value = True
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate trading that adds experiences
+            market_state = create_mock_market_state()
+            
+            with patch.object(live_mode, '_execute_live_trade') as mock_execute:
+                mock_execute.return_value = TradingResult(
+                    action=TradeAction.BUY,
+                    token="TEST_TOKEN",
+                    executed_at=datetime.now(),
+                    price=1.0,
+                    quantity=1000.0,
+                    value_usd=1000.0,
+                    success=True
+                )
+                
+                await live_mode.process_tick(market_state)
+                
+                # Should check experience buffer for learning trigger
+                mock_loop_instance.check_experience_buffer.assert_called()
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_learning_cycle_error_handling_and_recovery(self, live_mode_config, mock_portfolio):
+        """Test error handling and recovery during learning cycles."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        
+        with patch('src.modes.live_mode.ContinuousLearningLoop') as mock_loop:
+            mock_loop_instance = mock_loop.return_value
+            
+            # Simulate learning cycle failure
+            mock_loop_instance.trigger_learning_cycle.side_effect = Exception("Training failed")
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Should handle learning cycle failure gracefully
+            try:
+                await live_mode.trigger_learning_cycle()
+            except Exception:
+                pass  # Expected to catch and handle
+            
+            # Trading should continue despite learning failure
+            market_state = create_mock_market_state()
+            action = await live_mode.process_tick(market_state)
+            assert action is not None  # Still able to trade
+            
+            # Should log error and continue
+            assert live_mode.status == ModeStatus.ACTIVE
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_learning_performance_monitoring_and_rollback(self, live_mode_config, mock_portfolio):
+        """Test performance monitoring and automatic rollback of poorly performing models."""
+        live_mode_config.parameters["enable_continuous_learning"] = True
+        live_mode_config.parameters["enable_performance_monitoring"] = True
+        live_mode_config.parameters["performance_rollback_threshold"] = -0.10  # 10% degradation
+        
+        with patch('src.modes.live_mode.ModelPerformanceMonitor') as mock_monitor:
+            mock_monitor_instance = mock_monitor.return_value
+            mock_monitor_instance.evaluate_current_performance.return_value = {
+                "performance_change": -0.15,  # 15% degradation
+                "should_rollback": True,
+                "previous_model_available": True
+            }
+            mock_monitor_instance.rollback_to_previous_model.return_value = True
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate performance check triggering rollback
+            await live_mode.check_model_performance()
+            
+            # Should detect degradation and rollback
+            mock_monitor_instance.evaluate_current_performance.assert_called_once()
+            mock_monitor_instance.rollback_to_previous_model.assert_called_once()
+    
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_autonomous_learning_system_complete_integration(self, live_mode_config, mock_portfolio):
+        """Test complete autonomous learning system integration."""
+        live_mode_config.parameters.update({
+            "enable_continuous_learning": True,
+            "enable_experience_collection": True,
+            "enable_model_hot_swapping": True,
+            "enable_automated_deployment": True,
+            "enable_performance_monitoring": True,
+            "learning_check_frequency_seconds": 10,
+            "learning_trigger_threshold": 500,
+            "deployment_safety_threshold": 0.03
+        })
+        
+        with patch('src.modes.live_mode.AutonomousLearningSystem') as mock_system:
+            mock_system_instance = mock_system.return_value
+            mock_system_instance.run_complete_cycle.return_value = {
+                "cycle_id": "cycle_001",
+                "phases": {
+                    "data_collection": {"status": "completed", "experiences": 650},
+                    "trigger_evaluation": {"status": "completed", "triggered": True},
+                    "training": {"status": "completed", "episodes": 75},
+                    "validation": {"status": "completed", "passed": True},
+                    "deployment": {"status": "completed", "model_id": "v1.5.0"},
+                    "monitoring": {"status": "active", "baseline_established": True}
+                },
+                "performance_improvement": 0.06,
+                "cycle_duration_minutes": 12.5
+            }
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode.initialize()
+            await live_mode.start()
+            
+            # Simulate extended trading session that triggers multiple learning cycles
+            market_state = create_mock_market_state()
+            
+            for i in range(10):  # Simulate 10 trading ticks
+                market_state.price_usd = 1.0 + (i * 0.1)  # Varying price
+                await live_mode.process_tick(market_state)
+                await asyncio.sleep(0.01)  # Small delay
+            
+            # Should have initiated autonomous learning cycle
+            mock_system_instance.run_complete_cycle.assert_called()
+            
+            # Verify system remains active and continues trading
+            assert live_mode.status == ModeStatus.ACTIVE
+            
+            # Final tick should still work
+            final_action = await live_mode.process_tick(market_state)
+            assert final_action is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
