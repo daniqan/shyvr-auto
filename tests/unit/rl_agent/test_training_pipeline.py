@@ -545,3 +545,73 @@ class TestTrainingPipelineIntegration:
             different_from_initial = sum(1 for p in priorities if abs(p - initial_max_priority) > 1e-6)
             assert different_from_initial > 0, \
                 f"Expected some priorities to change from initial {initial_max_priority}, but all remained the same"
+    
+    def test_standard_vs_prioritized_replay_integration(self, full_training_setup):
+        """Test that both standard and prioritized replay buffers work correctly"""
+        tokens, price_data = full_training_setup
+        
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline, TrainingConfig
+        from src.rl_agent.experience_replay import PrioritizedExperienceReplayBuffer, ExperienceReplayBuffer
+        
+        # Test with standard replay buffer
+        standard_config = TrainingConfig(
+            num_episodes=1,
+            max_steps_per_episode=30,
+            use_prioritized_replay=False,  # Standard replay
+            batch_size=8,
+            replay_buffer_min_size=8
+        )
+        
+        standard_pipeline = DQNTrainingPipeline(
+            config=standard_config,
+            tokens=tokens,
+            historical_data=price_data
+        )
+        
+        # Verify we're using standard replay
+        assert isinstance(standard_pipeline.replay_buffer, ExperienceReplayBuffer)
+        assert not isinstance(standard_pipeline.replay_buffer, PrioritizedExperienceReplayBuffer)
+        
+        # Run training with standard replay buffer
+        standard_results = standard_pipeline.train()
+        assert standard_results['episodes_completed'] == 1
+        
+        # Test with prioritized replay buffer
+        prioritized_config = TrainingConfig(
+            num_episodes=1,
+            max_steps_per_episode=30,
+            use_prioritized_replay=True,  # Prioritized replay
+            batch_size=8,
+            replay_buffer_min_size=8
+        )
+        
+        prioritized_pipeline = DQNTrainingPipeline(
+            config=prioritized_config,
+            tokens=tokens,
+            historical_data=price_data
+        )
+        
+        # Verify we're using prioritized replay
+        assert isinstance(prioritized_pipeline.replay_buffer, PrioritizedExperienceReplayBuffer)
+        
+        # Run training with prioritized replay buffer
+        prioritized_results = prioritized_pipeline.train()
+        assert prioritized_results['episodes_completed'] == 1
+        
+        # Both should complete successfully
+        assert 'training_time' in standard_results
+        assert 'training_time' in prioritized_results
+        assert 'final_metrics' in standard_results
+        assert 'final_metrics' in prioritized_results
+        
+        # Both should have collected metrics
+        assert len(standard_pipeline.metrics.episode_rewards) == 1
+        assert len(prioritized_pipeline.metrics.episode_rewards) == 1
+        
+        # Verify that standard replay buffer doesn't have update_priorities method called
+        # (no errors should occur, it should gracefully handle the missing method)
+        assert not hasattr(standard_pipeline.replay_buffer, 'priorities')
+        
+        # Verify that prioritized replay buffer has priorities that were potentially updated
+        assert hasattr(prioritized_pipeline.replay_buffer, 'priorities')
+        assert len(prioritized_pipeline.replay_buffer.priorities) > 0
