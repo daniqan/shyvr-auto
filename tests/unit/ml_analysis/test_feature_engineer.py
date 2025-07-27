@@ -12,6 +12,7 @@ from src.utils.base import Chain
 from src.discovery.base import DiscoveredToken, TokenStatus
 from src.ml_analysis.feature_engineer import FeatureEngineer
 from src.ml_analysis.base import TechnicalIndicators, MarketFeatures, FeatureEngineeringError
+from unittest.mock import AsyncMock, patch
 
 
 class TestFeatureEngineer:
@@ -20,7 +21,7 @@ class TestFeatureEngineer:
     @pytest.fixture
     def feature_engineer(self):
         """Create feature engineer for testing"""
-        return FeatureEngineer(cache_ttl_minutes=5)
+        return FeatureEngineer(cache_ttl_minutes=5, enable_live_data=False)  # Disable live data for tests
     
     @pytest.fixture
     def sample_token(self):
@@ -142,16 +143,24 @@ class TestFeatureEngineer:
         
         assert isinstance(features, MarketFeatures)
         
-        # Check default values are set
+        # Check placeholder values are set (since live_data=False)
         assert features.fear_greed_index == 50.0
+        assert features.fear_greed_classification == "Neutral"
         assert features.market_trend == "sideways"
         assert features.volatility_regime == "medium"
         assert features.btc_correlation == 0.5
         assert features.eth_correlation == 0.4
+        assert features.btc_dominance == 40.0
+        assert features.eth_dominance == 15.0
+        assert features.stablecoin_dominance == 10.0
         assert features.market_beta == 1.0
+        assert features.total_value_locked == 100e9
+        assert features.tvl_change_24h == 0.0
+        assert features.active_protocols == 300
         assert features.social_score == 0.5
-        assert features.mention_volume == 100
+        assert features.mention_volume == 1000
         assert features.sentiment_trend == 0.0
+        assert features.influencer_sentiment == 0.5
     
     @pytest.mark.asyncio
     async def test_calculate_market_features_caching(self, feature_engineer):
@@ -498,3 +507,183 @@ class TestFeatureEngineer:
         
         assert len(feature_engineer._indicator_cache) == 0
         assert feature_engineer._market_cache is None
+
+
+class TestFeatureEngineerLiveData:
+    """Test FeatureEngineer with live data enabled"""
+    
+    @pytest.fixture
+    def live_feature_engineer(self):
+        """Create feature engineer with live data enabled"""
+        return FeatureEngineer(
+            cache_ttl_minutes=5, 
+            coingecko_api_key="test_key",
+            enable_live_data=True
+        )
+    
+    @pytest.mark.asyncio
+    async def test_calculate_market_features_live_data(self, live_feature_engineer):
+        """Test market features calculation with live data"""
+        # Mock the market aggregator
+        mock_features = MarketFeatures(
+            fear_greed_index=65.0,
+            fear_greed_classification="Greed",
+            market_trend="bull",
+            volatility_regime="medium",
+            btc_dominance=42.0,
+            eth_dominance=18.0,
+            total_value_locked=80e9,
+            social_score=0.7
+        )
+        
+        live_feature_engineer.market_aggregator.get_market_features = AsyncMock(return_value=mock_features)
+        
+        result = await live_feature_engineer.calculate_market_features()
+        
+        assert isinstance(result, MarketFeatures)
+        assert result.fear_greed_index == 65.0
+        assert result.fear_greed_classification == "Greed"
+        assert result.market_trend == "bull"
+        assert result.btc_dominance == 42.0
+        assert result.total_value_locked == 80e9
+        assert result.social_score == 0.7
+    
+    @pytest.mark.asyncio
+    async def test_calculate_market_features_live_data_fallback(self, live_feature_engineer):
+        """Test market features calculation with live data API failure fallback"""
+        # Mock the market aggregator to fail
+        live_feature_engineer.market_aggregator.get_market_features = AsyncMock(
+            side_effect=Exception("API error")
+        )
+        
+        result = await live_feature_engineer.calculate_market_features()
+        
+        # Should fallback to placeholder values
+        assert isinstance(result, MarketFeatures)
+        assert result.fear_greed_index == 50.0
+        assert result.market_trend == "sideways"
+        assert result.total_value_locked == 100e9
+    
+    @pytest.mark.asyncio
+    async def test_calculate_market_features_with_chain_param(self, live_feature_engineer):
+        """Test market features calculation with specific chain parameter"""
+        mock_features = MarketFeatures(fear_greed_index=60.0)
+        live_feature_engineer.market_aggregator.get_market_features = AsyncMock(return_value=mock_features)
+        
+        result = await live_feature_engineer.calculate_market_features(primary_chain="solana")
+        
+        # Verify the chain parameter was passed
+        live_feature_engineer.market_aggregator.get_market_features.assert_called_once()
+        call_args = live_feature_engineer.market_aggregator.get_market_features.call_args
+        assert call_args[1]["primary_chain"].value == "solana"
+    
+    @pytest.mark.asyncio
+    async def test_calculate_market_features_invalid_chain(self, live_feature_engineer):
+        """Test market features calculation with invalid chain parameter"""
+        mock_features = MarketFeatures(fear_greed_index=60.0)
+        live_feature_engineer.market_aggregator.get_market_features = AsyncMock(return_value=mock_features)
+        
+        result = await live_feature_engineer.calculate_market_features(primary_chain="invalid_chain")
+        
+        # Should default to Ethereum
+        call_args = live_feature_engineer.market_aggregator.get_market_features.call_args
+        assert call_args[1]["primary_chain"].value == "ethereum"
+    
+    @pytest.mark.asyncio
+    async def test_health_check(self, live_feature_engineer):
+        """Test health check functionality"""
+        # Mock market aggregator health check
+        mock_health = {
+            "fear_greed": True,
+            "defi_llama": True,
+            "coingecko": False,
+            "onchain": True,
+            "social": True
+        }
+        live_feature_engineer.market_aggregator.health_check = AsyncMock(return_value=mock_health)
+        
+        health = await live_feature_engineer.health_check()
+        
+        assert isinstance(health, dict)
+        assert "cache_size" in health
+        assert "market_cache_valid" in health
+        assert "live_data_enabled" in health
+        assert health["live_data_enabled"] is True
+        assert "market_data_sources" in health
+        assert health["market_data_sources"] == mock_health
+        assert health["market_data_healthy"] is False  # One service is down
+    
+    @pytest.mark.asyncio
+    async def test_health_check_aggregator_error(self, live_feature_engineer):
+        """Test health check with aggregator error"""
+        live_feature_engineer.market_aggregator.health_check = AsyncMock(
+            side_effect=Exception("Health check failed")
+        )
+        
+        health = await live_feature_engineer.health_check()
+        
+        assert "market_data_error" in health
+        assert health["market_data_error"] == "Health check failed"
+        assert health["market_data_healthy"] is False
+    
+    @pytest.mark.asyncio
+    async def test_close(self, live_feature_engineer):
+        """Test resource cleanup"""
+        live_feature_engineer.market_aggregator.close = AsyncMock()
+        
+        await live_feature_engineer.close()
+        
+        live_feature_engineer.market_aggregator.close.assert_called_once()
+    
+    def test_clear_cache_with_aggregator(self, live_feature_engineer):
+        """Test cache clearing with market aggregator"""
+        from unittest.mock import MagicMock
+        
+        # Mock aggregator clear_cache
+        live_feature_engineer.market_aggregator.clear_cache = MagicMock()
+        
+        # Add something to cache
+        live_feature_engineer._indicator_cache["test"] = (datetime.now(), TechnicalIndicators())
+        live_feature_engineer._market_cache = (datetime.now(), MarketFeatures())
+        
+        live_feature_engineer.clear_cache()
+        
+        # Verify all caches were cleared
+        assert len(live_feature_engineer._indicator_cache) == 0
+        assert live_feature_engineer._market_cache is None
+        live_feature_engineer.market_aggregator.clear_cache.assert_called_once()
+
+
+class TestFeatureEngineerDisabledLiveData:
+    """Test FeatureEngineer with live data disabled"""
+    
+    @pytest.fixture
+    def disabled_feature_engineer(self):
+        """Create feature engineer with live data disabled"""
+        return FeatureEngineer(enable_live_data=False)
+    
+    @pytest.mark.asyncio
+    async def test_health_check_disabled(self, disabled_feature_engineer):
+        """Test health check with live data disabled"""
+        health = await disabled_feature_engineer.health_check()
+        
+        assert health["live_data_enabled"] is False
+        assert health["market_data_healthy"] is True  # Should be True in placeholder mode
+        assert "market_data_sources" in health
+    
+    @pytest.mark.asyncio
+    async def test_close_disabled(self, disabled_feature_engineer):
+        """Test close with live data disabled"""
+        # Should not raise an error
+        await disabled_feature_engineer.close()
+    
+    def test_clear_cache_disabled(self, disabled_feature_engineer):
+        """Test cache clearing with live data disabled"""
+        disabled_feature_engineer._indicator_cache["test"] = (datetime.now(), TechnicalIndicators())
+        disabled_feature_engineer._market_cache = (datetime.now(), MarketFeatures())
+        
+        # Should not raise an error
+        disabled_feature_engineer.clear_cache()
+        
+        assert len(disabled_feature_engineer._indicator_cache) == 0
+        assert disabled_feature_engineer._market_cache is None

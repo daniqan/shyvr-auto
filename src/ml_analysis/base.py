@@ -95,32 +95,76 @@ class TechnicalIndicators:
 class MarketFeatures:
     """Market context features for ML prediction"""
     # Market sentiment
-    fear_greed_index: Optional[float] = None      # Market fear/greed index
+    fear_greed_index: Optional[float] = None      # Market fear/greed index (0-100)
+    fear_greed_classification: Optional[str] = None  # "Fear", "Greed", etc.
     market_trend: Optional[str] = None            # Bull/bear/sideways
     volatility_regime: Optional[str] = None       # High/medium/low volatility
     
     # Cross-asset correlations
     btc_correlation: Optional[float] = None       # Correlation with Bitcoin
     eth_correlation: Optional[float] = None       # Correlation with Ethereum
+    btc_dominance: Optional[float] = None         # Bitcoin market dominance %
+    eth_dominance: Optional[float] = None         # Ethereum market dominance %
+    stablecoin_dominance: Optional[float] = None  # Stablecoin dominance %
     market_beta: Optional[float] = None           # Beta relative to market
     
+    # DeFi ecosystem metrics
+    total_value_locked: Optional[float] = None    # Total DeFi TVL in USD
+    tvl_change_24h: Optional[float] = None        # 24h TVL change %
+    tvl_change_7d: Optional[float] = None         # 7d TVL change %
+    defi_dominance: Optional[float] = None        # DeFi TVL / Total market cap
+    active_protocols: Optional[int] = None        # Number of active DeFi protocols
+    
+    # On-chain activity metrics
+    transaction_count_24h: Optional[int] = None   # 24h transaction count
+    active_addresses_24h: Optional[int] = None    # 24h active addresses
+    transaction_volume_24h: Optional[float] = None  # 24h transaction volume USD
+    network_fees_24h: Optional[float] = None      # 24h network fees USD
+    whale_activity_score: Optional[float] = None  # Large holder activity score
+    
     # Social sentiment
-    social_score: Optional[float] = None          # Aggregated social sentiment
+    social_score: Optional[float] = None          # Aggregated social sentiment (0-1)
     mention_volume: Optional[int] = None          # Social media mentions
     sentiment_trend: Optional[float] = None       # Sentiment change trend
+    influencer_sentiment: Optional[float] = None  # Weighted influencer sentiment
     
     def to_feature_vector(self) -> np.ndarray:
         """Convert market features to numpy feature vector"""
         features = [
+            # Market sentiment features
             self.fear_greed_index or 50.0,
             1.0 if self.market_trend == "bull" else 0.0,
+            1.0 if self.market_trend == "bear" else 0.0,
             1.0 if self.volatility_regime == "high" else 0.0,
+            1.0 if self.volatility_regime == "low" else 0.0,
+            
+            # Correlation and dominance features
             self.btc_correlation or 0.0,
             self.eth_correlation or 0.0,
+            self.btc_dominance or 40.0,
+            self.eth_dominance or 15.0,
+            self.stablecoin_dominance or 10.0,
             self.market_beta or 1.0,
+            
+            # DeFi ecosystem features
+            min(self.total_value_locked or 0, 200e9) / 200e9,  # Normalized to $200B max
+            self.tvl_change_24h or 0.0,
+            self.tvl_change_7d or 0.0,
+            self.defi_dominance or 0.05,
+            min(self.active_protocols or 0, 500) / 500.0,  # Normalized to 500 max
+            
+            # On-chain activity features
+            min(self.transaction_count_24h or 0, 2e6) / 2e6,  # Normalized to 2M max
+            min(self.active_addresses_24h or 0, 1e6) / 1e6,   # Normalized to 1M max
+            min(self.transaction_volume_24h or 0, 50e9) / 50e9,  # Normalized to $50B max
+            min(self.network_fees_24h or 0, 10e6) / 10e6,     # Normalized to $10M max
+            self.whale_activity_score or 0.5,
+            
+            # Social sentiment features
             self.social_score or 0.5,
-            min(self.mention_volume or 0, 1000) / 1000.0,  # Normalized
+            min(self.mention_volume or 0, 10000) / 10000.0,   # Normalized to 10k max
             self.sentiment_trend or 0.0,
+            self.influencer_sentiment or 0.5,
         ]
         return np.array(features, dtype=np.float32)
 

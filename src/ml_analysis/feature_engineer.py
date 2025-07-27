@@ -5,13 +5,14 @@ Technical indicators and market features for ML models
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 import structlog
 
 from src.discovery.base import DiscoveredToken
 from .base import TechnicalIndicators, MarketFeatures, FeatureEngineeringError
+from .market_data_aggregator import MarketDataAggregator
 
 
 logger = structlog.get_logger()
@@ -20,11 +21,24 @@ logger = structlog.get_logger()
 class FeatureEngineer:
     """Feature engineering for ML models"""
     
-    def __init__(self, cache_ttl_minutes: int = 30):
+    def __init__(self, 
+                 cache_ttl_minutes: int = 30,
+                 coingecko_api_key: Optional[str] = None,
+                 enable_live_data: bool = True):
         self.cache_ttl_minutes = cache_ttl_minutes
+        self.enable_live_data = enable_live_data
         self._indicator_cache: Dict[str, Tuple[datetime, TechnicalIndicators]] = {}
         self._market_cache: Optional[Tuple[datetime, MarketFeatures]] = None
         self.logger = structlog.get_logger().bind(component="FeatureEngineer")
+        
+        # Initialize market data aggregator for live data
+        if self.enable_live_data:
+            self.market_aggregator = MarketDataAggregator(
+                coingecko_api_key=coingecko_api_key,
+                cache_ttl=cache_ttl_minutes * 60  # Convert to seconds
+            )
+        else:
+            self.market_aggregator = None
     
     async def calculate_technical_indicators(self, 
                                            token: DiscoveredToken,
@@ -106,9 +120,12 @@ class FeatureEngineer:
                             error=str(e))
             raise FeatureEngineeringError(f"Failed to calculate indicators: {str(e)}")
     
-    async def calculate_market_features(self) -> MarketFeatures:
+    async def calculate_market_features(self, primary_chain: Optional[str] = None) -> MarketFeatures:
         """
-        Calculate market-wide features
+        Calculate market-wide features using live data APIs
+        
+        Args:
+            primary_chain: Primary chain for on-chain metrics (defaults to the most relevant chain)
         
         Returns:
             MarketFeatures object with market context
@@ -120,28 +137,82 @@ class FeatureEngineer:
                 return cached_features
         
         try:
-            features = MarketFeatures()
-            
-            # For now, use placeholder values - in production these would come from APIs
-            features.fear_greed_index = 50.0  # Neutral
-            features.market_trend = "sideways"
-            features.volatility_regime = "medium"
-            features.btc_correlation = 0.5
-            features.eth_correlation = 0.4
-            features.market_beta = 1.0
-            features.social_score = 0.5
-            features.mention_volume = 100
-            features.sentiment_trend = 0.0
+            if self.enable_live_data and self.market_aggregator:
+                # Use live market data from APIs
+                from src.utils.base import Chain
+                
+                # Determine primary chain for on-chain metrics
+                chain = Chain.ETHEREUM  # Default
+                if primary_chain:
+                    try:
+                        chain = Chain(primary_chain.lower())
+                    except ValueError:
+                        self.logger.warning("Invalid chain specified, using Ethereum", chain=primary_chain)
+                
+                features = await self.market_aggregator.get_market_features(primary_chain=chain)
+                
+                self.logger.info("Live market features retrieved", 
+                               fear_greed=features.fear_greed_index,
+                               btc_dominance=features.btc_dominance,
+                               defi_tvl=features.total_value_locked)
+            else:
+                # Fallback to placeholder values for testing/development
+                features = self._get_placeholder_market_features()
+                self.logger.info("Using placeholder market features (live data disabled)")
             
             # Cache the result
             self._market_cache = (datetime.now(), features)
             
-            self.logger.info("Market features calculated")
             return features
             
         except Exception as e:
             self.logger.error("Market feature calculation failed", error=str(e))
-            raise FeatureEngineeringError(f"Failed to calculate market features: {str(e)}")
+            # Fallback to placeholder values if live data fails
+            if self.enable_live_data:
+                self.logger.warning("Falling back to placeholder market features due to API error")
+                features = self._get_placeholder_market_features()
+                self._market_cache = (datetime.now(), features)
+                return features
+            else:
+                raise FeatureEngineeringError(f"Failed to calculate market features: {str(e)}")
+    
+    def _get_placeholder_market_features(self) -> MarketFeatures:
+        """Get placeholder market features for testing/fallback"""
+        return MarketFeatures(
+            # Market sentiment
+            fear_greed_index=50.0,
+            fear_greed_classification="Neutral",
+            market_trend="sideways",
+            volatility_regime="medium",
+            
+            # Cross-asset correlations
+            btc_correlation=0.5,
+            eth_correlation=0.4,
+            btc_dominance=40.0,
+            eth_dominance=15.0,
+            stablecoin_dominance=10.0,
+            market_beta=1.0,
+            
+            # DeFi ecosystem metrics
+            total_value_locked=100e9,  # $100B
+            tvl_change_24h=0.0,
+            tvl_change_7d=0.0,
+            defi_dominance=0.05,
+            active_protocols=300,
+            
+            # On-chain activity metrics
+            transaction_count_24h=1000000,
+            active_addresses_24h=500000,
+            transaction_volume_24h=5e9,
+            network_fees_24h=1e6,
+            whale_activity_score=0.5,
+            
+            # Social sentiment
+            social_score=0.5,
+            mention_volume=1000,
+            sentiment_trend=0.0,
+            influencer_sentiment=0.5,
+        )
     
     def _create_default_indicators(self) -> TechnicalIndicators:
         """Create default indicators when calculation fails"""
@@ -407,9 +478,21 @@ class FeatureEngineer:
         ]
         
         market_names = [
-            "fear_greed_index", "is_bull_market", "is_high_volatility", "btc_correlation",
-            "eth_correlation", "market_beta", "social_score", "mention_volume_normalized",
-            "sentiment_trend"
+            # Market sentiment features
+            "fear_greed_index", "is_bull_market", "is_bear_market", "is_high_volatility", "is_low_volatility",
+            
+            # Correlation and dominance features  
+            "btc_correlation", "eth_correlation", "btc_dominance", "eth_dominance", "stablecoin_dominance", "market_beta",
+            
+            # DeFi ecosystem features
+            "total_value_locked_normalized", "tvl_change_24h", "tvl_change_7d", "defi_dominance", "active_protocols_normalized",
+            
+            # On-chain activity features
+            "transaction_count_normalized", "active_addresses_normalized", "transaction_volume_normalized", 
+            "network_fees_normalized", "whale_activity_score",
+            
+            # Social sentiment features
+            "social_score", "mention_volume_normalized", "sentiment_trend", "influencer_sentiment"
         ]
         
         token_names = [
@@ -423,4 +506,37 @@ class FeatureEngineer:
         """Clear all cached indicators and features"""
         self._indicator_cache.clear()
         self._market_cache = None
+        
+        # Clear market data aggregator cache if available
+        if self.market_aggregator:
+            self.market_aggregator.clear_cache()
+        
         self.logger.info("Feature cache cleared")
+    
+    async def close(self):
+        """Close market data aggregator and cleanup resources"""
+        if self.market_aggregator:
+            await self.market_aggregator.close()
+            self.logger.info("Market data aggregator closed")
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Check health of feature engineering system including market data sources"""
+        health_status = {
+            "cache_size": len(self._indicator_cache),
+            "market_cache_valid": self._market_cache is not None,
+            "live_data_enabled": self.enable_live_data,
+            "market_data_sources": {}
+        }
+        
+        if self.market_aggregator:
+            try:
+                market_health = await self.market_aggregator.health_check()
+                health_status["market_data_sources"] = market_health
+                health_status["market_data_healthy"] = all(market_health.values())
+            except Exception as e:
+                health_status["market_data_error"] = str(e)
+                health_status["market_data_healthy"] = False
+        else:
+            health_status["market_data_healthy"] = True  # Placeholder mode
+        
+        return health_status
