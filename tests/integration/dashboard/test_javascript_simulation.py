@@ -8,8 +8,10 @@ import json
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent / "src"))
+# Add src to path - adjust for new location in tests/integration/dashboard/
+sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
+# Add root to path for main app import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from fastapi.testclient import TestClient
 from main import app

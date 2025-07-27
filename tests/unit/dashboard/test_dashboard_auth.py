@@ -7,8 +7,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent / "src"))
+# Add src to path - adjust for new location in tests/unit/dashboard/
+sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 import structlog
 from src.utils.config import init_config
