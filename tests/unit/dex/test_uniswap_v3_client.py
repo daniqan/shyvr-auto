@@ -606,3 +606,188 @@ class TestUniswapV3Client:
         assert quote_10000.additional_fees["pool_fee"] == Decimal("100")  # 10000/100 = 100 basis points
         assert quote_10000.output_amount == amount * Decimal("0.495")  # Exotic pairs
         assert quote_10000.price_impact_bps == 35
+
+    @pytest.mark.asyncio
+    async def test_real_web3_connection_with_env_variable(self, uniswap_client):
+        """Test real Web3 connection using environment variables."""
+        import os
+        
+        # Test with valid URL format
+        with patch.dict(os.environ, {'ETHEREUM_RPC_URL': 'https://mainnet.infura.io/v3/test-project-id'}):
+            with patch('src.dex.uniswap_v3_client.Web3') as mock_web3_class:
+                mock_web3_instance = Mock()
+                mock_web3_instance.is_connected.return_value = True
+                mock_web3_instance.eth.chain_id = 1
+                mock_web3_instance.eth.contract.return_value = Mock()
+                mock_web3_class.return_value = mock_web3_instance
+                
+                result = await uniswap_client._initialize_web3()
+                
+                assert result is True
+                mock_web3_class.assert_called_once()
+                
+    @pytest.mark.asyncio
+    async def test_real_web3_connection_testnet_support(self, uniswap_client):
+        """Test Web3 connection with testnet support."""
+        import os
+        
+        # Test testnet configuration
+        testnet_config = DEXConfig(
+            chain=Chain.ETHEREUM,
+            name="uniswap_v3",
+            max_slippage_bps=50,
+            timeout_seconds=30
+        )
+        testnet_client = UniswapV3Client(testnet_config)
+        
+        with patch.dict(os.environ, {'ETHEREUM_TESTNET_RPC_URL': 'https://sepolia.infura.io/v3/test-project-id'}):
+            with patch('src.dex.uniswap_v3_client.Web3') as mock_web3_class:
+                mock_web3_instance = Mock()
+                mock_web3_instance.is_connected.return_value = True
+                mock_web3_instance.eth.chain_id = 11155111  # Sepolia
+                mock_web3_instance.eth.contract.return_value = Mock()
+                mock_web3_class.return_value = mock_web3_instance
+                
+                result = await testnet_client._initialize_web3()
+                
+                assert result is True
+
+    @pytest.mark.asyncio
+    async def test_uniswap_quoter_contract_integration(self, uniswap_client):
+        """Test Uniswap V3 quoter contract integration."""
+        input_token = "0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC"  # USDC
+        output_token = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"  # WETH
+        amount = Decimal("1000000000")  # 1000 USDC (6 decimals)
+        
+        # Mock Web3 contract
+        mock_quoter_contract = Mock()
+        mock_quoter_contract.functions.quoteExactInputSingle.return_value.call.return_value = (
+            500000000000000000,  # 0.5 ETH output
+            0,  # sqrtPriceX96After
+            0,  # initializedTicksCrossed  
+            250000  # gasEstimate
+        )
+        
+        # Set up the client with quoter contract
+        uniswap_client.quoter_contract = mock_quoter_contract
+        
+        with patch.object(uniswap_client, '_get_current_gas_price') as mock_gas_price:
+            mock_gas_price.return_value = Decimal("20")
+            
+            quote = await uniswap_client._get_quoter_quote(
+                input_token=input_token,
+                output_token=output_token, 
+                amount=amount,
+                fee_tier=3000
+            )
+            
+            assert quote is not None
+            assert quote.output_amount == Decimal("500000000000000000")  # 0.5 ETH
+            assert quote.estimated_gas == 250000
+
+    @pytest.mark.asyncio
+    async def test_ethereum_wallet_integration(self, uniswap_client):
+        """Test EthereumWallet integration for swap execution."""
+        from src.wallet.ethereum_wallet import EthereumWallet
+        
+        quote = SwapQuote(
+            input_token="0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+            output_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            input_amount=Decimal("1000000000"),  # 1000 USDC
+            output_amount=Decimal("500000000000000000"),  # 0.5 ETH
+            price=Decimal("0.0005"),
+            price_impact_bps=25,
+            slippage_bps=50,
+            estimated_gas=200000,
+            gas_price=Decimal("20"),
+            dex_name="uniswap_v3",
+            additional_fees={"pool_fee": Decimal("30")}  # 0.3% fee
+        )
+        
+        wallet_address = "0x742d35cc6e38d44ccc6d7d0b4d16be1d8f7b3a3e"
+        
+        # Mock wallet instance
+        mock_wallet = Mock(spec=EthereumWallet)
+        mock_wallet.address = wallet_address
+        mock_wallet.sign_and_send_transaction = AsyncMock(return_value={
+            'transactionHash': Mock(hex=Mock(return_value='0x1234567890abcdef')),
+            'blockNumber': 18500000,
+            'gasUsed': 185000
+        })
+        
+        # Mock router contract
+        mock_router_contract = Mock()
+        mock_build_transaction = Mock()
+        mock_build_transaction.build_transaction.return_value = {
+            'to': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
+            'data': '0x...',
+            'gas': 200000,
+            'gasPrice': 20000000000
+        }
+        mock_router_contract.functions.exactInputSingle.return_value = mock_build_transaction
+        uniswap_client.router_contract = mock_router_contract
+        
+        with patch.object(uniswap_client, '_get_ethereum_wallet') as mock_get_wallet:
+            mock_get_wallet.return_value = mock_wallet
+            
+            result = await uniswap_client._execute_swap_with_wallet(quote, wallet_address)
+            
+            assert result.transaction_hash == '0x1234567890abcdef'
+            assert result.status == SwapStatus.CONFIRMED
+            assert result.gas_used == 185000
+
+    @pytest.mark.asyncio  
+    async def test_slippage_protection_implementation(self, uniswap_client):
+        """Test slippage protection in swap execution."""
+        quote = SwapQuote(
+            input_token="0xA0b86a33E6441c59C80d49Abb5a83c2c4cfE79cC",
+            output_token="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            input_amount=Decimal("1000000000"),  # 1000 USDC
+            output_amount=Decimal("500000000000000000"),  # 0.5 ETH
+            price=Decimal("0.0005"),
+            price_impact_bps=25,
+            slippage_bps=50,  # 0.5% slippage
+            dex_name="uniswap_v3"
+        )
+        
+        # Calculate minimum output with slippage protection
+        min_output = await uniswap_client._calculate_minimum_output(quote)
+        
+        # 0.5 ETH - 0.5% slippage = 0.5 * (1 - 0.005) = 0.4975 ETH
+        expected_min = Decimal("500000000000000000") * (Decimal("1") - Decimal("50") / Decimal("10000"))
+        assert min_output == expected_min
+
+    @pytest.mark.asyncio
+    async def test_deadline_handling(self, uniswap_client):
+        """Test deadline handling for swap transactions."""
+        from datetime import datetime, timedelta
+        
+        # Test deadline calculation (default 20 minutes)
+        deadline = await uniswap_client._calculate_deadline()
+        expected_deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
+        
+        # Allow for small timing differences
+        assert abs(deadline - expected_deadline) <= 5
+        
+        # Test custom deadline
+        custom_deadline = await uniswap_client._calculate_deadline(minutes=10)
+        expected_custom = int((datetime.now() + timedelta(minutes=10)).timestamp())
+        assert abs(custom_deadline - expected_custom) <= 5
+
+    @pytest.mark.asyncio
+    async def test_multi_chain_configuration(self, uniswap_client):
+        """Test multi-chain configuration support."""
+        # Test mainnet configuration
+        mainnet_config = DEXConfig(
+            chain=Chain.ETHEREUM,
+            name="uniswap_v3",
+            max_slippage_bps=50
+        )
+        mainnet_client = UniswapV3Client(mainnet_config)
+        
+        assert mainnet_client.chain == Chain.ETHEREUM
+        assert mainnet_client._get_chain_id() == 1  # Ethereum mainnet
+        
+        # Test that router addresses are correctly set for mainnet
+        assert mainnet_client.ROUTER_ADDRESS == "0xE592427A0AEce92De3Edee1F18E0157C05861564"
+        assert mainnet_client.QUOTER_ADDRESS == "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
