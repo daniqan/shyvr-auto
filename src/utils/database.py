@@ -5,6 +5,7 @@ Provides connection pooling and database operations for activity logging
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 from contextlib import asynccontextmanager
 import asyncpg
@@ -198,7 +199,7 @@ async def check_database_health() -> Dict[str, Any]:
                 "database_size": db_size,
                 "active_connections": active_connections,
                 "tables_exist": tables_exist == 3,
-                "timestamp": "NOW()"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
     except Exception as e:
@@ -206,7 +207,7 @@ async def check_database_health() -> Dict[str, Any]:
         return {
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": "NOW()"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
 
