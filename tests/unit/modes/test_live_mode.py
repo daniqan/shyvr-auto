@@ -93,14 +93,11 @@ def create_mock_market_state(price_usd: float = 1.5, token_address: str = "TEST_
         price_change_24h=5.2,
         market_cap=50000000,
         rsi=45.0,
-        rsi_14=45.0,
         macd=0.05,
-        macd_signal=0.03,
-        market_volatility=0.25,
-        bid_ask_spread=0.002,
-        prediction_confidence=0.75,
-        timestamp=datetime.now(),
-        chain=Chain.SOLANA
+        sma_20=1.45,
+        ema_12=1.48,
+        bollinger_upper=1.6,
+        bollinger_lower=1.4
     )
 
 
@@ -1103,7 +1100,6 @@ class TestContinuousLearningLoopIntegration:
             action = await live_mode.process_tick(market_state)
             assert action is not None  # Still able to make trading decisions
     
-    @pytest.mark.skip(reason="Implementation pending - TDD")
     async def test_performance_feedback_capture(self, live_mode_config, mock_portfolio):
         """Test that trading performance feedback is captured for learning evaluation."""
         live_mode_config.parameters["enable_continuous_learning"] = True
@@ -1263,7 +1259,6 @@ class TestContinuousLearningLoopIntegration:
                 # Should check experience buffer for learning trigger
                 mock_loop_instance.check_experience_buffer.assert_called()
     
-    @pytest.mark.skip(reason="Implementation pending - TDD")
     async def test_learning_cycle_error_handling_and_recovery(self, live_mode_config, mock_portfolio):
         """Test error handling and recovery during learning cycles."""
         live_mode_config.parameters["enable_continuous_learning"] = True
