@@ -144,24 +144,54 @@ async def api_root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with comprehensive component status"""
     try:
         config = get_config()
+        
+        # Check database health
+        from src.utils.database import check_database_health
+        database_health = await check_database_health()
+        
+        # Determine overall status based on component health
+        overall_status = "healthy"
+        if database_health.get("status") == "unhealthy":
+            overall_status = "degraded"
+        
         return {
-            "status": "healthy",
+            "status": overall_status,
             "version": config.app.version,
             "environment": config.app.environment,
+            "timestamp": database_health.get("timestamp", "NOW()"),
             "components": {
-                "database": "not_implemented",
-                "ml_models": "not_implemented",
-                "rl_agent": "not_implemented"
+                "database": {
+                    "status": database_health.get("status", "unknown"),
+                    "connectivity": database_health.get("connectivity", False),
+                    "database_size": database_health.get("database_size", "unknown"),
+                    "active_connections": database_health.get("active_connections", 0),
+                    "tables_exist": database_health.get("tables_exist", False),
+                    "details": database_health
+                },
+                "ml_models": {
+                    "status": "not_implemented",
+                    "details": "ML model health checks not yet implemented"
+                },
+                "rl_agent": {
+                    "status": "not_implemented", 
+                    "details": "RL agent health checks not yet implemented"
+                }
             }
         }
     except Exception as e:
         logger.error("Health check failed", error=str(e))
         return {
             "status": "unhealthy",
-            "error": str(e)
+            "error": str(e),
+            "timestamp": "NOW()",
+            "components": {
+                "database": {"status": "error", "error": str(e)},
+                "ml_models": {"status": "unknown"},
+                "rl_agent": {"status": "unknown"}
+            }
         }
 
 
