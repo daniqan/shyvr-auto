@@ -11,12 +11,15 @@ from typing import Dict, Optional, Tuple, Any
 from decimal import Decimal
 import structlog
 
-from src.utils.config import Config
-from src.utils.base import Chain, NetworkType
+from src.utils.config import ConfigManager
+from src.utils.base import Chain
+from src.wallet.base import NetworkType
 from src.dex.base import DEXConfig
 from src.dex.jupiter_client import JupiterDEXClient
+from src.dex.uniswap_v3_client import UniswapV3Client
 from src.wallet.base import WalletConfig
 from src.wallet.solana_wallet import SolanaWallet
+from src.wallet.ethereum_wallet import EthereumWallet
 from src.trading.dex_wallet_bridge import DEXWalletBridge, SwapExecutionConfig
 
 logger = structlog.get_logger()
@@ -43,7 +46,7 @@ class DEXWalletConfigFactory:
         Args:
             config_path: Path to configuration file (defaults to standard location)
         """
-        self.config = Config(config_path)
+        self.config = ConfigManager(config_path)
         self.logger = logger.bind(factory="DEXWalletConfigFactory")
     
     def create_jupiter_client(self, chain: Chain = Chain.SOLANA) -> JupiterDEXClient:
@@ -96,6 +99,57 @@ class DEXWalletConfigFactory:
             self.logger.error("Failed to create Jupiter DEX client", error=str(e))
             raise ConfigurationError(f"Jupiter DEX configuration error: {e}")
     
+    def create_uniswap_client(self, chain: Chain = Chain.ETHEREUM) -> UniswapV3Client:
+        """
+        Create configured Uniswap V3 DEX client.
+        
+        Args:
+            chain: Blockchain network (must be ETHEREUM or compatible for Uniswap)
+            
+        Returns:
+            Configured UniswapV3Client instance
+            
+        Raises:
+            ConfigurationError: If configuration is invalid
+        """
+        if chain not in [Chain.ETHEREUM, Chain.BASE]:
+            raise ConfigurationError(f"Uniswap V3 only supports Ethereum and Base chains, got: {chain}")
+        
+        try:
+            # Get Uniswap-specific configuration
+            uniswap_config = self.config.get("dex.uniswap_v3", {})
+            
+            if not uniswap_config.get("enabled", True):
+                raise ConfigurationError("Uniswap V3 DEX is disabled in configuration")
+            
+            # Create DEX configuration
+            dex_config = DEXConfig(
+                chain=chain,
+                name="uniswap_v3",
+                api_key=uniswap_config.get("api_key"),
+                base_url=uniswap_config.get("base_url", ""),  # Uniswap doesn't use API URL, it's on-chain
+                max_slippage_bps=uniswap_config.get("max_slippage_bps", 50),
+                timeout_seconds=uniswap_config.get("timeout_seconds", 30),
+                rate_limit_per_second=uniswap_config.get("rate_limit_per_second", 10),
+                enable_price_impact_warnings=uniswap_config.get("enable_price_impact_warnings", True),
+                max_price_impact_bps=uniswap_config.get("max_price_impact_bps", 1000)
+            )
+            
+            client = UniswapV3Client(dex_config)
+            
+            self.logger.info(
+                "Created Uniswap V3 DEX client",
+                chain=chain.value,
+                max_slippage_bps=dex_config.max_slippage_bps,
+                timeout_seconds=dex_config.timeout_seconds
+            )
+            
+            return client
+            
+        except Exception as e:
+            self.logger.error("Failed to create Uniswap V3 DEX client", error=str(e))
+            raise ConfigurationError(f"Uniswap V3 DEX configuration error: {e}")
+    
     def create_solana_wallet(self) -> SolanaWallet:
         """
         Create configured Solana wallet.
@@ -142,8 +196,7 @@ class DEXWalletConfigFactory:
                 rpc_url=rpc_url,
                 private_key=private_key,
                 wallet_address=wallet_address,
-                timeout_seconds=solana_config.get("timeout_seconds", 30),
-                max_retries=solana_config.get("max_retries", 3)
+                timeout_seconds=solana_config.get("timeout_seconds", 30)
             )
             
             wallet = SolanaWallet(wallet_config)
@@ -160,6 +213,84 @@ class DEXWalletConfigFactory:
         except Exception as e:
             self.logger.error("Failed to create Solana wallet", error=str(e))
             raise ConfigurationError(f"Solana wallet configuration error: {e}")
+    
+    def create_ethereum_wallet(self, chain: Chain = Chain.ETHEREUM) -> EthereumWallet:
+        """
+        Create configured Ethereum wallet.
+        
+        Args:
+            chain: Blockchain network (must be ETHEREUM or compatible EVM chain)
+            
+        Returns:
+            Configured EthereumWallet instance
+            
+        Raises:
+            ConfigurationError: If configuration is invalid
+        """
+        if chain not in [Chain.ETHEREUM, Chain.BASE]:
+            raise ConfigurationError(f"Ethereum wallet only supports EVM chains, got: {chain}")
+        
+        try:
+            # Get Ethereum wallet configuration
+            ethereum_config = self.config.get("wallets.ethereum", {})
+            
+            if not ethereum_config.get("enabled", True):
+                raise ConfigurationError("Ethereum wallet is disabled in configuration")
+            
+            # Parse network type
+            network_str = ethereum_config.get("network", "sepolia").lower()
+            if network_str in ["mainnet", "ethereum"]:
+                network = NetworkType.MAINNET
+            elif network_str in ["sepolia", "testnet"]:
+                network = NetworkType.TESTNET
+            elif network_str == "devnet":  # Some configurations might use devnet for test networks
+                network = NetworkType.TESTNET
+            else:
+                raise ConfigurationError(f"Invalid Ethereum network: {network_str}")
+            
+            # Get credentials from environment or config
+            private_key = os.getenv("ETHEREUM_PRIVATE_KEY") or ethereum_config.get("private_key")
+            wallet_address = os.getenv("ETHEREUM_WALLET_ADDRESS") or ethereum_config.get("wallet_address")
+            rpc_url = os.getenv("ETHEREUM_RPC_URL") or ethereum_config.get("rpc_url")
+            
+            # Set default RPC URL if not provided
+            if not rpc_url:
+                if network == NetworkType.MAINNET:
+                    rpc_url = "https://mainnet.infura.io/v3/"  # Would need actual key
+                else:
+                    rpc_url = "https://sepolia.infura.io/v3/"  # Would need actual key
+            
+            # Validate that we have either private key or wallet address
+            if not private_key and not wallet_address:
+                raise ConfigurationError(
+                    "Either ETHEREUM_PRIVATE_KEY or ETHEREUM_WALLET_ADDRESS must be provided"
+                )
+            
+            # Create wallet configuration
+            wallet_config = WalletConfig(
+                chain=chain,
+                network=network,
+                rpc_url=rpc_url,
+                private_key=private_key,
+                wallet_address=wallet_address,
+                timeout_seconds=ethereum_config.get("timeout_seconds", 30)
+            )
+            
+            wallet = EthereumWallet(wallet_config)
+            
+            self.logger.info(
+                "Created Ethereum wallet",
+                chain=chain.value,
+                network=network.value,
+                read_only=private_key is None,
+                rpc_url=rpc_url
+            )
+            
+            return wallet
+            
+        except Exception as e:
+            self.logger.error("Failed to create Ethereum wallet", error=str(e))
+            raise ConfigurationError(f"Ethereum wallet configuration error: {e}")
     
     def create_dex_wallet_bridge(
         self,
@@ -182,6 +313,10 @@ class DEXWalletConfigFactory:
                 # Create Jupiter client and Solana wallet
                 dex_client = self.create_jupiter_client(chain)
                 wallet = self.create_solana_wallet()
+            elif chain in [Chain.ETHEREUM, Chain.BASE]:
+                # Create Uniswap client and Ethereum wallet
+                dex_client = self.create_uniswap_client(chain)
+                wallet = self.create_ethereum_wallet(chain)
             else:
                 raise ConfigurationError(f"Unsupported chain for DEX-wallet bridge: {chain}")
             
