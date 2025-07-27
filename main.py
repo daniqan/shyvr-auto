@@ -21,6 +21,9 @@ from src.utils.config import init_config, get_config
 from src.utils.base import ConfigurationError
 from src.dashboard.api import dashboard_api
 from src.dashboard.service import dashboard_service
+from src.monitoring.base import MetricsRegistry
+from src.monitoring.trading_metrics import TradingMetricsCollector
+from src.monitoring.safety_metrics import SafetyMetricsCollector
 
 # Configure structured logging
 structlog.configure(
@@ -49,6 +52,11 @@ app = FastAPI(
     description="AI-augmented cryptocurrency trading bot with reinforcement learning",
     version="0.1.0"
 )
+
+# Initialize monitoring system
+metrics_registry = MetricsRegistry()
+trading_metrics = TradingMetricsCollector(metrics_registry)
+safety_metrics = SafetyMetricsCollector(metrics_registry)
 
 # Include dashboard routes
 app.include_router(dashboard_api.router)
@@ -225,6 +233,37 @@ async def get_configuration():
     except Exception as e:
         logger.error("Failed to get configuration", error=str(e))
         return {"error": str(e)}
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Returns metrics in Prometheus text format for scraping by monitoring systems.
+    """
+    try:
+        # Collect fresh metrics from all collectors
+        trading_metrics.collect_metrics()
+        safety_metrics.collect_metrics()
+        
+        # Generate Prometheus format output
+        metrics_output = metrics_registry.generate_output()
+        
+        # Return with proper content type for Prometheus
+        from fastapi import Response
+        return Response(
+            content=metrics_output,
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+        
+    except Exception as e:
+        logger.error("Failed to generate metrics", error=str(e))
+        # Return empty metrics in case of error to avoid breaking monitoring
+        return Response(
+            content=b"# Error generating metrics\n",
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
 
 
 def main():
