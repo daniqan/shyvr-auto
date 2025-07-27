@@ -50,6 +50,9 @@ class TrainingConfig:
     use_prioritized_replay: bool = True
     use_advanced_rewards: bool = True
     
+    # Replay buffer options
+    replay_buffer_min_size: int = 100  # Minimum experiences before training
+    
     # ML-RL integration options
     use_ml_features: bool = False
     ml_weight: float = 0.3  # Weight for ML predictions in decisions
@@ -147,7 +150,8 @@ class DQNTrainingPipeline:
         # Replay buffer configuration
         replay_config = ReplayBufferConfig(
             batch_size=self.config.batch_size,
-            prioritized=self.config.use_prioritized_replay
+            prioritized=self.config.use_prioritized_replay,
+            min_size=self.config.replay_buffer_min_size
         )
         
         # Create experience replay buffer
@@ -234,6 +238,27 @@ class DQNTrainingPipeline:
                         batch_experiences = self.replay_buffer.sample()
                         loss_info = asyncio.run(self.agent.train_step(batch_experiences))
                         episode_loss += loss_info.get('loss', 0.0)
+                        
+                        # Update priorities in prioritized replay buffer based on TD errors
+                        if ('td_errors' in loss_info and 'indices' in loss_info and 
+                            hasattr(self.replay_buffer, 'update_priorities')):
+                            
+                            td_errors = loss_info['td_errors']
+                            indices = loss_info['indices']
+                            
+                            # Convert to numpy array for update_priorities
+                            import numpy as np
+                            td_errors_array = np.array(td_errors, dtype=np.float64)
+                            
+                            # Update buffer priorities with TD errors
+                            self.replay_buffer.update_priorities(indices, td_errors_array)
+                            
+                            self.logger.debug("Updated replay buffer priorities",
+                                            num_updates=len(indices),
+                                            avg_td_error=float(np.mean(td_errors_array)),
+                                            max_td_error=float(np.max(td_errors_array)),
+                                            min_td_error=float(np.min(td_errors_array)))
+                            
                     except Exception as e:
                         self.logger.warning("Training step failed", error=str(e))
                 

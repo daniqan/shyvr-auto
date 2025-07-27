@@ -496,3 +496,52 @@ class TestTrainingPipelineIntegration:
         # All components should have been used
         assert len(pipeline.metrics.episode_rewards) == 2
         assert len(pipeline.metrics.episode_losses) == 2
+    
+    def test_prioritized_replay_buffer_priority_updates(self, full_training_setup):
+        """Test that prioritized replay buffer priorities are updated during training"""
+        tokens, price_data = full_training_setup
+        
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline, TrainingConfig
+        from src.rl_agent.experience_replay import PrioritizedExperienceReplayBuffer
+        
+        config = TrainingConfig(
+            num_episodes=1,
+            max_steps_per_episode=50,  # More steps to ensure training occurs
+            use_prioritized_replay=True,
+            batch_size=8,  # Smaller batch for faster testing
+            replay_buffer_min_size=8  # Very small min_size to trigger training quickly
+        )
+        
+        pipeline = DQNTrainingPipeline(
+            config=config,
+            tokens=tokens,
+            historical_data=price_data
+        )
+        
+        # Verify we're using prioritized replay
+        assert isinstance(pipeline.replay_buffer, PrioritizedExperienceReplayBuffer)
+        
+        # Store initial priorities (should be all max priority initially)
+        initial_max_priority = pipeline.replay_buffer.max_priority
+        
+        # Run training
+        results = pipeline.train()
+        
+        # Should complete successfully
+        assert results['episodes_completed'] == 1
+        
+        # Check that priorities were updated during training
+        # After training, we should have different priorities based on TD errors
+        if len(pipeline.replay_buffer.priorities) > 0:
+            priorities = list(pipeline.replay_buffer.priorities)
+            
+            # Not all priorities should be the same (unless by unlikely chance)
+            # This indicates priorities were updated based on TD errors
+            unique_priorities = set(priorities)
+            assert len(unique_priorities) > 1 or len(priorities) < 5, \
+                f"Expected varied priorities after training, got {len(unique_priorities)} unique values from {len(priorities)} total"
+            
+            # At least some priorities should be different from initial max priority
+            different_from_initial = sum(1 for p in priorities if abs(p - initial_max_priority) > 1e-6)
+            assert different_from_initial > 0, \
+                f"Expected some priorities to change from initial {initial_max_priority}, but all remained the same"
