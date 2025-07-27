@@ -375,6 +375,269 @@ class TestHyperparameterOptimization:
         assert 'learning_rate' in best_params
         assert 'epsilon_decay' in best_params
         assert search.best_score is not None
+    
+    def test_hyperparameter_search_grid_search(self, sample_tokens, mock_price_data):
+        """Test grid search implementation covers all parameter combinations"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'epsilon_decay': [0.995, 0.99],
+            'batch_size': [32, 64]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Mock the training to verify all combinations are tested
+        with patch('src.rl_agent.training_pipeline.DQNTrainingPipeline') as mock_pipeline_class:
+            mock_pipeline = MagicMock()
+            mock_pipeline.train.return_value = {
+                'episodes_completed': 5,
+                'final_metrics': {'mean_reward': 100.0, 'mean_win_rate': 0.6}
+            }
+            mock_pipeline_class.return_value = mock_pipeline
+            
+            best_params = search.optimize(
+                tokens=sample_tokens,
+                historical_data=mock_price_data,
+                num_trials=8,  # 2*2*2 = 8 combinations
+                episodes_per_trial=5
+            )
+            
+            # Should have tested all combinations (2 * 2 * 2 = 8)
+            assert mock_pipeline_class.call_count == 8
+            
+            # Best params should be from search space
+            assert best_params['learning_rate'] in search_config['learning_rate']
+            assert best_params['epsilon_decay'] in search_config['epsilon_decay']
+            assert best_params['batch_size'] in search_config['batch_size']
+    
+    def test_hyperparameter_search_multiple_runs_per_config(self, sample_tokens, mock_price_data):
+        """Test that multiple runs are performed per configuration for robust evaluation"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'epsilon_decay': [0.995, 0.99]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        with patch('src.rl_agent.training_pipeline.DQNTrainingPipeline') as mock_pipeline_class:
+            mock_pipeline = MagicMock()
+            # Simulate variable performance across runs
+            mock_pipeline.train.side_effect = [
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 80.0, 'mean_win_rate': 0.5}},
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 120.0, 'mean_win_rate': 0.7}},
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 90.0, 'mean_win_rate': 0.6}},
+                # Repeat for each configuration
+            ] * 10  # Enough for multiple runs per config
+            mock_pipeline_class.return_value = mock_pipeline
+            
+            best_params = search.optimize(
+                tokens=sample_tokens,
+                historical_data=mock_price_data,
+                num_trials=4,  # 2*2 = 4 combinations
+                episodes_per_trial=5,
+                runs_per_config=3  # Multiple runs per configuration
+            )
+            
+            # Should have performed multiple runs per config
+            # 4 configs * 3 runs each = 12 total training runs
+            assert mock_pipeline_class.call_count == 12
+            
+            assert best_params is not None
+            assert search.best_score is not None
+    
+    def test_hyperparameter_search_performance_evaluation(self, sample_tokens, mock_price_data):
+        """Test that performance evaluation considers multiple metrics"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'epsilon_decay': [0.995, 0.99]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Mock different performance results for different configs
+        mock_results = [
+            # Config 1: High reward, low win rate
+            {'episodes_completed': 5, 'final_metrics': {'mean_reward': 150.0, 'mean_win_rate': 0.4, 'mean_portfolio_value': 11000}},
+            # Config 2: Low reward, high win rate
+            {'episodes_completed': 5, 'final_metrics': {'mean_reward': 80.0, 'mean_win_rate': 0.8, 'mean_portfolio_value': 10800}},
+            # Config 3: Balanced performance
+            {'episodes_completed': 5, 'final_metrics': {'mean_reward': 120.0, 'mean_win_rate': 0.7, 'mean_portfolio_value': 11200}},
+            # Config 4: Poor performance
+            {'episodes_completed': 5, 'final_metrics': {'mean_reward': 50.0, 'mean_win_rate': 0.3, 'mean_portfolio_value': 9800}},
+        ]
+        
+        with patch('src.rl_agent.training_pipeline.DQNTrainingPipeline') as mock_pipeline_class:
+            mock_pipeline = MagicMock()
+            mock_pipeline.train.side_effect = mock_results
+            mock_pipeline_class.return_value = mock_pipeline
+            
+            best_params = search.optimize(
+                tokens=sample_tokens,
+                historical_data=mock_price_data,
+                num_trials=4,
+                episodes_per_trial=5
+            )
+            
+            # Should select best performing configuration
+            # In this case, config 3 (balanced) should win with composite score
+            assert best_params is not None
+            assert search.best_score is not None
+            # Score should reflect composite evaluation, not just single metric
+            assert 0.0 < search.best_score <= 1.0
+    
+    def test_hyperparameter_search_cross_validation(self, sample_tokens, mock_price_data):
+        """Test cross-validation methodology for robust evaluation"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'batch_size': [32, 64]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Test that cross-validation splits data appropriately
+        best_params = search.optimize(
+            tokens=sample_tokens,
+            historical_data=mock_price_data,
+            num_trials=4,
+            episodes_per_trial=10,
+            cross_validation_folds=3
+        )
+        
+        # Should complete without error and return valid parameters
+        assert best_params is not None
+        assert 'learning_rate' in best_params
+        assert 'batch_size' in best_params
+        assert search.best_score is not None
+    
+    def test_hyperparameter_search_progress_tracking(self, sample_tokens, mock_price_data):
+        """Test that optimization progress is properly tracked and logged"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'epsilon_decay': [0.995, 0.99]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Run optimization and check that it completes successfully
+        best_params = search.optimize(
+            tokens=sample_tokens,
+            historical_data=mock_price_data,
+            num_trials=4,  # 2*2 = 4 combinations
+            episodes_per_trial=3  # Keep it small for test
+        )
+        
+        # Should have optimization history tracking
+        assert hasattr(search, 'optimization_history')
+        assert len(search.optimization_history) > 0
+        
+        # Each history entry should have required fields
+        for entry in search.optimization_history:
+            assert 'params' in entry
+            assert 'score' in entry
+            assert 'config_num' in entry
+            
+        # Should have found best parameters
+        assert best_params is not None
+        assert search.best_score is not None
+    
+    def test_hyperparameter_search_early_stopping(self, sample_tokens, mock_price_data):
+        """Test early stopping when performance converges"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.005, 0.01, 0.05, 0.1],  # Many options
+            'epsilon_decay': [0.99, 0.995]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Mock consistently high performance to trigger early stopping
+        with patch('src.rl_agent.training_pipeline.DQNTrainingPipeline') as mock_pipeline_class:
+            mock_pipeline = MagicMock()
+            mock_pipeline.train.return_value = {
+                'episodes_completed': 5,
+                'final_metrics': {'mean_reward': 200.0, 'mean_win_rate': 0.9, 'mean_portfolio_value': 12000}
+            }
+            mock_pipeline_class.return_value = mock_pipeline
+            
+            best_params = search.optimize(
+                tokens=sample_tokens,
+                historical_data=mock_price_data,
+                num_trials=10,  # Total possible: 5*2=10
+                episodes_per_trial=5,
+                early_stopping_patience=3,  # Stop if no improvement for 3 trials
+                early_stopping_threshold=0.85  # Stop if score > 0.85
+            )
+            
+            # Should have stopped early due to high performance
+            # With consistently high performance, should stop after finding good solution
+            assert best_params is not None
+            assert search.best_score is not None
+            assert search.best_score >= 0.85
+    
+    def test_hyperparameter_search_error_handling(self, sample_tokens, mock_price_data):
+        """Test error handling during optimization"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        search_config = {
+            'learning_rate': [0.001, 0.01],
+            'epsilon_decay': [0.995, 0.99]
+        }
+        
+        search = HyperparameterSearch(search_config)
+        
+        # Test handling of training failures
+        with patch('src.rl_agent.training_pipeline.DQNTrainingPipeline') as mock_pipeline_class:
+            mock_pipeline = MagicMock()
+            # First call succeeds, second fails, third succeeds
+            mock_pipeline.train.side_effect = [
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 100.0, 'mean_win_rate': 0.6}},
+                Exception("Training failed"),
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 120.0, 'mean_win_rate': 0.7}},
+                {'episodes_completed': 5, 'final_metrics': {'mean_reward': 90.0, 'mean_win_rate': 0.5}},
+            ]
+            mock_pipeline_class.return_value = mock_pipeline
+            
+            # Should handle errors gracefully and continue optimization
+            best_params = search.optimize(
+                tokens=sample_tokens,
+                historical_data=mock_price_data,
+                num_trials=4,
+                episodes_per_trial=5
+            )
+            
+            # Should complete despite one failed training run
+            assert best_params is not None
+            assert search.best_score is not None
+    
+    def test_hyperparameter_search_empty_search_space(self):
+        """Test handling of empty search space"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        # Empty search space should raise appropriate error
+        with pytest.raises(ValueError, match="Search space cannot be empty"):
+            HyperparameterSearch({})
+    
+    def test_hyperparameter_search_invalid_search_space(self):
+        """Test handling of invalid search space configurations"""
+        from src.rl_agent.training_pipeline import HyperparameterSearch
+        
+        # Search space with empty parameter values
+        with pytest.raises(ValueError, match="Parameter values cannot be empty"):
+            HyperparameterSearch({
+                'learning_rate': [],
+                'epsilon_decay': [0.995, 0.99]
+            })
 
 
 class TestTrainingPipelineIntegration:

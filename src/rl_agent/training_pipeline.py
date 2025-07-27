@@ -548,23 +548,356 @@ class HyperparameterSearch:
     """Hyperparameter optimization for training"""
     
     def __init__(self, search_space: Dict[str, List]):
+        if not search_space:
+            raise ValueError("Search space cannot be empty")
+        
+        for param, values in search_space.items():
+            if not values:
+                raise ValueError(f"Parameter values cannot be empty for parameter: {param}")
+        
         self.search_space = search_space
         self.best_params = None
         self.best_score = None
+        self.optimization_history = []
         
         self.logger = structlog.get_logger().bind(component="HyperparameterSearch")
     
+    def _generate_parameter_combinations(self):
+        """Generate all possible parameter combinations using grid search"""
+        import itertools
+        
+        # Get parameter names and their values
+        param_names = list(self.search_space.keys())
+        param_values = [self.search_space[name] for name in param_names]
+        
+        # Generate all combinations
+        combinations = list(itertools.product(*param_values))
+        
+        # Convert to list of dictionaries
+        param_combinations = []
+        for combination in combinations:
+            param_dict = dict(zip(param_names, combination))
+            param_combinations.append(param_dict)
+        
+        return param_combinations
+    
+    def _split_data_for_cross_validation(self, historical_data, folds: int):
+        """Split historical data for cross-validation"""
+        cv_splits = []
+        
+        for token_address, data in historical_data.items():
+            prices = data['prices']
+            timestamps = data['timestamps']
+            
+            # Calculate split size
+            total_samples = len(prices)
+            fold_size = total_samples // folds
+            
+            token_splits = []
+            for fold in range(folds):
+                start_idx = fold * fold_size
+                end_idx = start_idx + fold_size if fold < folds - 1 else total_samples
+                
+                # Create training and validation sets
+                train_prices = prices[:start_idx] + prices[end_idx:]
+                train_timestamps = timestamps[:start_idx] + timestamps[end_idx:]
+                
+                val_prices = prices[start_idx:end_idx]
+                val_timestamps = timestamps[start_idx:end_idx]
+                
+                train_data = {'prices': train_prices, 'timestamps': train_timestamps}
+                val_data = {'prices': val_prices, 'timestamps': val_timestamps}
+                
+                token_splits.append((train_data, val_data))
+            
+            cv_splits.append(token_splits)
+        
+        # Combine splits across tokens
+        fold_splits = []
+        for fold in range(folds):
+            train_data = {}
+            val_data = {}
+            
+            for token_idx, token_address in enumerate(historical_data.keys()):
+                train_data[token_address] = cv_splits[token_idx][fold][0]
+                val_data[token_address] = cv_splits[token_idx][fold][1]
+            
+            fold_splits.append((train_data, val_data))
+        
+        return fold_splits
+    
+    def _calculate_composite_score(self, metrics: Dict[str, Any]) -> float:
+        """Calculate composite performance score from multiple metrics"""
+        # Normalize and combine multiple metrics for robust evaluation
+        
+        # Extract key metrics with fallback values
+        mean_reward = metrics.get('mean_reward', 0.0)
+        mean_win_rate = metrics.get('mean_win_rate', 0.0)
+        mean_portfolio_value = metrics.get('mean_portfolio_value', 10000.0)  # Starting value
+        total_trades = metrics.get('total_trades', 0)
+        
+        # Normalize metrics to [0, 1] scale
+        # Reward score: positive rewards are good, normalize by expected range
+        reward_score = max(0.0, min(1.0, (mean_reward + 100) / 300))  # Assuming range [-100, 200]
+        
+        # Win rate is already in [0, 1]
+        win_rate_score = max(0.0, min(1.0, mean_win_rate))
+        
+        # Portfolio growth score
+        portfolio_growth = max(0.0, (mean_portfolio_value - 10000) / 10000)  # Growth from 10k base
+        portfolio_score = max(0.0, min(1.0, portfolio_growth + 0.5))  # Center around 50% = score 1.0
+        
+        # Trading activity score (some trading is good, but not excessive)
+        activity_score = 1.0 if total_trades == 0 else max(0.0, min(1.0, total_trades / 100))
+        
+        # Composite score with weighted combination
+        weights = {
+            'reward': 0.3,
+            'win_rate': 0.3,
+            'portfolio': 0.3,
+            'activity': 0.1
+        }
+        
+        composite_score = (
+            weights['reward'] * reward_score +
+            weights['win_rate'] * win_rate_score +
+            weights['portfolio'] * portfolio_score +
+            weights['activity'] * activity_score
+        )
+        
+        return max(0.0, min(1.0, composite_score))
+    
+    def _evaluate_parameter_configuration(self, params: Dict[str, Any], tokens, historical_data,
+                                        episodes_per_trial: int, runs_per_config: int = 1,
+                                        cross_validation_folds: int = None) -> float:
+        """Evaluate a single parameter configuration"""
+        
+        if cross_validation_folds and cross_validation_folds > 1:
+            # Use cross-validation
+            cv_splits = self._split_data_for_cross_validation(historical_data, cross_validation_folds)
+            scores = []
+            
+            for fold_idx, (train_data, val_data) in enumerate(cv_splits):
+                if len(train_data[list(train_data.keys())[0]]['prices']) < 10:
+                    # Skip folds with insufficient training data
+                    continue
+                
+                try:
+                    # Create training configuration with current parameters
+                    config = TrainingConfig(
+                        num_episodes=episodes_per_trial,
+                        max_steps_per_episode=50,  # Reasonable default for hyperparameter search
+                        **params  # Unpack hyperparameters
+                    )
+                    
+                    # Train on training fold
+                    pipeline = DQNTrainingPipeline(config, tokens, train_data)
+                    train_results = pipeline.train()
+                    
+                    # Evaluate on validation fold if it has sufficient data
+                    if len(val_data[list(val_data.keys())[0]]['prices']) >= 5:
+                        val_config = TrainingConfig(
+                            num_episodes=5,  # Short evaluation
+                            max_steps_per_episode=20,
+                            **params
+                        )
+                        val_pipeline = DQNTrainingPipeline(val_config, tokens, val_data)
+                        val_results = val_pipeline.train()
+                        fold_score = self._calculate_composite_score(val_results['final_metrics'])
+                    else:
+                        # Use training performance if validation set too small
+                        fold_score = self._calculate_composite_score(train_results['final_metrics'])
+                    
+                    scores.append(fold_score)
+                    
+                except Exception as e:
+                    self.logger.warning("Cross-validation fold failed", 
+                                      fold=fold_idx, error=str(e), params=params)
+                    continue
+            
+            if scores:
+                return float(np.mean(scores))
+            else:
+                return 0.0
+        
+        else:
+            # Use multiple independent runs
+            scores = []
+            
+            for run in range(runs_per_config):
+                try:
+                    # Create training configuration with current parameters
+                    config = TrainingConfig(
+                        num_episodes=episodes_per_trial,
+                        max_steps_per_episode=50,
+                        **params
+                    )
+                    
+                    # Create and run training pipeline
+                    pipeline = DQNTrainingPipeline(config, tokens, historical_data)
+                    results = pipeline.train()
+                    
+                    # Calculate performance score
+                    score = self._calculate_composite_score(results['final_metrics'])
+                    scores.append(score)
+                    
+                    self.logger.debug("Configuration run completed",
+                                    run=run,
+                                    params=params,
+                                    score=score,
+                                    episodes_completed=results['episodes_completed'])
+                    
+                except Exception as e:
+                    self.logger.warning("Training run failed",
+                                      run=run, error=str(e), params=params)
+                    continue
+            
+            if scores:
+                # Return mean score across runs for robustness
+                return float(np.mean(scores))
+            else:
+                return 0.0
+    
     def optimize(self, tokens, historical_data, num_trials: int = 10,
-                episodes_per_trial: int = 100) -> Dict[str, Any]:
-        """Run hyperparameter optimization"""
-        # Placeholder implementation to make tests pass
+                episodes_per_trial: int = 100, runs_per_config: int = 1,
+                cross_validation_folds: int = None,
+                early_stopping_patience: int = None,
+                early_stopping_threshold: float = 0.95) -> Dict[str, Any]:
+        """
+        Run systematic hyperparameter optimization using grid search
         
-        # Return random params from search space for now
-        best_params = {}
-        for param, values in self.search_space.items():
-            best_params[param] = np.random.choice(values)
+        Args:
+            tokens: List of tokens for training
+            historical_data: Historical price data
+            num_trials: Maximum number of parameter combinations to test
+            episodes_per_trial: Number of episodes to train per configuration
+            runs_per_config: Number of independent runs per configuration
+            cross_validation_folds: Number of CV folds (if None, uses multiple runs)
+            early_stopping_patience: Stop after N configs without improvement
+            early_stopping_threshold: Stop if score exceeds this threshold
         
+        Returns:
+            Best parameter configuration found
+        """
+        
+        self.logger.info("Starting hyperparameter optimization",
+                        search_space=self.search_space,
+                        num_trials=num_trials,
+                        episodes_per_trial=episodes_per_trial,
+                        runs_per_config=runs_per_config,
+                        cross_validation_folds=cross_validation_folds)
+        
+        # Generate all parameter combinations
+        param_combinations = self._generate_parameter_combinations()
+        
+        self.logger.info("Generated parameter combinations",
+                        total_combinations=len(param_combinations),
+                        will_test=min(num_trials, len(param_combinations)))
+        
+        # Limit to num_trials if specified
+        if num_trials < len(param_combinations):
+            # Randomly sample combinations for efficiency
+            np.random.shuffle(param_combinations)
+            param_combinations = param_combinations[:num_trials]
+        
+        best_score = -float('inf')
+        best_params = None
+        no_improvement_count = 0
+        
+        # Track optimization history
+        self.optimization_history = []
+        
+        for idx, params in enumerate(param_combinations):
+            self.logger.info("Testing parameter configuration",
+                           config_num=idx + 1,
+                           total_configs=len(param_combinations),
+                           params=params)
+            
+            try:
+                # Evaluate parameter configuration
+                score = self._evaluate_parameter_configuration(
+                    params=params,
+                    tokens=tokens,
+                    historical_data=historical_data,
+                    episodes_per_trial=episodes_per_trial,
+                    runs_per_config=runs_per_config,
+                    cross_validation_folds=cross_validation_folds
+                )
+                
+                # Record in optimization history
+                self.optimization_history.append({
+                    'params': params.copy(),
+                    'score': score,
+                    'config_num': idx + 1
+                })
+                
+                self.logger.info("Configuration evaluation completed",
+                               config_num=idx + 1,
+                               params=params,
+                               score=score,
+                               current_best=best_score)
+                
+                # Update best parameters if score improved
+                if score > best_score:
+                    best_score = score
+                    best_params = params.copy()
+                    no_improvement_count = 0
+                    
+                    self.logger.info("New best configuration found",
+                                   best_params=best_params,
+                                   best_score=best_score)
+                else:
+                    no_improvement_count += 1
+                
+                # Early stopping based on performance threshold
+                if early_stopping_threshold and score >= early_stopping_threshold:
+                    self.logger.info("Early stopping: performance threshold reached",
+                                   score=score,
+                                   threshold=early_stopping_threshold,
+                                   configs_tested=idx + 1)
+                    break
+                
+                # Early stopping based on lack of improvement
+                if (early_stopping_patience and 
+                    no_improvement_count >= early_stopping_patience):
+                    self.logger.info("Early stopping: no improvement patience exceeded",
+                                   no_improvement_count=no_improvement_count,
+                                   patience=early_stopping_patience,
+                                   configs_tested=idx + 1)
+                    break
+                    
+            except Exception as e:
+                self.logger.error("Parameter configuration evaluation failed",
+                                config_num=idx + 1,
+                                params=params,
+                                error=str(e))
+                
+                # Record failed configuration
+                self.optimization_history.append({
+                    'params': params.copy(),
+                    'score': 0.0,
+                    'config_num': idx + 1,
+                    'error': str(e)
+                })
+                continue
+        
+        # Store final results
         self.best_params = best_params
-        self.best_score = np.random.uniform(0.5, 0.8)  # Mock score
+        self.best_score = best_score
         
-        return best_params
+        if best_params is None:
+            self.logger.error("No valid parameter configuration found")
+            # Return a default configuration from search space
+            default_params = {}
+            for param, values in self.search_space.items():
+                default_params[param] = values[0]  # Take first value
+            self.best_params = default_params
+            self.best_score = 0.0
+        
+        self.logger.info("Hyperparameter optimization completed",
+                        best_params=self.best_params,
+                        best_score=self.best_score,
+                        configurations_tested=len(self.optimization_history),
+                        total_possible=len(self._generate_parameter_combinations()))
+        
+        return self.best_params
