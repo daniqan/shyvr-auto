@@ -470,7 +470,9 @@ class PositionLiquidator:
         # Take highest priority positions
         for i in range(min(target_count, len(priorities))):
             priority = priorities[i]
-            position = self.portfolio.positions.get(str(priority.position_id))\n            if position:\n                positions_to_liquidate.append(position)
+            position = self.portfolio.positions.get(str(priority.position_id))
+            if position:
+                positions_to_liquidate.append(position)
         
         return positions_to_liquidate
     
