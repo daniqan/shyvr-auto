@@ -287,6 +287,12 @@ class AgentConfig:
     target_sharpe_ratio: float = 1.5
     target_win_rate: float = 0.6
     target_max_drawdown: float = 0.15
+    
+    # Rainbow DQN specific parameters
+    num_atoms: int = 51  # Number of atoms for distributional RL
+    v_min: float = -10.0  # Minimum value for distributional RL
+    v_max: float = 10.0   # Maximum value for distributional RL
+    noisy_networks: bool = True  # Use noisy networks for exploration
 
 
 class RLAgentBase(ABC):

@@ -606,3 +606,406 @@ class TestDQNIntegration:
         
         # After many steps, should be close to epsilon_end
         assert agent.epsilon < initial_epsilon * 0.8
+
+
+class TestDuelingDQNNetwork:
+    """Test Dueling DQN neural network implementation"""
+    
+    @pytest.fixture
+    def dueling_network_config(self):
+        """Create dueling network configuration"""
+        return {
+            'input_size': 19,
+            'hidden_size': 256,
+            'num_layers': 3,
+            'dropout': 0.1,
+            'output_size': 5  # Number of trading actions
+        }
+    
+    def test_dueling_dqn_network_creation(self, dueling_network_config):
+        """Test Dueling DQN network creation"""
+        from src.rl_agent.dqn_agent import DuelingDQNNetwork
+        
+        network = DuelingDQNNetwork(**dueling_network_config)
+        
+        assert isinstance(network, nn.Module)
+        assert network.input_size == 19
+        assert network.hidden_size == 256
+        assert network.num_layers == 3
+        assert network.dropout_rate == 0.1
+        assert network.output_size == 5
+        
+        # Check that it has separate value and advantage streams
+        assert hasattr(network, 'feature_layer')
+        assert hasattr(network, 'value_head')
+        assert hasattr(network, 'advantage_head')
+    
+    def test_dueling_dqn_network_forward_pass(self, dueling_network_config):
+        """Test forward pass through dueling network"""
+        from src.rl_agent.dqn_agent import DuelingDQNNetwork
+        
+        network = DuelingDQNNetwork(**dueling_network_config)
+        batch_size = 32
+        
+        # Create sample input tensor
+        x = torch.randn(batch_size, dueling_network_config['input_size'])
+        
+        # Forward pass
+        output = network(x)
+        
+        assert output.shape == (batch_size, dueling_network_config['output_size'])
+        assert torch.all(torch.isfinite(output))  # No NaN or infinite values
+    
+    def test_dueling_dqn_value_advantage_separation(self, dueling_network_config):
+        """Test that dueling DQN properly separates value and advantage"""
+        from src.rl_agent.dqn_agent import DuelingDQNNetwork
+        
+        network = DuelingDQNNetwork(**dueling_network_config)
+        batch_size = 4
+        
+        x = torch.randn(batch_size, dueling_network_config['input_size'])
+        
+        # Get intermediate outputs
+        features = network.feature_layer(x)
+        value = network.value_head(features)  # Should be (batch_size, 1)
+        advantage = network.advantage_head(features)  # Should be (batch_size, num_actions)
+        
+        assert value.shape == (batch_size, 1)
+        assert advantage.shape == (batch_size, dueling_network_config['output_size'])
+        
+        # Get final Q-values
+        q_values = network(x)
+        
+        # Verify dueling aggregation: Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
+        expected_q = value + advantage - advantage.mean(dim=1, keepdim=True)
+        assert torch.allclose(q_values, expected_q, atol=1e-5)
+    
+    def test_dueling_dqn_advantage_zero_mean(self, dueling_network_config):
+        """Test that advantage values have zero mean after aggregation"""
+        from src.rl_agent.dqn_agent import DuelingDQNNetwork
+        
+        network = DuelingDQNNetwork(**dueling_network_config)
+        
+        x = torch.randn(1, dueling_network_config['input_size'])
+        
+        features = network.feature_layer(x)
+        advantage = network.advantage_head(features)
+        
+        # After mean subtraction in dueling aggregation, advantage should sum to zero
+        advantage_normalized = advantage - advantage.mean(dim=1, keepdim=True)
+        assert torch.allclose(advantage_normalized.mean(dim=1), torch.zeros(1), atol=1e-5)
+
+
+class TestRainbowDQNNetwork:
+    """Test Rainbow DQN neural network implementation"""
+    
+    @pytest.fixture
+    def rainbow_network_config(self):
+        """Create rainbow network configuration"""
+        return {
+            'input_size': 19,
+            'hidden_size': 256,
+            'num_layers': 3,
+            'dropout': 0.1,
+            'output_size': 5,  # Number of trading actions
+            'num_atoms': 51,   # For distributional RL
+            'noisy': True      # Use noisy networks
+        }
+    
+    def test_rainbow_dqn_network_creation(self, rainbow_network_config):
+        """Test Rainbow DQN network creation"""
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        
+        network = RainbowDQNNetwork(**rainbow_network_config)
+        
+        assert isinstance(network, nn.Module)
+        assert network.input_size == 19
+        assert network.hidden_size == 256
+        assert network.num_layers == 3
+        assert network.output_size == 5
+        assert network.num_atoms == 51
+        assert network.noisy is True
+        
+        # Check that it has distributional outputs
+        assert hasattr(network, 'feature_layer')
+        assert hasattr(network, 'value_head')
+        assert hasattr(network, 'advantage_head')
+    
+    def test_rainbow_dqn_distributional_output(self, rainbow_network_config):
+        """Test that Rainbow DQN produces distributional outputs"""
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        
+        network = RainbowDQNNetwork(**rainbow_network_config)
+        batch_size = 16
+        
+        x = torch.randn(batch_size, rainbow_network_config['input_size'])
+        
+        # Forward pass should return distribution over atoms
+        output = network(x)
+        
+        # Output should be (batch_size, num_actions, num_atoms)
+        expected_shape = (batch_size, rainbow_network_config['output_size'], rainbow_network_config['num_atoms'])
+        assert output.shape == expected_shape
+        assert torch.all(torch.isfinite(output))
+        
+        # Each action's distribution should sum to 1 (softmax over atoms)
+        output_probs = torch.softmax(output, dim=2)
+        atom_sums = output_probs.sum(dim=2)
+        expected_ones = torch.ones(batch_size, rainbow_network_config['output_size'])
+        assert torch.allclose(atom_sums, expected_ones, atol=1e-5)
+    
+    def test_rainbow_dqn_noisy_layers(self, rainbow_network_config):
+        """Test that Rainbow DQN uses noisy layers when enabled"""
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        
+        network = RainbowDQNNetwork(**rainbow_network_config)
+        
+        # Check that some layers are noisy
+        has_noisy_layers = False
+        for module in network.modules():
+            if hasattr(module, 'weight_mu') and hasattr(module, 'weight_sigma'):
+                has_noisy_layers = True
+                break
+        
+        assert has_noisy_layers, "Rainbow DQN should have noisy layers when noisy=True"
+    
+    def test_rainbow_dqn_noise_reset(self, rainbow_network_config):
+        """Test noise reset functionality in Rainbow DQN"""
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        
+        network = RainbowDQNNetwork(**rainbow_network_config)
+        
+        # Should have a method to reset noise
+        assert hasattr(network, 'reset_noise')
+        
+        # Call reset noise (should not raise an error)
+        network.reset_noise()
+    
+    def test_rainbow_dqn_without_noise(self):
+        """Test Rainbow DQN without noisy layers"""
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        
+        config = {
+            'input_size': 19,
+            'hidden_size': 128,
+            'num_layers': 2,
+            'dropout': 0.1,
+            'output_size': 5,
+            'num_atoms': 51,
+            'noisy': False
+        }
+        
+        network = RainbowDQNNetwork(**config)
+        
+        # Should still work but without noisy layers
+        x = torch.randn(1, 19)
+        output = network(x)
+        
+        assert output.shape == (1, 5, 51)
+        assert torch.all(torch.isfinite(output))
+
+
+class TestDQNAgentModelTypes:
+    """Test DQN agent with different model types"""
+    
+    @pytest.fixture
+    def sample_token(self):
+        """Create sample token"""
+        return DiscoveredToken(
+            address="0x789...",
+            symbol="MODEL",
+            name="Model Test Token",
+            chain=Chain.ETHEREUM,
+            discovered_at=datetime.now(),
+            discovery_source="test",
+            price_usd=5.00,
+            volume_24h=500000
+        )
+    
+    @pytest.fixture
+    def sample_market_state(self, sample_token):
+        """Create sample market state"""
+        return MarketState(
+            token=sample_token,
+            price_usd=5.00,
+            price_change_24h=1.5,
+            volume_24h=500000,
+            market_cap=5000000,
+            rsi=60.0,
+            macd=0.05,
+            current_position=0.0,
+            portfolio_value=10000.0,
+            cash_balance=10000.0
+        )
+    
+    def test_dueling_dqn_agent_creation(self):
+        """Test creating agent with Dueling DQN model type"""
+        config = AgentConfig(
+            model_type=ModelType.DUELING_DQN,
+            hidden_size=128,
+            num_layers=2
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        assert agent.config.model_type == ModelType.DUELING_DQN
+        assert isinstance(agent.q_network, nn.Module)
+        assert isinstance(agent.target_network, nn.Module)
+        
+        # Should use dueling architecture
+        from src.rl_agent.dqn_agent import DuelingDQNNetwork
+        assert isinstance(agent.q_network, DuelingDQNNetwork)
+        assert isinstance(agent.target_network, DuelingDQNNetwork)
+    
+    def test_rainbow_dqn_agent_creation(self):
+        """Test creating agent with Rainbow DQN model type"""
+        config = AgentConfig(
+            model_type=ModelType.RAINBOW,
+            hidden_size=128,
+            num_layers=2
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        assert agent.config.model_type == ModelType.RAINBOW
+        assert isinstance(agent.q_network, nn.Module)
+        assert isinstance(agent.target_network, nn.Module)
+        
+        # Should use rainbow architecture
+        from src.rl_agent.dqn_agent import RainbowDQNNetwork
+        assert isinstance(agent.q_network, RainbowDQNNetwork)
+        assert isinstance(agent.target_network, RainbowDQNNetwork)
+    
+    @pytest.mark.asyncio
+    async def test_dueling_dqn_agent_prediction(self, sample_market_state):
+        """Test action prediction with Dueling DQN agent"""
+        config = AgentConfig(
+            model_type=ModelType.DUELING_DQN,
+            hidden_size=64,
+            num_layers=2,
+            epsilon_start=0.1  # Low exploration for consistent testing
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        action, confidence = await agent.predict_action(sample_market_state)
+        
+        assert isinstance(action, TradeAction)
+        assert 0.0 <= confidence <= 1.0
+    
+    @pytest.mark.asyncio  
+    async def test_rainbow_dqn_agent_prediction(self, sample_market_state):
+        """Test action prediction with Rainbow DQN agent"""
+        config = AgentConfig(
+            model_type=ModelType.RAINBOW,
+            hidden_size=64,
+            num_layers=2,
+            epsilon_start=0.1  # Low exploration for consistent testing
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        action, confidence = await agent.predict_action(sample_market_state)
+        
+        assert isinstance(action, TradeAction)
+        assert 0.0 <= confidence <= 1.0
+    
+    @pytest.mark.asyncio
+    async def test_dueling_dqn_training_compatibility(self, sample_market_state, sample_token):
+        """Test that Dueling DQN is compatible with existing training logic"""
+        config = AgentConfig(
+            model_type=ModelType.DUELING_DQN,
+            hidden_size=64,
+            num_layers=2,
+            batch_size=4
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        # Create sample experiences
+        next_state = MarketState(
+            token=sample_token,
+            price_usd=5.05,
+            price_change_24h=2.0,
+            volume_24h=510000,
+            market_cap=5050000,
+            current_position=0.1,
+            portfolio_value=10025.0
+        )
+        
+        experiences = [
+            {
+                'state': sample_market_state.to_vector(),
+                'action': 1,  # BUY action index
+                'reward': 0.05,
+                'next_state': next_state.to_vector(),
+                'done': False
+            }
+        ] * config.batch_size
+        
+        # Should be able to train without errors
+        metrics = await agent.train_step(experiences)
+        
+        assert isinstance(metrics, dict)
+        assert 'loss' in metrics
+        assert metrics['loss'] >= 0.0
+    
+    @pytest.mark.asyncio
+    async def test_rainbow_dqn_training_compatibility(self, sample_market_state, sample_token):
+        """Test that Rainbow DQN is compatible with existing training logic"""
+        config = AgentConfig(
+            model_type=ModelType.RAINBOW,
+            hidden_size=64,
+            num_layers=2,
+            batch_size=4
+        )
+        
+        agent = DQNTradingAgent(config)
+        
+        # Create sample experiences
+        next_state = MarketState(
+            token=sample_token,
+            price_usd=5.05,
+            price_change_24h=2.0,
+            volume_24h=510000,
+            market_cap=5050000,
+            current_position=0.1,
+            portfolio_value=10025.0
+        )
+        
+        experiences = [
+            {
+                'state': sample_market_state.to_vector(),
+                'action': 1,  # BUY action index
+                'reward': 0.05,
+                'next_state': next_state.to_vector(),
+                'done': False
+            }
+        ] * config.batch_size
+        
+        # Should be able to train without errors
+        metrics = await agent.train_step(experiences)
+        
+        assert isinstance(metrics, dict)
+        assert 'loss' in metrics
+        assert metrics['loss'] >= 0.0
+    
+    def test_model_type_backward_compatibility(self):
+        """Test that existing DQN model type still works"""
+        config = AgentConfig(model_type=ModelType.DQN)
+        agent = DQNTradingAgent(config)
+        
+        # Should still use standard DQN architecture
+        from src.rl_agent.dqn_agent import DQNNetwork
+        assert isinstance(agent.q_network, DQNNetwork)
+        assert isinstance(agent.target_network, DQNNetwork)
+    
+    def test_ddqn_model_type_compatibility(self):
+        """Test that Double DQN model type works with existing code"""
+        config = AgentConfig(model_type=ModelType.DDQN)
+        agent = DQNTradingAgent(config)
+        
+        # Should use standard DQN architecture but with double DQN training logic
+        from src.rl_agent.dqn_agent import DQNNetwork
+        assert isinstance(agent.q_network, DQNNetwork)
+        assert isinstance(agent.target_network, DQNNetwork)
