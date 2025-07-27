@@ -104,12 +104,32 @@ async def get_api_key():
     try:
         from src.dashboard.auth import dashboard_auth
         
-        # Find admin API key
-        for api_key, user_id in dashboard_auth._api_keys.items():
-            if user_id == "admin-001":  # Admin user ID
-                return {"api_key": api_key}
+        # Check if we have an admin user and API key
+        admin_user = None
+        admin_api_key = None
         
-        return {"error": "Admin API key not found"}
+        # Find admin user first
+        for user_id, user in dashboard_auth._users.items():
+            if user.username == "admin" and "admin" in user.permissions:
+                admin_user = user
+                break
+        
+        if not admin_user:
+            logger.error("Admin user not found in authentication system")
+            return {"error": "Admin user not found"}
+        
+        # Find corresponding API key
+        for api_key, user_id in dashboard_auth._api_keys.items():
+            if user_id == admin_user.user_id:
+                admin_api_key = api_key
+                break
+        
+        if not admin_api_key:
+            logger.error("Admin API key not found")
+            return {"error": "Admin API key not found"}
+        
+        logger.info("API key requested for dashboard authentication", user_id=admin_user.user_id)
+        return {"api_key": admin_api_key}
         
     except Exception as e:
         logger.error("Failed to get API key", error=str(e))

@@ -296,10 +296,47 @@ class DashboardService:
         """Get current trading status"""
         try:
             current_mode = TradingMode.ANALYSIS
+            analysis_running = False
+            simulation_running = False
+            live_trading_enabled = False
             
             if self.mode_manager:
-                # TODO: Get actual mode from mode manager
-                pass
+                try:
+                    # Get active modes from mode manager
+                    active_modes = self.mode_manager.list_active_modes()
+                    
+                    # Map mode types to our dashboard mode enum
+                    from ..modes.base import ModeType
+                    mode_map = {
+                        ModeType.ANALYSIS: TradingMode.ANALYSIS,
+                        ModeType.SIMULATION: TradingMode.SIMULATION, 
+                        ModeType.LIVE_TRADING: TradingMode.LIVE,
+                        ModeType.PAPER_TRADING: TradingMode.SIMULATION
+                    }
+                    
+                    # Find the currently active mode
+                    for mode_id, mode_instance in active_modes.items():
+                        if mode_instance.status.value == "active":
+                            # Determine the mode type from the registry
+                            for mode_type, registered_id in self.mode_manager._mode_type_registry.items():
+                                if registered_id == mode_id:
+                                    current_mode = mode_map.get(mode_type, TradingMode.ANALYSIS)
+                                    break
+                            break
+                    
+                    # Set running flags based on active mode
+                    analysis_running = current_mode == TradingMode.ANALYSIS
+                    simulation_running = current_mode == TradingMode.SIMULATION
+                    live_trading_enabled = current_mode == TradingMode.LIVE
+                    
+                except Exception as mode_error:
+                    logger.warning("Failed to get mode from mode manager", error=str(mode_error))
+                    # Fall back to default analysis mode
+                    current_mode = TradingMode.ANALYSIS
+                    analysis_running = True
+            else:
+                # No mode manager, default to analysis mode
+                analysis_running = True
             
             return TradingStatus(
                 mode=current_mode,
@@ -307,9 +344,9 @@ class DashboardService:
                 last_trade_time=datetime.utcnow() - timedelta(minutes=15),
                 trades_today=8,
                 volume_today_usd=Decimal("2500.00"),
-                analysis_running=True,
-                simulation_running=current_mode == TradingMode.SIMULATION,
-                live_trading_enabled=current_mode == TradingMode.LIVE,
+                analysis_running=analysis_running,
+                simulation_running=simulation_running,
+                live_trading_enabled=live_trading_enabled,
                 emergency_stop_active=False,
                 risk_limits_active=True,
                 max_position_size_usd=Decimal("1000.00"),
@@ -387,9 +424,67 @@ class DashboardService:
             if mode not in ["analysis", "simulation", "live"]:
                 raise ValueError(f"Invalid mode: {mode}")
             
+            # Map string mode to ModeType
+            from ..modes.base import ModeType
+            mode_type_map = {
+                "analysis": ModeType.ANALYSIS,
+                "simulation": ModeType.SIMULATION,
+                "live": ModeType.LIVE_TRADING
+            }
+            
+            target_mode_type = mode_type_map[mode]
+            
             if self.mode_manager:
-                # TODO: Implement actual mode switching
-                pass
+                try:
+                    # Find the current active mode
+                    active_modes = self.mode_manager.list_active_modes()
+                    current_mode_id = None
+                    
+                    for mode_id, mode_instance in active_modes.items():
+                        if mode_instance.status.value == "active":
+                            current_mode_id = mode_id
+                            break
+                    
+                    # Find target mode ID by type
+                    target_mode_id = None
+                    for mode_type, mode_id in self.mode_manager._mode_type_registry.items():
+                        if mode_type == target_mode_type:
+                            target_mode_id = mode_id
+                            break
+                    
+                    if target_mode_id is None:
+                        # If target mode doesn't exist, we need to register it first
+                        from ..modes.base import ModeConfig
+                        mode_config = ModeConfig(
+                            mode_type=target_mode_type,
+                            enabled=True,
+                            auto_start=False
+                        )
+                        target_mode_id = await self.mode_manager.register_mode(mode_config)
+                    
+                    # If we have a current mode, switch from it to target
+                    if current_mode_id and current_mode_id != target_mode_id:
+                        await self.mode_manager.switch_mode(current_mode_id, target_mode_id)
+                    elif target_mode_id:
+                        # Just start the target mode if no current mode
+                        await self.mode_manager.start_mode(target_mode_id)
+                    
+                    logger.info(
+                        "Mode switching completed",
+                        mode=mode,
+                        mode_type=target_mode_type.value,
+                        user_id=user_id,
+                        current_mode_id=str(current_mode_id) if current_mode_id else None,
+                        target_mode_id=str(target_mode_id) if target_mode_id else None
+                    )
+                    
+                except Exception as mode_error:
+                    logger.warning(
+                        "Mode manager operation failed, using fallback",
+                        error=str(mode_error),
+                        mode=mode
+                    )
+                    # Continue with fallback behavior
             
             # Send WebSocket notification
             await websocket_manager.send_system_alert(

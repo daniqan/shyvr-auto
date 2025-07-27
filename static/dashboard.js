@@ -87,12 +87,21 @@ class DashboardApp {
                         this.settings.apiKey = data.api_key;
                         this.saveSettings();
                         console.log('API key initialized successfully');
+                        return true;
+                    } else if (data.error) {
+                        console.error('API key error:', data.error);
+                        this.showNotification('error', 'Authentication Error', 'Failed to get API key: ' + data.error);
                     }
+                } else {
+                    console.error('Failed to fetch API key:', response.status, response.statusText);
+                    this.showNotification('error', 'Authentication Error', 'Failed to fetch API key from server');
                 }
             } catch (error) {
                 console.error('Failed to initialize API key:', error);
+                this.showNotification('error', 'Connection Error', 'Could not connect to server for authentication');
             }
         }
+        return !!this.settings.apiKey;
     }
     
     /**
@@ -812,6 +821,15 @@ class DashboardApp {
      * Emergency stop function
      */
     async emergencyStop() {
+        // Validate API key before attempting emergency stop
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot execute emergency stop: No API key available');
+                return;
+            }
+        }
+        
         try {
             const response = await fetch('/dashboard/trading/emergency-stop', {
                 method: 'POST',
@@ -823,8 +841,14 @@ class DashboardApp {
             
             if (response.ok) {
                 this.showNotification('warning', 'Emergency Stop', 'Emergency stop activated successfully');
+                // Refresh data to show updated status
+                await this.fetchDashboardData();
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Emergency stop failed: Invalid credentials');
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to execute emergency stop');
             } else {
-                throw new Error('Failed to activate emergency stop');
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Emergency stop failed:', error);
@@ -838,7 +862,18 @@ class DashboardApp {
     async switchTradingMode() {
         const selectedMode = document.querySelector('input[name="tradingMode"]:checked').value;
         
+        // Validate API key before attempting switch
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot switch mode: No API key available');
+                return;
+            }
+        }
+        
         try {
+            this.showNotification('info', 'Mode Switch', `Switching to ${selectedMode} mode...`);
+            
             const response = await fetch('/dashboard/trading/mode', {
                 method: 'POST',
                 headers: {
@@ -849,13 +884,32 @@ class DashboardApp {
             });
             
             if (response.ok) {
+                const result = await response.json();
                 this.showNotification('success', 'Mode Changed', `Trading mode switched to ${selectedMode}`);
+                
+                // Immediately fetch fresh data to reflect the change
+                await this.fetchDashboardData();
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Please refresh the page and try again');
+                // Try to refresh API key
+                this.settings.apiKey = null;
+                this.saveSettings();
+                await this.initializeApiKey();
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to switch trading modes');
             } else {
-                throw new Error('Failed to switch trading mode');
+                const errorText = await response.text();
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Mode switch failed:', error);
             this.showNotification('error', 'Mode Switch Failed', error.message);
+            
+            // Reset radio button to previous state if we have dashboard data
+            if (this.dashboardData && this.dashboardData.trading_status) {
+                const currentMode = this.dashboardData.trading_status.mode;
+                document.querySelector(`input[name="tradingMode"][value="${currentMode}"]`).checked = true;
+            }
         }
     }
     
@@ -871,6 +925,15 @@ class DashboardApp {
      * Update risk settings
      */
     async updateRiskSettings() {
+        // Validate API key before attempting update
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot update settings: No API key available');
+                return;
+            }
+        }
+        
         const settings = {
             max_position_size_pct: parseFloat(document.getElementById('maxPositionSize').value),
             max_daily_loss_pct: parseFloat(document.getElementById('maxDailyLoss').value),
@@ -890,8 +953,15 @@ class DashboardApp {
             
             if (response.ok) {
                 this.showNotification('success', 'Settings Updated', 'Risk settings updated successfully');
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Please refresh the page and try again');
+                this.settings.apiKey = null;
+                this.saveSettings();
+                await this.initializeApiKey();
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to update risk settings');
             } else {
-                throw new Error('Failed to update risk settings');
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Risk settings update failed:', error);
@@ -961,10 +1031,20 @@ class DashboardApp {
      * Refresh trades data
      */
     async refreshTrades() {
+        // Validate API key before attempting refresh
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot refresh trades: No API key available');
+                return;
+            }
+        }
+        
         try {
             const response = await fetch('/dashboard/trading/history', {
                 headers: {
-                    'Authorization': `Bearer ${this.settings.apiKey}`
+                    'Authorization': `Bearer ${this.settings.apiKey}`,
+                    'Content-Type': 'application/json'
                 }
             });
             
@@ -972,6 +1052,15 @@ class DashboardApp {
                 const data = await response.json();
                 this.updateTradesTable(data.trades);
                 this.showNotification('success', 'Refreshed', 'Trading history updated');
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Please refresh the page and try again');
+                this.settings.apiKey = null;
+                this.saveSettings();
+                await this.initializeApiKey();
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to view trading history');
+            } else {
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Failed to refresh trades:', error);
@@ -983,10 +1072,20 @@ class DashboardApp {
      * Refresh system logs
      */
     async refreshLogs() {
+        // Validate API key before attempting refresh
+        if (!this.settings.apiKey) {
+            const keyInitialized = await this.initializeApiKey();
+            if (!keyInitialized) {
+                this.showNotification('error', 'Authentication Error', 'Cannot refresh logs: No API key available');
+                return;
+            }
+        }
+        
         try {
             const response = await fetch('/dashboard/system/logs', {
                 headers: {
-                    'Authorization': `Bearer ${this.settings.apiKey}`
+                    'Authorization': `Bearer ${this.settings.apiKey}`,
+                    'Content-Type': 'application/json'
                 }
             });
             
@@ -994,6 +1093,15 @@ class DashboardApp {
                 const data = await response.json();
                 this.updateSystemLogs(data.logs);
                 this.showNotification('success', 'Refreshed', 'System logs updated');
+            } else if (response.status === 401) {
+                this.showNotification('error', 'Authentication Failed', 'Please refresh the page and try again');
+                this.settings.apiKey = null;
+                this.saveSettings();
+                await this.initializeApiKey();
+            } else if (response.status === 403) {
+                this.showNotification('error', 'Access Denied', 'You do not have permission to view system logs');
+            } else {
+                throw new Error(`Server error: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Failed to refresh logs:', error);
@@ -1241,12 +1349,18 @@ class DashboardApp {
             
             if (!apiKey) {
                 console.warn('No API key available for authentication');
-                return;
+                // Try to initialize API key
+                const keyInitialized = await this.initializeApiKey();
+                if (!keyInitialized) {
+                    this.showNotification('error', 'Authentication Required', 'Please check server configuration');
+                    return;
+                }
             }
             
             const response = await fetch('/dashboard/data', {
                 headers: {
-                    'Authorization': `Bearer ${apiKey}`
+                    'Authorization': `Bearer ${this.settings.apiKey || apiKey}`,
+                    'Content-Type': 'application/json'
                 }
             });
             
@@ -1258,11 +1372,23 @@ class DashboardApp {
                 
                 // If 401, try to refresh API key
                 if (response.status === 401) {
-                    await this.initializeApiKey();
+                    console.warn('Authentication failed, attempting to refresh API key');
+                    this.settings.apiKey = null;
+                    this.saveSettings();
+                    const keyRefreshed = await this.initializeApiKey();
+                    if (keyRefreshed) {
+                        // Retry the request once with new key
+                        await this.fetchDashboardData();
+                    }
+                } else if (response.status === 403) {
+                    this.showNotification('error', 'Access Denied', 'Insufficient permissions for dashboard access');
+                } else {
+                    this.showNotification('error', 'Data Error', `Failed to fetch dashboard data: ${response.statusText}`);
                 }
             }
         } catch (error) {
             console.error('Failed to fetch dashboard data:', error);
+            this.showNotification('error', 'Connection Error', 'Failed to connect to server');
         }
     }
     
