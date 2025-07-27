@@ -42,6 +42,7 @@
                 <button class="tab-btn" data-tab="trading">Trading</button>
                 <button class="tab-btn" data-tab="portfolio">Portfolio</button>
                 <button class="tab-btn" data-tab="ml-rl">ML & RL</button>
+                <button class="tab-btn" data-tab="backtest">Backtest Results</button>
                 <button class="tab-btn" data-tab="system">System</button>
                 <button class="tab-btn" data-tab="settings">Settings</button>
             </div>
@@ -488,6 +489,87 @@
                 </div>
             </div>
 
+            <!-- Backtest Results Tab -->
+            <div class="tab-panel" id="backtest">
+                <div class="dashboard-grid">
+                    <!-- Backtest Controls -->
+                    <div class="card backtest-controls-card">
+                        <div class="card-header">
+                            <h3>Backtest Controls</h3>
+                            <button class="btn-secondary" id="refreshBacktestBtn">
+                                <span>🔄</span> Refresh
+                            </button>
+                        </div>
+                        <div class="card-content">
+                            <div class="control-row">
+                                <label for="backtestStrategyFilter">Strategy:</label>
+                                <select id="backtestStrategyFilter">
+                                    <option value="">All Strategies</option>
+                                    <option value="LSTM_DQN_Strategy">LSTM + DQN</option>
+                                    <option value="Technical_Analysis">Technical Analysis</option>
+                                    <option value="Mean_Reversion">Mean Reversion</option>
+                                </select>
+                            </div>
+                            <div class="control-row">
+                                <label for="backtestSharpeFilter">Min Sharpe Ratio:</label>
+                                <input type="number" id="backtestSharpeFilter" min="0" step="0.1" placeholder="e.g., 1.0">
+                            </div>
+                            <div class="control-row">
+                                <label for="backtestTimeframe">Timeframe:</label>
+                                <select id="backtestTimeframe">
+                                    <option value="1d">1 Day</option>
+                                    <option value="1w">1 Week</option>
+                                    <option value="1m" selected>1 Month</option>
+                                    <option value="3m">3 Months</option>
+                                    <option value="6m">6 Months</option>
+                                    <option value="1y">1 Year</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Performance Metrics -->
+                    <div class="card backtest-metrics-card">
+                        <div class="card-header">
+                            <h3>Performance Metrics</h3>
+                        </div>
+                        <div class="card-content" id="backtest-metrics">
+                            <div class="loading">Loading backtest results...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Equity Curve Chart -->
+                    <div class="card equity-curve-card full-width">
+                        <div class="card-header">
+                            <h3>Equity Curve</h3>
+                        </div>
+                        <div class="card-content chart-container" id="backtest-equity-chart">
+                            <div class="loading">Loading chart...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Trade History -->
+                    <div class="card trade-history-card full-width">
+                        <div class="card-header">
+                            <h3>Trade History</h3>
+                        </div>
+                        <div class="card-content table-container" id="backtest-trade-history">
+                            <div class="loading">Loading trade history...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Additional Performance Stats -->
+                    <div class="card performance-stats-card full-width">
+                        <div class="card-header">
+                            <h3>Additional Metrics</h3>
+                        </div>
+                        <div class="card-content" id="backtest-performance-stats">
+                            <div class="loading">Loading additional metrics...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- System Tab -->
             <div class="tab-panel" id="system">
                 <div class="dashboard-grid">
@@ -727,6 +809,8 @@
     <div id="notificationContainer" class="notification-container"></div>
 
     <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/backtest-results.js"></script>
     <script src="/static/dashboard.js"></script>
 </body>
 </html>

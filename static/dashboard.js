@@ -19,6 +19,9 @@ class DashboardApp {
         // Chart instance
         this.performanceChart = null;
         
+        // Backtest results component
+        this.backtestResults = null;
+        
         // Settings
         this.settings = {
             refreshInterval: 2000,
@@ -50,6 +53,9 @@ class DashboardApp {
         
         // Initialize chart
         this.initializeChart();
+        
+        // Initialize backtest results component
+        this.initializeBacktestResults();
         
         console.log('Dashboard initialized');
     }
@@ -229,6 +235,9 @@ class DashboardApp {
                 break;
             case 'ml-rl':
                 this.loadMLRLData();
+                break;
+            case 'backtest':
+                this.loadBacktestData();
                 break;
             case 'system':
                 this.loadSystemData();
@@ -1122,6 +1131,27 @@ class DashboardApp {
     async loadSystemData() {
         // This would load system-specific data
         console.log('Loading system data...');
+    }
+    
+    /**
+     * Initialize backtest results component
+     */
+    initializeBacktestResults() {
+        if (typeof BacktestResults !== 'undefined') {
+            this.backtestResults = new BacktestResults();
+        } else {
+            console.warn('BacktestResults component not available');
+        }
+    }
+    
+    /**
+     * Load backtest data
+     */
+    async loadBacktestData() {
+        console.log('Loading backtest data...');
+        if (this.backtestResults) {
+            await this.backtestResults.fetchBacktestResults();
+        }
     }
     
     /**
