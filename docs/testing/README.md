@@ -69,6 +69,22 @@ This directory contains comprehensive documentation for the hybrid testing strat
 - All CLAUDE.md targets exceeded by 10-4000x margins
 - Statistical validation with P95/P99 performance guarantees
 
+### 📖 [Unit Testing Guides](./guides/unit/)
+**Comprehensive unit testing documentation and best practices**
+
+#### 🔍 [Activity Logging Testing Guide](./guides/unit/ACTIVITY_LOGGING_TESTING_GUIDE.md)
+**Complete test suite for activity logging system**
+
+- **When to use**: Implementing or testing activity logging functionality
+- **Content**: TDD methodology, test structure, and comprehensive coverage
+- **Audience**: Developers, QA engineers, system architects
+
+**Key Features:**
+- 9 comprehensive test categories with TDD approach
+- Performance benchmarks and security testing
+- Database integration and error handling
+- Compliance testing (GDPR, AML)
+
 ## Testing Architecture Overview
 
 ```
