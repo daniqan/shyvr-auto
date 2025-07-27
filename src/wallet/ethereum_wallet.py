@@ -10,6 +10,7 @@ import logging
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
+import time
 
 from web3 import Web3, AsyncWeb3
 from web3.exceptions import Web3Exception, TransactionNotFound, BlockNotFound
@@ -32,6 +33,43 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def retry_on_network_error(max_retries: int = 3, delay: float = 1.0):
+    """
+    Decorator to retry network operations with exponential backoff.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Initial delay between retries in seconds
+    """
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except (ConnectionError, TimeoutError, asyncio.TimeoutError, Web3Exception) as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        wait_time = delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(f"Network operation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"Network operation failed after {max_retries + 1} attempts: {e}")
+                        break
+                except Exception as e:
+                    # Don't retry on non-network errors
+                    logger.error(f"Non-retryable error in network operation: {e}")
+                    raise
+            
+            # Re-raise the last exception if all retries failed
+            if last_exception:
+                raise last_exception
+                
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -111,6 +149,8 @@ class EthereumWallet(WalletBase):
         self.w3: Optional[AsyncWeb3] = None
         self.account: Optional[LocalAccount] = None
         self._token_cache: Dict[str, ERC20Token] = {}
+        self._nonce_lock = asyncio.Lock()
+        self._pending_nonce: Optional[int] = None
         
     async def connect(self) -> bool:
         """
@@ -167,7 +207,7 @@ class EthereumWallet(WalletBase):
             self._connected = True
             
             # Validate network chain ID
-            chain_id = await self.w3.eth.get_property('chainId')
+            chain_id = self.w3.eth.chain_id
             expected_chain_ids = self._get_expected_chain_ids()
             
             if expected_chain_ids and chain_id not in expected_chain_ids:
@@ -202,6 +242,30 @@ class EthereumWallet(WalletBase):
                 logger.error(f"Failed to connect to Ethereum wallet: {e}")
                 raise WalletConnectionError(f"Connection failed: {e}")
     
+    async def _get_next_nonce(self) -> int:
+        """
+        Get the next nonce for transaction, handling concurrent transactions.
+        
+        Returns:
+            Next available nonce
+        """
+        async with self._nonce_lock:
+            if not self.account or not self.w3:
+                raise WalletError("Wallet not properly initialized")
+            
+            # Get the current network nonce
+            network_nonce = await self.w3.eth.get_transaction_count(self.account.address, 'pending')
+            
+            # Use the higher of network nonce or our tracked pending nonce
+            if self._pending_nonce is None or network_nonce > self._pending_nonce:
+                self._pending_nonce = network_nonce
+            
+            next_nonce = self._pending_nonce
+            self._pending_nonce += 1
+            
+            logger.debug(f"Using nonce {next_nonce} for transaction")
+            return next_nonce
+    
     def _get_expected_chain_ids(self) -> List[int]:
         """Get expected chain IDs for the current chain and network configuration."""
         chain_id_map = {
@@ -219,6 +283,7 @@ class EthereumWallet(WalletBase):
         self.w3 = None
         self.account = None
         self._wallet_address = None
+        self._pending_nonce = None
         logger.info("Disconnected from Ethereum wallet")
     
     async def get_balance(self, token_address: Optional[str] = None) -> WalletBalance:
@@ -259,6 +324,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to get balance: {e}")
             raise WalletError(f"Balance query failed: {e}")
     
+    @retry_on_network_error(max_retries=2, delay=0.5)
     async def get_native_balance(self) -> Decimal:
         """
         Get ETH balance.
@@ -276,6 +342,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to get ETH balance: {e}")
             raise WalletError(f"ETH balance query failed: {e}")
     
+    @retry_on_network_error(max_retries=2, delay=0.5)
     async def get_token_balance(self, token_address: str) -> Decimal:
         """
         Get ERC-20 token balance.
@@ -306,6 +373,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to get token balance for {token_address}: {e}")
             raise WalletError(f"Token balance query failed: {e}")
     
+    @retry_on_network_error(max_retries=1, delay=1.0)  # Only retry once for transactions
     async def send_native_token(
         self,
         to_address: str,
@@ -339,8 +407,8 @@ class EthereumWallet(WalletBase):
             else:
                 gas_price_wei = int(gas_price * Decimal(10**9))  # Convert gwei to wei
             
-            # Get nonce
-            nonce = await self.w3.eth.get_transaction_count(self.account.address)
+            # Get nonce safely
+            nonce = await self._get_next_nonce()
             
             # Estimate gas
             gas_limit = await self.estimate_gas(to_address, amount)
@@ -352,7 +420,7 @@ class EthereumWallet(WalletBase):
                 'gas': gas_limit,
                 'gasPrice': gas_price_wei,
                 'nonce': nonce,
-                'chainId': await self.w3.eth.chain_id
+                'chainId': self.w3.eth.chain_id
             }
             
             # Sign and send transaction
@@ -372,6 +440,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to send ETH: {e}")
             raise WalletTransactionError(f"ETH transfer failed: {e}")
     
+    @retry_on_network_error(max_retries=1, delay=1.0)  # Only retry once for transactions
     async def send_token(
         self,
         token_address: str,
@@ -414,14 +483,14 @@ class EthereumWallet(WalletBase):
             else:
                 gas_price_wei = int(gas_price * Decimal(10**9))
             
-            # Get nonce
-            nonce = await self.w3.eth.get_transaction_count(self.account.address)
+            # Get nonce safely
+            nonce = await self._get_next_nonce()
             
             # Build transaction
             transaction = await contract.functions.transfer(
                 to_address, amount_units
             ).build_transaction({
-                'chainId': await self.w3.eth.chain_id,
+                'chainId': self.w3.eth.chain_id,
                 'gas': 100000,  # Will be estimated
                 'gasPrice': gas_price_wei,
                 'nonce': nonce
@@ -503,6 +572,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to estimate gas: {e}")
             raise WalletError(f"Gas estimation failed: {e}")
     
+    @retry_on_network_error(max_retries=2, delay=0.5)
     async def get_gas_price(self) -> Decimal:
         """
         Get current gas price in gwei.
@@ -520,6 +590,7 @@ class EthereumWallet(WalletBase):
             logger.error(f"Failed to get gas price: {e}")
             raise WalletError(f"Gas price query failed: {e}")
     
+    @retry_on_network_error(max_retries=2, delay=0.5)
     async def get_transaction_status(self, transaction_hash: str) -> TransactionResult:
         """
         Get transaction status and details.
@@ -568,6 +639,53 @@ class EthereumWallet(WalletBase):
         except Exception as e:
             logger.error(f"Failed to get transaction status: {e}")
             raise WalletError(f"Transaction status query failed: {e}")
+    
+    async def wait_for_transaction_confirmation(
+        self,
+        transaction_hash: str,
+        timeout_seconds: int = 300,
+        poll_interval: float = 2.0
+    ) -> TransactionResult:
+        """
+        Wait for transaction confirmation with polling.
+        
+        Args:
+            transaction_hash: Transaction hash to monitor
+            timeout_seconds: Maximum time to wait for confirmation
+            poll_interval: Time between status checks
+            
+        Returns:
+            TransactionResult when confirmed or failed
+            
+        Raises:
+            WalletTransactionError: If transaction fails or times out
+        """
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout_seconds:
+            try:
+                result = await self.get_transaction_status(transaction_hash)
+                
+                if result.status == TransactionStatus.CONFIRMED:
+                    logger.info(f"Transaction {transaction_hash} confirmed in block {result.block_number}")
+                    return result
+                elif result.status == TransactionStatus.FAILED:
+                    logger.error(f"Transaction {transaction_hash} failed")
+                    raise WalletTransactionError(f"Transaction failed: {result.error_message}")
+                
+                # Still pending, wait before next check
+                await asyncio.sleep(poll_interval)
+                
+            except WalletError as e:
+                # If transaction not found, it might still be propagating
+                if "not found" in str(e).lower():
+                    await asyncio.sleep(poll_interval)
+                    continue
+                else:
+                    raise
+        
+        # Timeout reached
+        raise WalletTransactionError(f"Transaction {transaction_hash} did not confirm within {timeout_seconds} seconds")
     
     async def sign_message(self, message: str) -> str:
         """
