@@ -53,16 +53,7 @@ class ModelManager:
     def _initialize_models(self):
         """Initialize available ML models"""
         try:
-            # Log model initialization start
-            asyncio.create_task(activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.START,
-                source="model_manager",
-                event_type="model_initialization",
-                title="Initializing ML models",
-                severity=ActivitySeverity.INFO,
-                metadata={"model_dir": str(self.model_dir)}
-            ))
+            self.logger.info("Initializing ML models", model_dir=str(self.model_dir))
             
             # Initialize LSTM model
             lstm_config = self.config.get('lstm', {})
@@ -77,37 +68,11 @@ class ModelManager:
                     'last_updated': datetime.now().timestamp()
                 }
             
-            # Log successful model initialization
-            asyncio.create_task(activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.SUCCESS,
-                source="model_manager",
-                event_type="models_initialized",
-                title="ML models initialized successfully",
-                severity=ActivitySeverity.INFO,
-                metadata={
-                    "initialized_models": [model_type.value for model_type in self._models.keys()],
-                    "model_count": len(self._models),
-                    "model_dir": str(self.model_dir)
-                }
-            ))
-            
             self.logger.info("Models initialized", 
                            models=list(self._models.keys()),
                            model_dir=str(self.model_dir))
             
         except Exception as e:
-            # Log model initialization failure
-            asyncio.create_task(activity_logger.log_error(
-                category=ActivityCategory.ML_RL,
-                source="model_manager",
-                event_type="model_initialization_failed",
-                title="Failed to initialize ML models",
-                error_message=str(e),
-                exception=e,
-                severity=ActivitySeverity.ERROR,
-                metadata={"model_dir": str(self.model_dir)}
-            ))
             self.logger.error("Model initialization failed", error=str(e))
             raise MLAnalysisError(f"Failed to initialize models: {str(e)}")
     
@@ -352,52 +317,109 @@ class ModelManager:
     
     def _combine_predictions(self, predictions: Dict[ModelType, PredictionResult],
                            token: DiscoveredToken) -> PredictionResult:
-        """Combine multiple predictions into ensemble result"""
+        """Combine multiple predictions into ensemble result with robust weighting"""
         try:
-            # Weighted averages
+            # Calculate individual timeframe weights for proper handling of missing predictions
+            timeframe_weights = {'1h': {}, '4h': {}, '24h': {}}
+            timeframe_totals = {'1h': 0.0, '4h': 0.0, '24h': 0.0}
+            
+            # Calculate available weights for each timeframe
+            for model_type, prediction in predictions.items():
+                base_weight = self._model_weights[model_type] * prediction.confidence
+                
+                if prediction.price_prediction_1h is not None:
+                    timeframe_weights['1h'][model_type] = base_weight
+                    timeframe_totals['1h'] += base_weight
+                    
+                if prediction.price_prediction_4h is not None:
+                    timeframe_weights['4h'][model_type] = base_weight
+                    timeframe_totals['4h'] += base_weight
+                    
+                if prediction.price_prediction_24h is not None:
+                    timeframe_weights['24h'][model_type] = base_weight
+                    timeframe_totals['24h'] += base_weight
+            
+            # Normalize weights for each timeframe separately
+            for timeframe in timeframe_weights:
+                if timeframe_totals[timeframe] > 0:
+                    for model_type in timeframe_weights[timeframe]:
+                        timeframe_weights[timeframe][model_type] /= timeframe_totals[timeframe]
+            
+            # Calculate weighted predictions with proper normalization
+            ensemble_predictions = {'1h': 0.0, '4h': 0.0, '24h': 0.0}
+            prediction_variances = {'1h': 0.0, '4h': 0.0, '24h': 0.0}
+            
+            # Calculate ensemble predictions for each timeframe
+            for timeframe in ['1h', '4h', '24h']:
+                if timeframe_totals[timeframe] > 0:
+                    predictions_for_timeframe = []
+                    weights_for_timeframe = []
+                    
+                    for model_type, prediction in predictions.items():
+                        if model_type in timeframe_weights[timeframe]:
+                            price_key = f'price_prediction_{timeframe}'
+                            price_pred = getattr(prediction, price_key, None)
+                            if price_pred is not None:
+                                predictions_for_timeframe.append(price_pred)
+                                weights_for_timeframe.append(timeframe_weights[timeframe][model_type])
+                    
+                    if predictions_for_timeframe:
+                        # Weighted average
+                        ensemble_predictions[timeframe] = sum(
+                            pred * weight for pred, weight in zip(predictions_for_timeframe, weights_for_timeframe)
+                        )
+                        
+                        # Calculate prediction variance for uncertainty quantification
+                        if len(predictions_for_timeframe) > 1:
+                            weighted_mean = ensemble_predictions[timeframe]
+                            prediction_variances[timeframe] = sum(
+                                weight * (pred - weighted_mean) ** 2 
+                                for pred, weight in zip(predictions_for_timeframe, weights_for_timeframe)
+                            )
+            
+            # Calculate overall ensemble confidence and probability
             total_weight = sum(self._model_weights[mt] * pred.confidence 
                              for mt, pred in predictions.items())
             
             if total_weight == 0:
                 total_weight = 1.0  # Prevent division by zero
             
-            # Calculate weighted predictions
-            ensemble_predictions = {
-                '1h': 0.0, '4h': 0.0, '24h': 0.0
-            }
             ensemble_confidence = 0.0
             ensemble_prob_up = 0.0
             
             for model_type, prediction in predictions.items():
                 model_weight = self._model_weights[model_type] * prediction.confidence / total_weight
-                
-                if prediction.price_prediction_1h:
-                    ensemble_predictions['1h'] += prediction.price_prediction_1h * model_weight
-                if prediction.price_prediction_4h:
-                    ensemble_predictions['4h'] += prediction.price_prediction_4h * model_weight
-                if prediction.price_prediction_24h:
-                    ensemble_predictions['24h'] += prediction.price_prediction_24h * model_weight
-                
                 ensemble_confidence += prediction.confidence * model_weight
                 ensemble_prob_up += prediction.probability_up * model_weight
             
-            # Determine ensemble direction
+            # Determine ensemble direction based on 24h prediction
             current_price = token.price_usd or 1.0
-            price_change_24h = (ensemble_predictions['24h'] - current_price) / current_price
+            direction = PredictionDirection.HOLD
             
-            if price_change_24h > 0.1:
-                direction = PredictionDirection.STRONG_BUY
-            elif price_change_24h > 0.02:
-                direction = PredictionDirection.BUY
-            elif price_change_24h < -0.1:
-                direction = PredictionDirection.STRONG_SELL
-            elif price_change_24h < -0.02:
-                direction = PredictionDirection.SELL
-            else:
-                direction = PredictionDirection.HOLD
+            if ensemble_predictions['24h'] > 0:
+                price_change_24h = (ensemble_predictions['24h'] - current_price) / current_price
+                
+                if price_change_24h > 0.1:
+                    direction = PredictionDirection.STRONG_BUY
+                elif price_change_24h > 0.02:
+                    direction = PredictionDirection.BUY
+                elif price_change_24h < -0.1:
+                    direction = PredictionDirection.STRONG_SELL
+                elif price_change_24h < -0.02:
+                    direction = PredictionDirection.SELL
+                else:
+                    direction = PredictionDirection.HOLD
             
             # Use the best prediction's technical indicators
             best_prediction = max(predictions.values(), key=lambda p: p.confidence)
+            
+            # Calculate uncertainty as the maximum variance across timeframes
+            max_variance = max(prediction_variances.values())
+            prediction_uncertainty = min(max_variance / (current_price ** 2), 1.0) if max_variance > 0 else 0.0
+            
+            # Adjust confidence based on prediction agreement (lower variance = higher confidence)
+            variance_penalty = prediction_uncertainty * 0.2  # Reduce confidence by up to 20% for high variance
+            adjusted_confidence = max(ensemble_confidence - variance_penalty, 0.1)
             
             # Create ensemble result
             ensemble_result = PredictionResult(
@@ -408,13 +430,14 @@ class ModelManager:
                 price_prediction_4h=ensemble_predictions['4h'] if ensemble_predictions['4h'] > 0 else None,
                 price_prediction_24h=ensemble_predictions['24h'] if ensemble_predictions['24h'] > 0 else None,
                 direction=direction,
-                confidence=min(ensemble_confidence, 1.0),
+                confidence=min(adjusted_confidence, 1.0),
                 probability_up=min(ensemble_prob_up, 1.0),
+                prediction_uncertainty=prediction_uncertainty,
                 technical_indicators=best_prediction.technical_indicators,
                 market_features=best_prediction.market_features,
                 model_accuracy=sum(p.model_accuracy or 0 for p in predictions.values()) / len(predictions),
-                features_used=[f"ensemble_{len(predictions)}_models"],
-                model_version="ensemble_1.0",
+                features_used=[f"ensemble_{len(predictions)}_models"] + [f"{mt.value}_weight_{self._model_weights[mt]:.3f}" for mt in predictions.keys()],
+                model_version="ensemble_2.0",
             )
             
             return ensemble_result
@@ -464,26 +487,50 @@ class ModelManager:
             self.logger.error("Performance tracking update failed", error=str(e))
     
     async def _update_model_weights(self):
-        """Update model weights based on performance"""
+        """Update model weights based on performance with time decay and recency weighting"""
         try:
+            current_time = datetime.now().timestamp()
+            
             for model_type, performance in self._model_performance.items():
                 accuracy = performance['accuracy']
                 prediction_count = performance['predictions_made']
+                last_updated = performance['last_updated']
                 
-                # Weight based on accuracy and experience
+                # Calculate time-based decay factor (performance degrades over time)
+                time_since_update = current_time - last_updated
+                hours_since_update = time_since_update / 3600  # Convert to hours
+                
+                # Decay factor: 1.0 for recent (< 1 hour), decays to 0.5 over 24 hours
+                decay_factor = max(0.5, 1.0 - (hours_since_update / 48))  # 48 hours to reach 0.5
+                
+                # Experience factor: models with more predictions get higher weight
                 experience_factor = min(prediction_count / 100, 1.0)  # Max experience at 100 predictions
                 
-                # Base weight on accuracy, boosted by experience
-                new_weight = accuracy * (0.5 + 0.5 * experience_factor)
-                self._model_weights[model_type] = max(new_weight, 0.1)  # Minimum weight
+                # Recency bonus: models that have been updated recently get a small bonus
+                recency_bonus = 1.0 if hours_since_update < 1 else max(0.9, 1.0 - (hours_since_update / 24))
+                
+                # Combined weight calculation
+                base_weight = accuracy * (0.3 + 0.7 * experience_factor)  # Base weight from accuracy and experience
+                time_adjusted_weight = base_weight * decay_factor * recency_bonus
+                
+                # Ensure minimum weight to prevent models from being completely ignored
+                self._model_weights[model_type] = max(time_adjusted_weight, 0.05)
             
-            # Normalize weights
+            # Normalize weights to sum to 1.0
             total_weight = sum(self._model_weights.values())
             if total_weight > 0:
                 for model_type in self._model_weights:
                     self._model_weights[model_type] /= total_weight
             
-            self.logger.info("Model weights updated", weights=self._model_weights)
+            self.logger.info("Model weights updated", 
+                           weights=self._model_weights,
+                           performance_metrics={
+                               mt.value: {
+                                   'accuracy': perf['accuracy'],
+                                   'predictions': perf['predictions_made'],
+                                   'hours_since_update': (current_time - perf['last_updated']) / 3600
+                               } for mt, perf in self._model_performance.items()
+                           })
             
         except Exception as e:
             self.logger.error("Model weight update failed", error=str(e))
