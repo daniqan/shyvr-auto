@@ -813,6 +813,11 @@ class PortfolioSynchronizer:
                     chain=position.chain.value,
                     symbol=position.symbol,
                     position_id=position_id,
+                    expected_size=position.size,
+                    actual_size=None,
+                    expected_price=position.current_price,
+                    actual_price=None,
+                    difference=None,
                     auto_correctable=False,
                     requires_manual_intervention=True,
                     metadata={"error": dex_balances["_error"]}
@@ -887,6 +892,8 @@ class PortfolioSynchronizer:
                     position_id=position_id,
                     expected_size=position.size,
                     actual_size=Decimal("0"),
+                    expected_price=position.current_price,
+                    actual_price=None,
                     difference=position.size,
                     auto_correctable=False,
                     requires_manual_intervention=True
@@ -921,6 +928,8 @@ class PortfolioSynchronizer:
                         position_id=None,
                         expected_size=Decimal("0"),
                         actual_size=wallet_balance,
+                        expected_price=None,
+                        actual_price=wallet_data.get("price_usd"),
                         difference=wallet_balance,
                         auto_correctable=False,
                         requires_manual_intervention=True
@@ -1566,10 +1575,40 @@ class LiveMode(ModeBase):
             
             # Initialize portfolio synchronization if enabled
             if self.live_config.enable_portfolio_sync:
+                # Configure enhanced portfolio synchronization
+                sync_config = {
+                    "discrepancy_threshold": Decimal("0.01"),  # 1% threshold for discrepancy detection
+                    "auto_correct_threshold": Decimal("0.005"),  # 0.5% threshold for auto-correction
+                    "safety_alert_threshold": Decimal("0.05"),  # 5% threshold for safety alerts
+                    "max_correction_attempts": 3,
+                    "enable_automatic_corrections": True,
+                    "enable_safety_alerts": True,
+                    "enable_correction_rollback": True,
+                    "continue_on_dex_failure": True,  # Continue with available DEXs on partial failure
+                    "price_tolerance_pct": Decimal("0.10"),  # 10% price tolerance
+                    "escalation_threshold": 3,  # Escalate after 3 consecutive alerts
+                    "critical_alert_threshold": Decimal("0.50"),  # 50% threshold for critical alerts
+                    "notification_channels": ["email", "slack"],
+                    "enable_dex_specific_features": True,
+                    "enable_arbitrage_detection": False,  # Disabled by default
+                    "arbitrage_threshold": Decimal("0.02")  # 2% arbitrage threshold
+                }
+                
+                # Create monitoring hooks for integration
+                monitoring_hooks = {
+                    "pre_sync": self._on_pre_sync,
+                    "post_sync": self._on_post_sync,
+                    "discrepancy_detected": self._on_discrepancy_detected
+                }
+                
                 self.portfolio_sync = PortfolioSynchronizer(
                     portfolio=self.portfolio,
                     dex_clients=self.dex_clients,
-                    sync_frequency_seconds=self.live_config.sync_frequency_seconds
+                    sync_frequency_seconds=self.live_config.sync_frequency_seconds,
+                    config=sync_config,
+                    monitor=getattr(self, 'monitor', None),  # Pass monitor if available
+                    alerting_system=getattr(self, 'alerting_system', None),  # Pass alerting if available
+                    monitoring_hooks=monitoring_hooks
                 )
             
             # Initialize real-time P&L tracking if enabled
@@ -2494,6 +2533,128 @@ class LiveMode(ModeBase):
         except Exception as e:
             self.logger.error("Performance check failed", error=str(e))
             raise
+    
+    # Portfolio Synchronization Monitoring Hooks
+    
+    async def _on_pre_sync(self) -> None:
+        """Pre-synchronization hook for monitoring and preparation."""
+        try:
+            self.logger.debug("Starting portfolio synchronization cycle")
+            
+            # Record pre-sync metrics
+            if hasattr(self, 'monitor') and self.monitor:
+                self.monitor.record_event("portfolio_sync_start", {
+                    "timestamp": datetime.now().isoformat(),
+                    "portfolio_id": str(self.portfolio.portfolio_id),
+                    "active_positions": len([p for p in self.portfolio.positions.values() 
+                                           if p.status == PositionStatus.OPEN])
+                })
+        
+        except Exception as e:
+            self.logger.warning("Pre-sync hook failed", error=str(e))
+    
+    async def _on_post_sync(self, discrepancies: List[Any]) -> None:
+        """Post-synchronization hook for monitoring and analysis."""
+        try:
+            discrepancy_count = len(discrepancies)
+            self.logger.debug("Portfolio synchronization completed", 
+                            discrepancies_found=discrepancy_count)
+            
+            # Record post-sync metrics
+            if hasattr(self, 'monitor') and self.monitor:
+                self.monitor.record_event("portfolio_sync_complete", {
+                    "timestamp": datetime.now().isoformat(),
+                    "portfolio_id": str(self.portfolio.portfolio_id),
+                    "discrepancies_found": discrepancy_count,
+                    "sync_successful": True
+                })
+                
+                # Record discrepancy metrics
+                if discrepancies:
+                    severity_counts = {}
+                    for discrepancy in discrepancies:
+                        severity = discrepancy.severity
+                        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+                    
+                    for severity, count in severity_counts.items():
+                        self.monitor.record_metric(f"portfolio_discrepancies_{severity.lower()}", count)
+            
+            # Update live metrics
+            self.live_metrics.dex_failures = sum(
+                1 for d in discrepancies if hasattr(d, 'type') and d.type == "dex_error"
+            )
+            
+            # Check if emergency action is needed
+            critical_discrepancies = [
+                d for d in discrepancies 
+                if hasattr(d, 'severity') and d.severity == "CRITICAL"
+            ]
+            
+            if critical_discrepancies:
+                self.logger.critical(
+                    "Critical portfolio discrepancies detected",
+                    count=len(critical_discrepancies)
+                )
+                
+                # Trigger emergency stop if configured
+                if getattr(self.live_config, 'auto_emergency_stop_on_critical', False):
+                    if self.emergency_system:
+                        await self.emergency_system.trigger_emergency_stop(
+                            EmergencyStopReason.PORTFOLIO_SYNC_FAILURE,
+                            f"Critical portfolio discrepancies: {len(critical_discrepancies)}"
+                        )
+        
+        except Exception as e:
+            self.logger.warning("Post-sync hook failed", error=str(e))
+    
+    async def _on_discrepancy_detected(self, discrepancy: Any) -> None:
+        """Discrepancy detection hook for immediate response."""
+        try:
+            self.logger.warning(
+                "Portfolio discrepancy detected",
+                type=discrepancy.type,
+                severity=discrepancy.severity,
+                symbol=discrepancy.symbol,
+                dex_name=discrepancy.dex_name
+            )
+            
+            # Record in monitoring system
+            if hasattr(self, 'monitor') and self.monitor:
+                self.monitor.record_event("portfolio_discrepancy_detected", {
+                    "timestamp": discrepancy.timestamp.isoformat(),
+                    "type": discrepancy.type,
+                    "severity": discrepancy.severity,
+                    "symbol": discrepancy.symbol,
+                    "dex_name": discrepancy.dex_name,
+                    "auto_correctable": discrepancy.auto_correctable,
+                    "requires_manual_intervention": discrepancy.requires_manual_intervention
+                })
+            
+            # Take immediate action for critical discrepancies
+            if discrepancy.severity == "CRITICAL":
+                # Pause trading for critical discrepancies
+                if discrepancy.type in ["missing_position", "dex_error"]:
+                    self.logger.critical("Pausing trading due to critical discrepancy")
+                    await self.pause()
+                    
+                    # Notify administrators immediately
+                    if hasattr(self, 'alerting_system') and self.alerting_system:
+                        alert_data = {
+                            "severity": "CRITICAL",
+                            "type": "critical_portfolio_discrepancy",
+                            "message": f"Critical discrepancy detected: {discrepancy.type}",
+                            "symbol": discrepancy.symbol,
+                            "requires_immediate_attention": True,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        await self.alerting_system.send_alert(alert_data)
+            
+            # Update emergency stop metrics if applicable
+            if discrepancy.requires_manual_intervention:
+                self.live_metrics.emergency_stops_triggered += 1
+        
+        except Exception as e:
+            self.logger.error("Discrepancy hook failed", error=str(e))
 
 
 # Additional utility classes for position and order management

@@ -240,12 +240,15 @@ class TestBasicReconcilePositions:
     @pytest.mark.asyncio
     async def test_reconcile_positions_basic_functionality(self, test_portfolio, mock_dex_clients):
         """Test basic reconcile_positions method."""
-        # Setup mock responses
+        # Setup mock responses for all DEX clients
         mock_dex_clients["jupiter"].get_wallet_balances.return_value = {
             "SOL": {"balance": Decimal("100"), "price_usd": Decimal("55")}
         }
         mock_dex_clients["uniswap_v3"].get_wallet_balances.return_value = {
             "ETH": {"balance": Decimal("2"), "price_usd": Decimal("2100")}
+        }
+        mock_dex_clients["hyperliquid"].get_wallet_balances.return_value = {
+            "USDC": {"balance": Decimal("10000"), "price_usd": Decimal("1")}
         }
         
         synchronizer = PortfolioSynchronizer(
@@ -263,6 +266,7 @@ class TestBasicReconcilePositions:
         # Verify DEX clients were called
         mock_dex_clients["jupiter"].get_wallet_balances.assert_called_once()
         mock_dex_clients["uniswap_v3"].get_wallet_balances.assert_called_once()
+        mock_dex_clients["hyperliquid"].get_wallet_balances.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_reconcile_positions_with_no_positions(self, portfolio_config, mock_dex_clients):
