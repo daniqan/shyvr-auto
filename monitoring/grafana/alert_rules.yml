@@ -1,0 +1,126 @@
+# Prometheus alerting rules for Shyvr RLTE
+
+groups:
+  - name: trading_alerts
+    rules:
+      - alert: HighRiskLevel
+        expr: safety_risk_level{risk_type="overall"} > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: risk_management
+        annotations:
+          summary: "High risk level detected"
+          description: "Overall risk level is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+
+      - alert: CriticalRiskLevel
+        expr: safety_risk_level{risk_type="overall"} > 0.9
+        for: 1m
+        labels:
+          severity: critical
+          component: risk_management
+        annotations:
+          summary: "Critical risk level detected"
+          description: "Overall risk level is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+
+      - alert: EmergencyStopTriggered
+        expr: increase(safety_emergency_stops_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: safety_system
+        annotations:
+          summary: "Emergency stop triggered"
+          description: "{{ $value }} emergency stops in the last 5 minutes on {{ $labels.instance }}"
+
+      - alert: LiquidationOccurred
+        expr: increase(safety_liquidations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: risk_management
+        annotations:
+          summary: "Position liquidation occurred"
+          description: "{{ $value }} liquidations in the last 5 minutes on {{ $labels.instance }}"
+
+      - alert: HighDrawdown
+        expr: safety_drawdown_percentage{timeframe="daily"} > 15
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High drawdown detected"
+          description: "Daily drawdown is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: ExcessiveDrawdown
+        expr: safety_drawdown_percentage{timeframe="daily"} > 25
+        for: 2m
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "Excessive drawdown detected"
+          description: "Daily drawdown is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: LowSuccessRate
+        expr: trading_success_rate{symbol="ALL"} < 0.4
+        for: 10m
+        labels:
+          severity: warning
+          component: trading_performance
+        annotations:
+          summary: "Low trading success rate"
+          description: "Success rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      - alert: TradingBotDown
+        expr: up{job="trading-bot"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Trading bot is down"
+          description: "Shyvr RLTE trading bot is not responding on {{ $labels.instance }}"
+
+      - alert: HighRiskViolations
+        expr: rate(safety_risk_violations_total[5m]) * 300 > 10
+        for: 3m
+        labels:
+          severity: warning
+          component: risk_management
+        annotations:
+          summary: "High rate of risk violations"
+          description: "{{ $value }} risk violations per 5 minutes on {{ $labels.instance }}"
+
+      - alert: NoTradingActivity
+        expr: rate(trading_trade_count_total[30m]) * 1800 == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: trading_activity
+        annotations:
+          summary: "No trading activity detected"
+          description: "No trades executed in the last 30 minutes on {{ $labels.instance }}"
+
+  - name: system_alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: safety_volatility_score > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system_resources
+        annotations:
+          summary: "High system volatility detected"
+          description: "System volatility score is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      - alert: LowMarginRatio
+        expr: safety_margin_ratio < 1.2
+        for: 2m
+        labels:
+          severity: critical
+          component: margin_management
+        annotations:
+          summary: "Low margin ratio detected"
+          description: "Margin ratio is {{ $value }} on {{ $labels.instance }}"
