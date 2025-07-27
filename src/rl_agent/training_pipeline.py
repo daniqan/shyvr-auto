@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 import structlog
 
-from .base import RLTrainingError, AgentConfig
+from .base import RLTrainingError, AgentConfig, TradeAction
 from .dqn_agent import DQNTradingAgent
 from .trading_environment import TradingEnvironment, EnvironmentConfig
 from .experience_replay import create_replay_buffer, ReplayBufferConfig
@@ -160,19 +160,131 @@ class DQNTrainingPipeline:
         self.reward_calculator = create_reward_calculator(reward_config) if self.config.use_advanced_rewards else None
     
     def run_episode(self, episode_num: int) -> Dict[str, Any]:
-        """Run a single training episode"""
-        # Placeholder implementation to make tests pass
-        # Ensure num_steps is valid even when max_steps_per_episode is small
-        max_steps = max(self.config.max_steps_per_episode, 10)
-        min_steps = min(5, self.config.max_steps_per_episode)
+        """Run a single training episode with complete RL training loop"""
+        episode_start_time = time.time()
+        
+        # Reset environment and get initial state
+        state = self.environment.reset()
+        current_state = state.to_vector()
+        
+        # Episode tracking
+        total_reward = 0.0
+        num_steps = 0
+        num_trades = 0
+        successful_trades = 0
+        episode_loss = 0.0
+        
+        # Get initial portfolio value
+        initial_portfolio_value = self.environment.portfolio.total_value
+        
+        self.logger.debug("Starting episode", 
+                         episode=episode_num,
+                         initial_portfolio_value=initial_portfolio_value)
+        
+        for step in range(self.config.max_steps_per_episode):
+            # Agent predicts action with exploration
+            try:
+                # Use asyncio to run the async predict_action method
+                action, confidence = asyncio.run(self.agent.predict_action(state))
+                action_idx = list(TradeAction).index(action)
+                
+                # Select a token for trading (simple strategy: cycle through tokens)
+                token_idx = step % len(self.tokens)
+                selected_token = self.tokens[token_idx]
+                
+                # Calculate position size based on action strength
+                if action in [TradeAction.STRONG_BUY, TradeAction.STRONG_SELL]:
+                    position_size = 0.2  # 20% of portfolio for strong actions
+                elif action in [TradeAction.BUY, TradeAction.SELL]:
+                    position_size = 0.1  # 10% of portfolio for regular actions
+                else:
+                    position_size = 0.0  # No trade for HOLD
+                
+                # Execute action in environment
+                next_state, reward, done, info = self.environment.step(
+                    action=action,
+                    token=selected_token,
+                    position_size=position_size
+                )
+                
+                next_state_vector = next_state.to_vector()
+                
+                # Track trading statistics
+                if action != TradeAction.HOLD:
+                    num_trades += 1
+                    if info.get('trade_success', False):
+                        successful_trades += 1
+                
+                # Store experience in replay buffer
+                from .experience_replay import Experience
+                experience = Experience(
+                    state=current_state,
+                    action=action_idx,
+                    reward=reward,
+                    next_state=next_state_vector,
+                    done=done
+                )
+                self.replay_buffer.add(experience)
+                
+                # Train agent if we have enough experiences
+                if (len(self.replay_buffer.buffer) >= self.replay_buffer.config.min_size and
+                    step % 4 == 0):  # Train every 4 steps
+                    
+                    try:
+                        batch_experiences = self.replay_buffer.sample()
+                        loss_info = asyncio.run(self.agent.train_step(batch_experiences))
+                        episode_loss += loss_info.get('loss', 0.0)
+                    except Exception as e:
+                        self.logger.warning("Training step failed", error=str(e))
+                
+                # Update target network periodically
+                if step % self.config.target_update_frequency == 0:
+                    self.agent.update_target_network()
+                
+                # Update tracking
+                total_reward += reward
+                num_steps = step + 1
+                current_state = next_state_vector
+                state = next_state
+                
+                # Check if episode should end
+                if done:
+                    self.logger.debug("Episode terminated early", 
+                                    step=step, 
+                                    reason=info.get('termination_reason', 'unknown'))
+                    break
+                    
+            except Exception as e:
+                self.logger.error("Error during episode step", 
+                                step=step, 
+                                episode=episode_num, 
+                                error=str(e))
+                # For debugging, let's not continue but break the loop with minimal tracking
+                num_steps = step + 1
+                break
+        
+        # Calculate final metrics
+        final_portfolio_value = self.environment.portfolio.total_value
+        win_rate = successful_trades / max(num_trades, 1)  # Avoid division by zero
+        
+        episode_time = time.time() - episode_start_time
+        
+        self.logger.info("Episode completed",
+                        episode=episode_num,
+                        steps=num_steps,
+                        total_reward=total_reward,
+                        trades=num_trades,
+                        win_rate=win_rate,
+                        portfolio_value=final_portfolio_value,
+                        duration_seconds=episode_time)
         
         return {
-            'total_reward': 100.0 + np.random.normal(0, 10),
-            'num_steps': np.random.randint(min_steps, max_steps + 1),
-            'final_portfolio_value': 10000.0 + np.random.normal(0, 500),
-            'num_trades': np.random.randint(5, 25),
-            'win_rate': 0.5 + np.random.uniform(-0.1, 0.1),
-            'loss': np.random.uniform(0.01, 0.1)
+            'total_reward': float(total_reward),
+            'num_steps': num_steps,
+            'final_portfolio_value': float(final_portfolio_value),
+            'num_trades': num_trades,
+            'win_rate': float(win_rate),
+            'loss': float(episode_loss / max(num_steps // 4, 1))  # Average loss per training step
         }
     
     def train(self) -> Dict[str, Any]:
@@ -219,14 +331,192 @@ class DQNTrainingPipeline:
         }
     
     def should_stop_early(self) -> bool:
-        """Check if early stopping criteria are met"""
-        # Placeholder implementation
+        """Check if early stopping criteria are met with performance-based stopping"""
+        
+        # Need at least patience episodes to check for early stopping
+        if self.metrics.episodes_completed < self.config.early_stopping_patience:
+            return False
+        
+        # Get recent performance metrics
+        recent_win_rates = self.metrics.win_rates[-self.config.early_stopping_patience:]
+        recent_rewards = self.metrics.episode_rewards[-self.config.early_stopping_patience:]
+        recent_portfolio_values = self.metrics.portfolio_values[-self.config.early_stopping_patience:]
+        
+        # Check win rate threshold
+        mean_recent_win_rate = np.mean(recent_win_rates)
+        if mean_recent_win_rate >= self.config.early_stopping_threshold:
+            self.logger.info("Early stopping: win rate threshold reached",
+                           mean_win_rate=mean_recent_win_rate,
+                           threshold=self.config.early_stopping_threshold)
+            return True
+        
+        # Check for performance plateau (no improvement in recent episodes)
+        if len(recent_rewards) >= self.config.early_stopping_patience:
+            # Split recent rewards into two halves and compare
+            half_point = self.config.early_stopping_patience // 2
+            first_half_rewards = recent_rewards[:half_point]
+            second_half_rewards = recent_rewards[half_point:]
+            
+            first_half_mean = np.mean(first_half_rewards)
+            second_half_mean = np.mean(second_half_rewards)
+            
+            # Check if there's minimal improvement (less than 1% relative improvement)
+            if first_half_mean > 0:
+                improvement_ratio = (second_half_mean - first_half_mean) / abs(first_half_mean)
+                if improvement_ratio < 0.01:  # Less than 1% improvement
+                    self.logger.info("Early stopping: performance plateau detected",
+                                   first_half_mean=first_half_mean,
+                                   second_half_mean=second_half_mean,
+                                   improvement_ratio=improvement_ratio)
+                    return True
+        
+        # Check for consistent portfolio growth
+        if len(recent_portfolio_values) >= self.config.early_stopping_patience:
+            portfolio_growth = (recent_portfolio_values[-1] - recent_portfolio_values[0]) / recent_portfolio_values[0]
+            
+            # If portfolio has grown significantly (>50%) with good win rate, consider stopping
+            if portfolio_growth > 0.5 and mean_recent_win_rate > 0.6:
+                self.logger.info("Early stopping: significant portfolio growth achieved",
+                               portfolio_growth=portfolio_growth,
+                               win_rate=mean_recent_win_rate)
+                return True
+        
+        # Check for excessive losses (safety mechanism)
+        recent_portfolio_min = np.min(recent_portfolio_values)
+        recent_portfolio_max = np.max(recent_portfolio_values)
+        if recent_portfolio_max > 0:
+            recent_drawdown = (recent_portfolio_max - recent_portfolio_min) / recent_portfolio_max
+            if recent_drawdown > 0.3:  # More than 30% drawdown in recent episodes
+                self.logger.warning("Early stopping: excessive recent drawdown detected",
+                                  recent_drawdown=recent_drawdown)
+                return True
+        
         return False
     
     def save_checkpoint(self, episode: int):
-        """Save model checkpoint"""
-        # Placeholder implementation
-        self.logger.debug("Checkpoint saved", episode=episode)
+        """Save model checkpoint with proper state management"""
+        import os
+        import torch
+        import json
+        from pathlib import Path
+        
+        try:
+            # Create checkpoint directory if it doesn't exist
+            checkpoint_dir = Path(self.config.model_save_path).parent
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create versioned checkpoint filename
+            checkpoint_name = f"dqn_checkpoint_episode_{episode}.pth"
+            checkpoint_path = checkpoint_dir / checkpoint_name
+            
+            # Prepare checkpoint data
+            checkpoint_data = {
+                'episode': episode,
+                'timestamp': datetime.now().isoformat(),
+                
+                # Model state
+                'model_state_dict': self.agent.q_network.state_dict(),
+                'target_model_state_dict': self.agent.target_network.state_dict(),
+                'optimizer_state_dict': self.agent.optimizer.state_dict(),
+                
+                # Training configuration
+                'config': {
+                    'num_episodes': self.config.num_episodes,
+                    'max_steps_per_episode': self.config.max_steps_per_episode,
+                    'learning_rate': self.config.learning_rate,
+                    'epsilon_start': self.config.epsilon_start,
+                    'epsilon_end': self.config.epsilon_end,
+                    'epsilon_decay': self.config.epsilon_decay,
+                    'target_update_frequency': self.config.target_update_frequency,
+                    'batch_size': self.config.batch_size,
+                    'early_stopping_patience': self.config.early_stopping_patience,
+                    'early_stopping_threshold': self.config.early_stopping_threshold
+                },
+                
+                # Agent configuration
+                'agent_config': {
+                    'epsilon': self.agent.epsilon,
+                    'learning_rate': self.agent.config.learning_rate,
+                    'hidden_size': self.agent.config.hidden_size,
+                    'num_layers': self.agent.config.num_layers,
+                    'dropout': self.agent.config.dropout
+                },
+                
+                # Training metrics
+                'metrics': {
+                    'episodes_completed': self.metrics.episodes_completed,
+                    'episode_rewards': self.metrics.episode_rewards,
+                    'episode_losses': self.metrics.episode_losses,
+                    'win_rates': self.metrics.win_rates,
+                    'portfolio_values': self.metrics.portfolio_values,
+                    'num_trades': self.metrics.num_trades
+                },
+                
+                # Training statistics
+                'statistics': self.metrics.get_statistics(),
+                
+                # Replay buffer size (don't save the actual buffer due to memory)
+                'replay_buffer_size': len(self.replay_buffer.buffer)
+            }
+            
+            # Save the checkpoint
+            torch.save(checkpoint_data, checkpoint_path)
+            
+            # Save human-readable metrics to JSON
+            metrics_file = checkpoint_dir / f"metrics_episode_{episode}.json"
+            with open(metrics_file, 'w') as f:
+                json.dump({
+                    'episode': episode,
+                    'timestamp': datetime.now().isoformat(),
+                    'statistics': checkpoint_data['statistics'],
+                    'recent_performance': {
+                        'last_10_rewards': self.metrics.episode_rewards[-10:] if len(self.metrics.episode_rewards) >= 10 else self.metrics.episode_rewards,
+                        'last_10_win_rates': self.metrics.win_rates[-10:] if len(self.metrics.win_rates) >= 10 else self.metrics.win_rates,
+                        'last_10_portfolio_values': self.metrics.portfolio_values[-10:] if len(self.metrics.portfolio_values) >= 10 else self.metrics.portfolio_values
+                    }
+                }, f, indent=2)
+            
+            # Update the main checkpoint file to point to latest
+            main_checkpoint_path = Path(self.config.model_save_path)
+            
+            # Copy latest checkpoint to main path for easy loading
+            if main_checkpoint_path != checkpoint_path:
+                import shutil
+                shutil.copy2(checkpoint_path, main_checkpoint_path)
+            
+            # Clean up old checkpoints (keep only last 5)
+            checkpoint_files = sorted(
+                checkpoint_dir.glob("dqn_checkpoint_episode_*.pth"),
+                key=lambda x: int(x.stem.split('_')[-1])
+            )
+            
+            # Keep only the 5 most recent checkpoints
+            for old_checkpoint in checkpoint_files[:-5]:
+                try:
+                    old_checkpoint.unlink()
+                    # Also remove corresponding metrics file
+                    old_episode = old_checkpoint.stem.split('_')[-1]
+                    old_metrics_file = checkpoint_dir / f"metrics_episode_{old_episode}.json"
+                    if old_metrics_file.exists():
+                        old_metrics_file.unlink()
+                except Exception as cleanup_error:
+                    self.logger.warning("Failed to clean up old checkpoint",
+                                      file=str(old_checkpoint),
+                                      error=str(cleanup_error))
+            
+            self.logger.info("Checkpoint saved successfully",
+                           episode=episode,
+                           checkpoint_path=str(checkpoint_path),
+                           metrics_file=str(metrics_file),
+                           episodes_completed=self.metrics.episodes_completed,
+                           current_performance=self.metrics.get_statistics())
+                           
+        except Exception as e:
+            self.logger.error("Failed to save checkpoint",
+                            episode=episode,
+                            error=str(e),
+                            checkpoint_path=self.config.model_save_path)
+            raise TrainingPipelineError(f"Failed to save checkpoint for episode {episode}: {e}")
 
 
 class HyperparameterSearch:
