@@ -57,6 +57,10 @@ class EmergencyStopReason(Enum):
     DEX_FAILURES = "dex_failures"
     RISK_THRESHOLD_EXCEEDED = "risk_threshold_exceeded"
     PORTFOLIO_SYNC_FAILURE = "portfolio_sync_failure"
+    MARKET_VOLATILITY = "market_volatility"
+    FLASH_CRASH_DETECTED = "flash_crash_detected"
+    MIN_PORTFOLIO_VALUE = "min_portfolio_value"
+    EXTREME_PORTFOLIO_RISK = "extreme_portfolio_risk"
 
 
 class SafetyCheckResult(Enum):
@@ -127,6 +131,48 @@ class LiveModeConfig:
     learning_trigger_threshold: int = 1000
     deployment_safety_threshold: Decimal = Decimal("0.05")
     performance_rollback_threshold: Decimal = Decimal("-0.10")
+    
+    # Enhanced safety parameters
+    warning_drawdown_pct: Decimal = Decimal("0.08")      # 8% warning threshold
+    critical_drawdown_pct: Decimal = Decimal("0.12")     # 12% critical threshold
+    volatility_circuit_breaker_pct: Decimal = Decimal("0.20")  # 20% volatility CB
+    consecutive_failure_limit: int = 3                   # 3 consecutive failures
+    portfolio_value_check_frequency: int = 5             # Check every 5 seconds
+    emergency_liquidation_enabled: bool = True
+    min_portfolio_value_pct: Decimal = Decimal("0.50")   # Stop if < 50% of initial
+    
+    # Enhanced risk parameters
+    max_sector_exposure_pct: Decimal = Decimal("0.30")      # 30% max sector exposure
+    max_token_concentration_pct: Decimal = Decimal("0.15")  # 15% max single token
+    max_correlated_exposure_pct: Decimal = Decimal("0.25")  # 25% max correlated exposure
+    correlation_threshold: Decimal = Decimal("0.70")        # 70% correlation threshold
+    max_leverage_ratio: Decimal = Decimal("2.0")            # 2x max leverage
+    min_liquidity_requirement: Decimal = Decimal("1000000") # $1M minimum liquidity
+    
+    # Risk monitoring
+    risk_check_frequency_seconds: int = 5                   # Check every 5 seconds
+    position_rebalance_threshold: Decimal = Decimal("0.20") # 20% rebalance threshold
+    volatility_adjustment_factor: Decimal = Decimal("0.5")  # 50% volatility adjustment
+    
+    # Alert thresholds
+    risk_warning_threshold: Decimal = Decimal("0.75")       # 75% of limit
+    risk_critical_threshold: Decimal = Decimal("0.90")      # 90% of limit
+    
+    # Advanced risk features
+    enable_dynamic_position_sizing: bool = True
+    enable_correlation_monitoring: bool = True
+    enable_sector_limits: bool = True
+    enable_stress_testing: bool = True
+    stress_test_scenarios: List[str] = field(default_factory=lambda: ["flash_crash", "market_dump", "high_volatility"])
+    
+    # Safety system integration
+    enable_pre_trade_safety_checks: bool = True
+    liquidation_trigger_threshold: Decimal = Decimal("0.12")  # 12% drawdown triggers liquidation
+    partial_liquidation_percentage: Decimal = Decimal("0.50")  # Liquidate 50% initially
+    full_liquidation_threshold: Decimal = Decimal("0.18")     # 18% drawdown triggers full liquidation
+    safety_system_priority_order: List[str] = field(default_factory=lambda: ["emergency_stop", "risk_manager", "liquidity_check"])
+    enable_safety_coordination: bool = True
+    safety_override_threshold: Decimal = Decimal("0.95")     # 95% risk threshold for override
     
     def __post_init__(self):
         """Validate configuration after initialization."""
