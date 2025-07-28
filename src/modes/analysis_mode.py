@@ -28,6 +28,7 @@ from src.ml_analysis.base import TechnicalIndicators, PredictionResult, ModelTyp
 from src.utils.base import Chain
 from src.monitoring.base import MetricsRegistry
 from src.monitoring.analysis_metrics import AnalysisMetricsCollector
+from src.modes.analysis_validator import AnalysisValidator
 
 
 logger = structlog.get_logger()
@@ -156,6 +157,15 @@ class AnalysisMode(BaseAnalysisMode):
             self.logger.warning("Failed to initialize metrics collector", error=str(e))
             self.metrics_collector = None
         
+        # Initialize analysis validator
+        try:
+            validator_config = self._parse_validator_config(config.parameters)
+            self.validator = AnalysisValidator(validator_config)
+            self.logger.info("Initialized AnalysisValidator successfully")
+        except Exception as e:
+            self.logger.warning("Failed to initialize validator", error=str(e))
+            self.validator = None
+        
         # Data storage
         self._historical_data_cache: Dict[str, List[HistoricalDataPoint]] = {}
         self._analysis_results_cache: Dict[str, Any] = {}
@@ -188,6 +198,57 @@ class AnalysisMode(BaseAnalysisMode):
             real_time_updates=parameters.get("real_time_updates", True),
             cache_duration_minutes=parameters.get("cache_duration_minutes", 15)
         )
+    
+    def _parse_validator_config(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse validator configuration from mode parameters."""
+        # Get custom validator config if provided, otherwise use defaults
+        validator_config = parameters.get("validator_config", {})
+        
+        # Default validator configuration
+        default_config = {
+            "data_quality": {
+                "min_completeness_ratio": 0.8,
+                "min_temporal_coverage_hours": 24,
+                "max_missing_data_points": 100,
+                "consistency_check_enabled": True,
+                "outlier_detection_enabled": True,
+                "outlier_threshold_std": 3.0
+            },
+            "backtest_validation": {
+                "max_realistic_daily_return": 0.5,
+                "min_realistic_daily_return": -0.5,
+                "max_sharpe_ratio": 10.0,
+                "min_trade_count": 1,
+                "max_trade_count": 10000,
+                "win_rate_bounds": [0.0, 1.0],
+                "profit_factor_bounds": [0.0, 50.0]
+            },
+            "resource_monitoring": {
+                "max_memory_usage_mb": 1024,
+                "max_cpu_usage_percent": 80.0,
+                "max_execution_time_seconds": 300,
+                "memory_leak_detection": True,
+                "check_interval_seconds": 5
+            },
+            "quality_scoring": {
+                "weights": {
+                    "data_completeness": 0.3,
+                    "temporal_coverage": 0.2,
+                    "result_consistency": 0.25,
+                    "statistical_validity": 0.25
+                },
+                "min_acceptable_score": 0.6
+            }
+        }
+        
+        # Merge with custom config
+        for section, section_config in validator_config.items():
+            if section in default_config and isinstance(section_config, dict):
+                default_config[section].update(section_config)
+            else:
+                default_config[section] = section_config
+        
+        return default_config
     
     def validate_analysis_config(self) -> None:
         """Validate analysis configuration."""
@@ -3042,6 +3103,175 @@ class RiskAnalyzer:
         )
         
         return anomalies
+    
+    # Validation Integration Methods
+    async def validate_and_process_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate data quality and process if validation passes."""
+        if not self.validator:
+            self.logger.warning("Validator not available, skipping validation")
+            return {"validation_passed": True, "data": data}
+        
+        try:
+            validation_result = await self.validator.validate_data_quality(data)
+            
+            # Add validation results to metrics if available
+            if self.metrics_collector and hasattr(self.metrics_collector, 'record_validation_results'):
+                try:
+                    self.metrics_collector.record_validation_results(validation_result)
+                except Exception as e:
+                    self.logger.warning("Failed to record validation metrics", error=str(e))
+            
+            if not validation_result.get("validation_passed", False):
+                self.logger.warning(
+                    "Data validation failed",
+                    issues=validation_result.get("issues_found", []),
+                    quality_score=validation_result.get("overall_quality_score", 0)
+                )
+            
+            return validation_result
+            
+        except Exception as e:
+            self.logger.warning("Data validation error", error=str(e))
+            return {"validation_passed": False, "error": str(e), "data": data}
+    
+    async def validate_and_process_data_safely(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely validate and process data, continuing on validation failure."""
+        try:
+            validation_result = await self.validate_and_process_data(data)
+            return validation_result
+        except Exception as e:
+            self.logger.warning("Validation failed, continuing with data processing", error=str(e))
+            return {"validation_passed": False, "data": data, "validation_error": str(e)}
+    
+    async def validate_backtest_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate backtest results before reporting."""
+        if not self.validator:
+            self.logger.warning("Validator not available, skipping backtest validation")
+            return {"validation_passed": True, "results": results}
+        
+        try:
+            validation_result = await self.validator.validate_backtest_results(results)
+            
+            # Log validation summary
+            if validation_result.get("validation_passed", False):
+                self.logger.info(
+                    "Backtest results validated successfully",
+                    strategy=results.get("strategy_name"),
+                    validation_score=validation_result.get("overall_validation_score", 0)
+                )
+            else:
+                self.logger.warning(
+                    "Backtest validation issues found",
+                    strategy=results.get("strategy_name"),
+                    issues=validation_result.get("issues_found", []),
+                    recommendations=validation_result.get("recommendations", [])
+                )
+            
+            # Merge validation results with original results
+            validated_results = {**results, "validation": validation_result}
+            return validated_results
+            
+        except Exception as e:
+            self.logger.warning("Backtest validation error", error=str(e))
+            return {"validation_passed": False, "results": results, "validation_error": str(e)}
+    
+    async def monitor_analysis_resources(self, analysis_id: str):
+        """Context manager for monitoring analysis resources."""
+        return self._ResourceMonitorContext(self, analysis_id)
+    
+    class _ResourceMonitorContext:
+        """Resource monitoring context manager."""
+        
+        def __init__(self, analysis_mode: 'AnalysisMode', analysis_id: str):
+            self.analysis_mode = analysis_mode
+            self.analysis_id = analysis_id
+        
+        async def __aenter__(self):
+            if self.analysis_mode.validator:
+                try:
+                    await self.analysis_mode.validator.start_resource_monitoring(self.analysis_id)
+                except Exception as e:
+                    self.analysis_mode.logger.warning("Failed to start resource monitoring", error=str(e))
+            return self
+        
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            if self.analysis_mode.validator:
+                try:
+                    monitoring_results = await self.analysis_mode.validator.stop_resource_monitoring(self.analysis_id)
+                    
+                    # Log resource usage
+                    self.analysis_mode.logger.info(
+                        "Analysis resource monitoring completed",
+                        analysis_id=self.analysis_id,
+                        duration=monitoring_results.get("duration_seconds", 0),
+                        peak_memory=monitoring_results.get("peak_memory_mb", 0),
+                        peak_cpu=monitoring_results.get("peak_cpu_percent", 0)
+                    )
+                    
+                    return monitoring_results
+                except Exception as e:
+                    self.analysis_mode.logger.warning("Failed to stop resource monitoring", error=str(e))
+            return {}
+    
+    async def calculate_analysis_quality(self, quality_inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate analysis quality score using validator."""
+        if not self.validator:
+            self.logger.warning("Validator not available, skipping quality calculation")
+            return {"overall_score": 0.5, "quality_grade": "C", "component_scores": {}}
+        
+        try:
+            quality_result = await self.validator.calculate_analysis_quality_score(quality_inputs)
+            
+            # Log quality assessment
+            self.logger.info(
+                "Analysis quality calculated",
+                overall_score=quality_result.get("overall_score", 0),
+                quality_grade=quality_result.get("quality_grade", "F"),
+                suggestions_count=len(quality_result.get("improvement_suggestions", {}).get("prioritized_actions", []))
+            )
+            
+            return quality_result
+            
+        except Exception as e:
+            self.logger.warning("Quality calculation error", error=str(e))
+            return {"overall_score": 0.0, "quality_grade": "F", "error": str(e)}
+    
+    async def validate_and_record_metrics(self, data: Dict[str, Any]) -> None:
+        """Validate data and record validation results in metrics."""
+        validation_result = await self.validate_and_process_data_safely(data)
+        
+        if self.metrics_collector and hasattr(self.metrics_collector, 'record_validation_results'):
+            try:
+                self.metrics_collector.record_validation_results(validation_result)
+            except Exception as e:
+                self.logger.warning("Failed to record validation metrics", error=str(e))
+    
+    # Enhanced existing methods with validation
+    async def load_historical_data_with_validation(
+        self,
+        token: DiscoveredToken,
+        start_date: datetime,
+        end_date: datetime,
+        interval: str = "1h"
+    ) -> List[HistoricalDataPoint]:
+        """Load historical data with validation."""
+        analysis_id = f"load_data_{token.symbol}_{uuid4().hex[:8]}"
+        
+        async with self.monitor_analysis_resources(analysis_id):
+            # Load data using existing method
+            historical_data = await self.load_historical_data(token, start_date, end_date, interval)
+            
+            # Convert to validation format
+            validation_data = {
+                "timestamps": [point.timestamp for point in historical_data],
+                "prices": [point.price for point in historical_data],
+                "volumes": [point.volume for point in historical_data]
+            }
+            
+            # Validate the loaded data
+            await self.validate_and_record_metrics(validation_data)
+            
+            return historical_data
 
 
 class AnalysisExecutionTracker:

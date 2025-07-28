@@ -28,6 +28,7 @@ from src.ml_analysis.base import TechnicalIndicators, PredictionResult, ModelTyp
 from src.utils.base import Chain
 from src.monitoring.base import MetricsRegistry
 from src.monitoring.analysis_metrics import AnalysisMetricsCollector
+from src.modes.analysis_validator import AnalysisValidator
 
 
 class TestAnalysisModeCore:
@@ -1251,3 +1252,367 @@ class TestAnalysisModeMetricsIntegration:
         
         # Should have called collect_metrics at least once
         assert mode.metrics_collector.collect_metrics.call_count >= 0
+
+
+class TestAnalysisValidatorIntegration:
+    """Test AnalysisValidator integration with AnalysisMode."""
+    
+    @pytest.fixture
+    def validator_config(self):
+        """Create validator configuration."""
+        return {
+            "data_quality": {
+                "min_completeness_ratio": 0.8,
+                "min_temporal_coverage_hours": 24,
+                "max_missing_data_points": 100,
+                "consistency_check_enabled": True,
+                "outlier_detection_enabled": True,
+                "outlier_threshold_std": 3.0
+            },
+            "backtest_validation": {
+                "max_realistic_daily_return": 0.5,
+                "min_realistic_daily_return": -0.5,
+                "max_sharpe_ratio": 10.0,
+                "min_trade_count": 1,
+                "max_trade_count": 10000,
+                "win_rate_bounds": [0.0, 1.0],
+                "profit_factor_bounds": [0.0, 50.0]
+            },
+            "resource_monitoring": {
+                "max_memory_usage_mb": 1024,
+                "max_cpu_usage_percent": 80.0,
+                "max_execution_time_seconds": 300,
+                "memory_leak_detection": True,
+                "check_interval_seconds": 5
+            },
+            "quality_scoring": {
+                "weights": {
+                    "data_completeness": 0.3,
+                    "temporal_coverage": 0.2,
+                    "result_consistency": 0.25,
+                    "statistical_validity": 0.25
+                },
+                "min_acceptable_score": 0.6
+            }
+        }
+    
+    @pytest.fixture
+    def analysis_config(self):
+        """Create analysis mode configuration."""
+        return ModeConfig(
+            mode_type=ModeType.ANALYSIS,
+            enabled=True,
+            parameters={
+                "analysis_depth": "comprehensive",
+                "include_backtesting": True,
+                "backtest_period_days": 30,
+                "include_risk_analysis": True,
+                "generate_reports": True,
+                "market_data_sources": ["historical", "real_time"],
+                "technical_indicators": ["rsi", "macd", "bollinger", "volume"],
+                "ml_integration": True,
+                "rl_integration": True
+            }
+        )
+    
+    @pytest.fixture
+    def portfolio(self):
+        """Create mock portfolio for testing."""
+        portfolio = Mock(spec=Portfolio)
+        portfolio.portfolio_id = uuid4()
+        portfolio.cash_balance = Decimal("10000")
+        portfolio.total_value = Decimal("10000")
+        portfolio.open_positions = {}
+        return portfolio
+
+    def test_analysis_mode_initializes_validator(self, analysis_config, portfolio):
+        """Test that AnalysisMode initializes AnalysisValidator."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Should have validator initialized
+        assert hasattr(mode, 'validator')
+        assert isinstance(mode.validator, AnalysisValidator)
+
+    def test_analysis_mode_validator_config_validation(self, analysis_config, portfolio):
+        """Test that AnalysisMode validates validator configuration."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        # Add invalid validator config
+        analysis_config.parameters["validator_config"] = {
+            "data_quality": {
+                "min_completeness_ratio": 1.5  # Invalid - should be between 0 and 1
+            }
+        }
+        
+        # Should raise validation error during construction
+        with pytest.raises(Exception):  # Could be ValidationConfigError or similar
+            mode = EnhancedAnalysisMode(
+                mode_id=uuid4(),
+                config=analysis_config,
+                portfolio=portfolio
+            )
+
+    @pytest.mark.asyncio
+    async def test_data_validation_during_processing(self, analysis_config, portfolio):
+        """Test that data validation occurs during data processing."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the validator
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.validate_data_quality = AsyncMock(return_value={
+            "validation_passed": True,
+            "quality_score": 0.85,
+            "completeness": {"completeness_ratio": 0.9}
+        })
+        
+        # Simulate data processing
+        test_data = {
+            "timestamps": [datetime.now() - timedelta(hours=i) for i in range(100)],
+            "prices": [100.0 + i for i in range(100)],
+            "volumes": [1000000.0] * 100
+        }
+        
+        result = await mode.validate_and_process_data(test_data)
+        
+        # Should call validator
+        mode.validator.validate_data_quality.assert_called_once_with(test_data)
+        assert result["validation_passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_backtest_validation_integration(self, analysis_config, portfolio):
+        """Test that backtest results are validated before reporting."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the validator
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.validate_backtest_results = AsyncMock(return_value={
+            "validation_passed": True,
+            "overall_validation_score": 0.85,
+            "return_validation": {"validation_passed": True},
+            "statistics_validation": {"validation_passed": True},
+            "trade_history_validation": {"validation_passed": True}
+        })
+        
+        # Simulate backtest results
+        backtest_results = {
+            "strategy_name": "RSI_MEAN_REVERSION",
+            "total_return": 0.15,
+            "annual_return": 0.18,
+            "sharpe_ratio": 1.8,
+            "max_drawdown": -0.08,
+            "win_rate": 0.62,
+            "total_trades": 45,
+            "profit_factor": 1.4,
+            "trade_history": []
+        }
+        
+        validated_results = await mode.validate_backtest_results(backtest_results)
+        
+        # Should call validator
+        mode.validator.validate_backtest_results.assert_called_once_with(backtest_results)
+        assert validated_results["validation_passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_resource_monitoring_during_analysis(self, analysis_config, portfolio):
+        """Test that computational resources are monitored during analysis operations."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the validator
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.start_resource_monitoring = AsyncMock()
+        mode.validator.stop_resource_monitoring = AsyncMock(return_value={
+            "duration_seconds": 5.2,
+            "peak_memory_mb": 256,
+            "peak_cpu_percent": 45.0,
+            "memory_growth": 12.5
+        })
+        
+        # Test resource monitoring context
+        async with mode.monitor_analysis_resources("test_analysis_123"):
+            # Simulate some analysis work
+            await asyncio.sleep(0.01)
+        
+        # Should start and stop monitoring
+        mode.validator.start_resource_monitoring.assert_called_once()
+        mode.validator.stop_resource_monitoring.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_quality_scoring_integration(self, analysis_config, portfolio):
+        """Test that analysis quality scoring is integrated."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the validator
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.calculate_analysis_quality_score = AsyncMock(return_value={
+            "overall_score": 0.82,
+            "component_scores": {
+                "data_completeness_score": 0.85,
+                "temporal_coverage_score": 0.78,
+                "result_consistency_score": 0.84,
+                "statistical_validity_score": 0.81
+            },
+            "quality_grade": "B",
+            "improvement_suggestions": {
+                "prioritized_actions": [
+                    {"action": "Improve temporal coverage", "priority": "medium"}
+                ]
+            }
+        })
+        
+        # Test quality scoring
+        quality_inputs = {
+            "data_completeness": 0.85,
+            "temporal_coverage": 0.78,
+            "result_consistency": 0.84,
+            "statistical_validity": 0.81
+        }
+        
+        quality_score = await mode.calculate_analysis_quality(quality_inputs)
+        
+        # Should call validator
+        mode.validator.calculate_analysis_quality_score.assert_called_once_with(quality_inputs)
+        assert quality_score["overall_score"] == 0.82
+        assert quality_score["quality_grade"] == "B"
+
+    @pytest.mark.asyncio
+    async def test_validation_failure_handling(self, analysis_config, portfolio):
+        """Test that validation failures are handled gracefully."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the validator to raise an exception
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.validate_data_quality = AsyncMock(side_effect=Exception("Validation failed"))
+        
+        # Should handle validation failure gracefully
+        test_data = {
+            "timestamps": [datetime.now()],
+            "prices": [100.0],
+            "volumes": [1000000.0]
+        }
+        
+        # Should not raise exception, but log warning and continue
+        result = await mode.validate_and_process_data_safely(test_data)
+        
+        # Should continue operation despite validation failure
+        assert result is not None
+        # Should have logged warning (implementation dependent)
+
+    @pytest.mark.asyncio
+    async def test_validation_results_in_metrics(self, analysis_config, portfolio):
+        """Test that validation results are added to metrics collection."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock both validator and metrics collector
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        validation_results = {
+            "validation_passed": True,
+            "overall_quality_score": 0.85,
+            "data_completeness": 0.9,
+            "temporal_coverage": 0.8
+        }
+        
+        mode.validator.validate_data_quality = AsyncMock(return_value=validation_results)
+        mode.metrics_collector.record_validation_results = Mock()
+        
+        # Test validation metrics recording
+        test_data = {"timestamps": [], "prices": [], "volumes": []}
+        await mode.validate_and_record_metrics(test_data)
+        
+        # Should record validation results in metrics
+        mode.metrics_collector.record_validation_results.assert_called_once_with(
+            validation_results
+        )
+
+    @pytest.mark.asyncio
+    async def test_validator_integration_with_existing_operations(self, analysis_config, portfolio):
+        """Test that validator integrates seamlessly with existing analysis operations."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock validator with realistic responses
+        mode.validator = Mock(spec=AnalysisValidator)
+        mode.validator.validate_data_quality = AsyncMock(return_value={
+            "validation_passed": True,
+            "overall_quality_score": 0.85
+        })
+        mode.validator.start_resource_monitoring = AsyncMock()
+        mode.validator.stop_resource_monitoring = AsyncMock(return_value={
+            "duration_seconds": 2.1,
+            "peak_memory_mb": 128
+        })
+        
+        # Test that existing operations still work with validation integrated
+        token = DiscoveredToken(
+            address="0x1234567890abcdef",
+            symbol="TEST",
+            name="Test Token",
+            chain=Chain.ETHEREUM,
+            discovered_at=datetime.now(),
+            discovery_source="manual",
+            decimals=18
+        )
+        
+        # This should work with validation integrated
+        historical_data = await mode.load_historical_data(
+            token=token,
+            start_date=datetime.now() - timedelta(days=7),
+            end_date=datetime.now(),
+            interval="1h"
+        )
+        
+        # Should return data as before
+        assert len(historical_data) > 0
+        assert all(hasattr(point, 'timestamp') for point in historical_data)
+        assert all(hasattr(point, 'price') for point in historical_data)
+        
+        # But validation should have been called
+        assert mode.validator.validate_data_quality.called or mode.validator.start_resource_monitoring.called
