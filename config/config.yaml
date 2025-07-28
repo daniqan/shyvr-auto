@@ -384,6 +384,24 @@ analysis_validation:
     log_validation_details: true          # Log detailed validation results
     store_validation_history: true        # Store validation history for analysis
     alert_on_quality_degradation: true    # Alert when quality scores drop
+
+# Backtest Integration Configuration
+backtest_integration:
+  # Core integration settings
+  enabled: false                          # Disabled by default for minimal coupling
+  validation_enabled: true                # Enable validation of backtest data
+  
+  # Quality filters for validation data
+  min_backtest_trades: 10                 # Minimum trades required for integration
+  max_validation_age_days: 30             # Maximum age of validation data
+  validation_sample_ratio: 0.1            # Sample 10% of validation data
+  
+  # Performance comparison settings
+  performance_comparison_window: 100      # Episodes for live vs backtest comparison
+  
+  # Data management
+  store_validation_history: true          # Store validation comparison history
+  max_validation_history_size: 1000       # Maximum history entries to keep
   
 monitoring:
   # General monitoring settings
