@@ -20,12 +20,12 @@ class TestExplanationDataStructure:
     def test_explanation_data_import(self):
         """Test that ExplanationData can be imported."""
         # This test will fail until we implement ExplanationData
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         assert ExplanationData is not None
     
     def test_explanation_data_initialization(self):
         """Test ExplanationData initialization with required fields."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Required fields
         feature_importance = {'feature_1': 0.5, 'feature_2': -0.3}
@@ -47,7 +47,7 @@ class TestExplanationDataStructure:
     
     def test_explanation_data_optional_fields(self):
         """Test ExplanationData with optional fields."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Optional fields
         confidence_score = 0.9
@@ -73,7 +73,7 @@ class TestExplanationDataStructure:
     
     def test_explanation_data_timestamp_auto_generation(self):
         """Test that timestamp is automatically generated if not provided."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={'feature_1': 0.5},
@@ -91,7 +91,7 @@ class TestExplanationDataStructure:
     
     def test_explanation_data_custom_timestamp(self):
         """Test that custom timestamp can be provided."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         custom_timestamp = '2024-01-01T12:00:00Z'
         
@@ -111,7 +111,7 @@ class TestExplanationDataValidation:
     
     def test_feature_importance_validation(self):
         """Test validation of feature importance data."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Valid feature importance
         valid_importance = {'feature_1': 0.5, 'feature_2': -0.3}
@@ -143,7 +143,7 @@ class TestExplanationDataValidation:
     
     def test_explanation_type_validation(self):
         """Test validation of explanation type."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Valid explanation types
         valid_types = ['lime', 'shap', 'permutation', 'grad_cam', 'custom']
@@ -168,7 +168,7 @@ class TestExplanationDataValidation:
     
     def test_model_prediction_validation(self):
         """Test validation of model prediction."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Valid numeric prediction
         explanation = ExplanationData(
@@ -199,7 +199,7 @@ class TestExplanationDataValidation:
     
     def test_confidence_score_validation(self):
         """Test validation of confidence score."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         # Valid confidence score (0-1)
         explanation = ExplanationData(
@@ -236,7 +236,7 @@ class TestExplanationDataSerialization:
     
     def test_to_dict_method(self):
         """Test conversion to dictionary."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={'feature_1': 0.5, 'feature_2': -0.3},
@@ -262,7 +262,7 @@ class TestExplanationDataSerialization:
     
     def test_from_dict_method(self):
         """Test creation from dictionary."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         data_dict = {
             'feature_importance': {'feature_1': 0.5, 'feature_2': -0.3},
@@ -284,7 +284,7 @@ class TestExplanationDataSerialization:
     
     def test_to_json_method(self):
         """Test JSON serialization."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={'feature_1': 0.5},
@@ -303,7 +303,7 @@ class TestExplanationDataSerialization:
     
     def test_from_json_method(self):
         """Test JSON deserialization."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         json_str = json.dumps({
             'feature_importance': {'feature_1': 0.5},
@@ -326,7 +326,7 @@ class TestExplanationDataUtilityMethods:
     
     def test_get_top_features_method(self):
         """Test getting top contributing features."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={
@@ -355,7 +355,7 @@ class TestExplanationDataUtilityMethods:
     
     def test_get_feature_impact_method(self):
         """Test getting impact of specific feature."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={'feature_1': 0.5, 'feature_2': -0.3},
@@ -374,7 +374,7 @@ class TestExplanationDataUtilityMethods:
     
     def test_summary_method(self):
         """Test explanation summary generation."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation = ExplanationData(
             feature_importance={'feature_1': 0.5, 'feature_2': -0.3},
@@ -396,7 +396,7 @@ class TestExplanationDataUtilityMethods:
     
     def test_merge_explanations_method(self):
         """Test merging multiple explanations."""
-        from src.xai.explanation_data import ExplanationData
+        from src.xai.data_models import ExplanationData
         
         explanation1 = ExplanationData(
             feature_importance={'feature_1': 0.5, 'feature_2': -0.3},
