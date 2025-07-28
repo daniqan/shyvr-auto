@@ -50,3 +50,4 @@ hist/
 .coverage.*
 htmlcov/
 .pytest_cache/
+TODO_CHECKLIST.md
