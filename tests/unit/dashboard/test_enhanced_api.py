@@ -80,12 +80,12 @@ class TestEnhancedDashboardAPI:
     # XAI EXPLANATION ENDPOINT TESTS
     # =============================================================================
     
-    @patch('src.dashboard.auth.require_read')
-    @patch('src.dashboard.service.dashboard_service')
-    def test_get_xai_explanations_success(self, mock_service, mock_auth, client, mock_user, mock_trading_explanation):
+    @patch('src.dashboard.api.dashboard_service')
+    @patch('src.dashboard.api.auth_service')
+    def test_get_xai_explanations_success(self, mock_auth, mock_service, client, mock_user, mock_trading_explanation):
         """Test successful XAI explanations retrieval"""
         # Setup mocks
-        mock_auth.return_value = mock_user
+        mock_auth.verify_api_key = AsyncMock(return_value=mock_user)
         mock_service.get_xai_explanations = AsyncMock(return_value=[
             {
                 "decision_id": mock_trading_explanation.decision_id,
@@ -98,7 +98,10 @@ class TestEnhancedDashboardAPI:
         ])
         
         # Make request
-        response = client.get("/dashboard/xai/explanations?symbol=SOL/USDC&limit=50")
+        response = client.get(
+            "/dashboard/xai/explanations?symbol=SOL/USDC&limit=50",
+            headers={"X-API-Key": "test-api-key"}
+        )
         
         # Assertions
         assert response.status_code == 200
@@ -117,9 +120,9 @@ class TestEnhancedDashboardAPI:
             limit=50
         )
     
-    @patch('src.dashboard.auth.require_read')
-    @patch('src.dashboard.service.dashboard_service')
-    def test_get_xai_explanation_by_id_success(self, mock_service, mock_auth, client, mock_user, mock_trading_explanation):
+    @patch('src.dashboard.api.dashboard_service')
+    @patch('src.dashboard.api.auth_service')
+    def test_get_xai_explanation_by_id_success(self, mock_auth, mock_service, client, mock_user, mock_trading_explanation):
         """Test successful single XAI explanation retrieval"""
         # Setup mocks
         mock_auth.return_value = mock_user
