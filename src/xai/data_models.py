@@ -6,7 +6,7 @@ from different explainer types, including serialization and validation.
 """
 
 from typing import Dict, Any, List, Optional, Union, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import numpy as np
 
@@ -62,7 +62,7 @@ class ExplanationData:
         self.prediction_probability = prediction_probability
         
         # Auto-generate timestamp if not provided
-        self.timestamp = timestamp or datetime.utcnow().isoformat() + 'Z'
+        self.timestamp = timestamp or datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     
     def _validate_feature_importance(self, feature_importance: Dict[str, float]) -> Dict[str, float]:
         """Validate feature importance dictionary."""
