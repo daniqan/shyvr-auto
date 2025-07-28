@@ -18,9 +18,12 @@ class TestBaseExplainerInterface:
     
     def test_base_explainer_is_abstract_class(self):
         """Test that BaseExplainer is an abstract base class."""
-        # This test will fail until we implement BaseExplainer
-        with pytest.raises(ImportError):
-            from src.xai.base import BaseExplainer
+        # BaseExplainer should be importable but not instantiable directly
+        from src.xai.base import BaseExplainer
+        
+        # Should raise TypeError when trying to instantiate abstract class
+        with pytest.raises(TypeError):
+            BaseExplainer(model=Mock(), feature_names=['test'])
     
     def test_base_explainer_has_required_abstract_methods(self):
         """Test that BaseExplainer defines required abstract methods."""
