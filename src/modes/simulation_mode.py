@@ -22,6 +22,8 @@ from src.portfolio.base import (
 from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
 from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
+from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLearningConfig
+from src.rl_agent.dqn_agent import DQNTradingAgent
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
 
@@ -42,6 +44,14 @@ class SimulationConfig:
     enable_real_time_pnl: bool = True
     enable_batch_execution: bool = True
     simulation_speed_multiplier: Decimal = Decimal("1.0")
+    
+    # Continuous learning configuration
+    enable_continuous_learning: bool = False
+    learning_trigger_threshold: int = 1000
+    learning_episodes_per_session: int = 100
+    enable_learning_persistence: bool = True
+    learning_model_storage_path: str = "models/simulation/"
+    min_learning_improvement_threshold: float = 0.02
 
 
 @dataclass
@@ -701,6 +711,8 @@ class SimulationMode(ModeBase):
         # Experience collection setup
         self.enable_experience_collection = params.get("enable_experience_collection", False)
         self.experience_collector = None
+        self.replay_buffer = None
+        
         if self.enable_experience_collection:
             # Create experience collector configuration
             experience_config = ExperienceCollectorConfig(
@@ -717,14 +729,59 @@ class SimulationMode(ModeBase):
                 batch_size=32,
                 min_size=100
             )
-            replay_buffer = ExperienceReplayBuffer(replay_config)
+            self.replay_buffer = ExperienceReplayBuffer(replay_config)
             
             # Initialize experience collector
-            self.experience_collector = TradingExperienceCollector(experience_config, replay_buffer)
+            self.experience_collector = TradingExperienceCollector(experience_config, self.replay_buffer)
             
             self.logger.info("Experience collection enabled for simulation mode",
                            buffer_size=experience_config.buffer_size,
                            persistence=experience_config.enable_persistence)
+        
+        # Continuous learning setup
+        self.enable_continuous_learning = params.get("enable_continuous_learning", False)
+        self.continuous_learning_engine = None
+        self.continuous_learning_config = None
+        self.dqn_agent = None
+        
+        if self.enable_continuous_learning:
+            # Create continuous learning configuration
+            self.continuous_learning_config = ContinuousLearningConfig(
+                training_trigger_threshold=params.get("learning_trigger_threshold", 1000),
+                training_episodes_per_session=params.get("learning_episodes_per_session", 100),
+                min_improvement_threshold=params.get("min_learning_improvement_threshold", 0.02),
+                enable_model_persistence=params.get("enable_learning_persistence", True),
+                model_storage_path=params.get("learning_model_storage_path", "models/simulation/"),
+                performance_rollback_threshold=-0.15,  # More lenient for simulation
+                max_model_versions=params.get("max_learning_model_versions", 5),
+                enable_incremental_learning=params.get("enable_incremental_learning", True)
+            )
+            
+            # Initialize DQN agent for learning
+            self.dqn_agent = DQNTradingAgent(
+                state_size=20,  # Market state features
+                action_size=5,  # Number of possible actions
+                learning_rate=0.001,
+                memory_size=10000,
+                batch_size=32
+            )
+            
+            # Initialize continuous learning engine if we have required components
+            if self.experience_collector and self.replay_buffer:
+                self.continuous_learning_engine = ContinuousLearningEngine(
+                    config=self.continuous_learning_config,
+                    replay_buffer=self.replay_buffer,
+                    dqn_agent=self.dqn_agent,
+                    experience_collector=self.experience_collector
+                )
+                
+                self.logger.info("Continuous learning enabled for simulation mode",
+                               trigger_threshold=self.continuous_learning_config.training_trigger_threshold,
+                               episodes_per_session=self.continuous_learning_config.training_episodes_per_session,
+                               model_storage=self.continuous_learning_config.model_storage_path)
+            else:
+                self.logger.warning("Continuous learning requested but experience collection not enabled")
+                self.enable_continuous_learning = False
     
     async def initialize(self) -> None:
         """Initialize simulation mode resources."""
@@ -755,6 +812,16 @@ class SimulationMode(ModeBase):
             await self.experience_collector.start_collection()
             self.logger.info("Experience collection started")
         
+        # Initialize continuous learning if enabled
+        if self.continuous_learning_engine:
+            # Load previous learning state if available
+            state_file = f"{self.continuous_learning_config.model_storage_path}/learning_state.json"
+            try:
+                await self.continuous_learning_engine.load_state(state_file)
+                self.logger.info("Continuous learning state loaded")
+            except Exception as e:
+                self.logger.info("No previous learning state found, starting fresh")
+        
         self._set_status(ModeStatus.ACTIVE)
         self.logger.info("Simulation mode started")
     
@@ -767,6 +834,15 @@ class SimulationMode(ModeBase):
         if self.experience_collector:
             await self.experience_collector.stop_collection()
             self.logger.info("Experience collection stopped")
+        
+        # Save continuous learning state if enabled
+        if self.continuous_learning_engine:
+            state_file = f"{self.continuous_learning_config.model_storage_path}/learning_state.json"
+            try:
+                await self.continuous_learning_engine.save_state(state_file)
+                self.logger.info("Continuous learning state saved")
+            except Exception as e:
+                self.logger.error("Failed to save learning state", error=str(e))
         
         # Deactivate executor
         self.simulation_executor.is_active = False
@@ -817,6 +893,25 @@ class SimulationMode(ModeBase):
             # Execute simulated trade if action is not HOLD
             if action != TradeAction.HOLD:
                 await self._execute_simulated_trade(action, market_state, experience_id)
+            
+            # Check and trigger continuous learning if enabled
+            if self.continuous_learning_engine:
+                try:
+                    learning_result = await self.continuous_learning_engine.check_and_trigger_training()
+                    if learning_result and learning_result.get('training_triggered'):
+                        self.logger.info(
+                            "Continuous learning triggered",
+                            session_id=learning_result.get('session_id'),
+                            episodes=learning_result.get('episodes_completed'),
+                            model_activated=learning_result.get('model_activated')
+                        )
+                        
+                        # Record learning event in metrics
+                        self._record_metric("learning_sessions_triggered", 1)
+                        if learning_result.get('model_activated'):
+                            self._record_metric("model_updates", 1)
+                except Exception as e:
+                    self.logger.warning("Continuous learning check failed", error=str(e))
             
             # Update simulation metrics
             self._update_simulation_metrics()
@@ -1011,7 +1106,7 @@ class SimulationMode(ModeBase):
         return 0
     
     async def get_enhanced_statistics(self) -> Dict[str, Any]:
-        """Get simulation statistics enhanced with experience collection data"""
+        """Get simulation statistics enhanced with experience collection and learning data"""
         stats = {
             "simulation_metrics": {
                 "total_trades": self.simulation_metrics.total_trades,
@@ -1028,6 +1123,14 @@ class SimulationMode(ModeBase):
                 stats["experience_collection"] = experience_stats
             except Exception as e:
                 self.logger.warning("Failed to get experience statistics", error=str(e))
+        
+        # Add continuous learning statistics if enabled
+        if self.continuous_learning_engine:
+            try:
+                learning_stats = await self.continuous_learning_engine.get_performance_statistics()
+                stats["continuous_learning"] = learning_stats
+            except Exception as e:
+                self.logger.warning("Failed to get learning statistics", error=str(e))
         
         return stats
     
@@ -1057,7 +1160,17 @@ class SimulationMode(ModeBase):
             "total_trades": self.simulation_metrics.total_trades,
             "simulation_duration": str(datetime.now() - self.start_time) if self.start_time else "0:00:00",
             "enable_fees": self.enable_fees,
-            "slippage_bps": self.slippage_bps
+            "slippage_bps": self.slippage_bps,
+            "continuous_learning_enabled": self.enable_continuous_learning,
+            "experience_collection_enabled": self.enable_experience_collection
         })
+        
+        # Add learning-specific metadata if enabled
+        if self.continuous_learning_engine and self.continuous_learning_engine.active_model_version:
+            result.metadata.update({
+                "active_model_version": self.continuous_learning_engine.active_model_version.version_id,
+                "total_learning_sessions": len(self.continuous_learning_engine.training_history),
+                "learning_model_storage": self.continuous_learning_config.model_storage_path
+            })
         
         return result
