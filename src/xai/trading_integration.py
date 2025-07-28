@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 
 from .factory import ExplainerFactory
 from .data_models import ExplanationData
-from ..monitoring.metrics import MetricsCollector
+from ..monitoring.base import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
