@@ -29,6 +29,11 @@ from src.utils.base import Chain
 from src.monitoring.base import MetricsRegistry
 from src.monitoring.analysis_metrics import AnalysisMetricsCollector
 from src.modes.analysis_validator import AnalysisValidator
+from src.modes.backtest_integration import (
+    BacktestResultIntegrator,
+    BacktestIntegrationConfig,
+    ModelPerformanceComparison
+)
 
 
 logger = structlog.get_logger()
@@ -166,6 +171,21 @@ class AnalysisMode(BaseAnalysisMode):
             self.logger.warning("Failed to initialize validator", error=str(e))
             self.validator = None
         
+        # Initialize backtest result integrator (optional)
+        try:
+            integration_config = self._parse_backtest_integration_config(config.parameters)
+            if integration_config.enabled:
+                # Try to get continuous learning engine if available
+                learning_engine = self._get_continuous_learning_engine()
+                self.backtest_integrator = BacktestResultIntegrator(integration_config, learning_engine)
+                self.logger.info("Initialized BacktestResultIntegrator successfully", enabled=True)
+            else:
+                self.backtest_integrator = None
+                self.logger.info("BacktestResultIntegrator disabled by configuration")
+        except Exception as e:
+            self.logger.warning("Failed to initialize backtest integrator", error=str(e))
+            self.backtest_integrator = None
+        
         # Data storage
         self._historical_data_cache: Dict[str, List[HistoricalDataPoint]] = {}
         self._analysis_results_cache: Dict[str, Any] = {}
@@ -249,6 +269,41 @@ class AnalysisMode(BaseAnalysisMode):
                 default_config[section] = section_config
         
         return default_config
+    
+    def _parse_backtest_integration_config(self, parameters: Dict[str, Any]) -> BacktestIntegrationConfig:
+        """Parse backtest integration configuration from mode parameters."""
+        # Get custom integration config if provided, otherwise use defaults
+        integration_params = parameters.get("backtest_integration", {})
+        
+        # Default configuration (disabled by default for minimal coupling)
+        config = BacktestIntegrationConfig(
+            enabled=integration_params.get("enabled", False),
+            validation_enabled=integration_params.get("validation_enabled", True),
+            min_backtest_trades=integration_params.get("min_backtest_trades", 10),
+            max_validation_age_days=integration_params.get("max_validation_age_days", 30),
+            validation_sample_ratio=integration_params.get("validation_sample_ratio", 0.1),
+            performance_comparison_window=integration_params.get("performance_comparison_window", 100),
+            store_validation_history=integration_params.get("store_validation_history", True),
+            max_validation_history_size=integration_params.get("max_validation_history_size", 1000)
+        )
+        
+        return config
+    
+    def _get_continuous_learning_engine(self) -> Optional[Any]:
+        """Get continuous learning engine if available."""
+        try:
+            # Try to import and get continuous learning engine
+            # This is optional and gracefully handled if not available
+            from src.modes.continuous_learning import ContinuousLearningEngine
+            # For now, return None as we don't have the engine initialized here
+            # In a full implementation, this would get the engine from the system
+            return None
+        except ImportError:
+            self.logger.debug("ContinuousLearningEngine not available")
+            return None
+        except Exception as e:
+            self.logger.warning("Error getting continuous learning engine", error=str(e))
+            return None
     
     def validate_analysis_config(self) -> None:
         """Validate analysis configuration."""
@@ -1785,6 +1840,188 @@ class AnalysisMode(BaseAnalysisMode):
                 self.logger.debug("Stopped resource monitoring", analysis_id=analysis_id)
             except Exception as e:
                 self.logger.warning("Failed to stop resource monitoring", error=str(e), analysis_id=analysis_id)
+    
+    # Backtest Integration Methods
+    async def process_backtest_result(self, backtest_result: BacktestResult) -> Optional[Dict[str, Any]]:
+        """Process backtest result and integrate with learning system if enabled."""
+        try:
+            # Always proceed with basic processing
+            result = {
+                "strategy_name": backtest_result.strategy_name,
+                "processed_at": datetime.now().isoformat(),
+                "integration_enabled": False
+            }
+            
+            # If integration is enabled, feed to integrator
+            if self.backtest_integrator and self.backtest_integrator.is_enabled():
+                integration_success = await self.backtest_integrator.process_backtest_result(backtest_result)
+                result["integration_enabled"] = True
+                result["integration_success"] = integration_success
+                
+                self.logger.info(
+                    "Processed backtest result with integration",
+                    strategy=backtest_result.strategy_name,
+                    integration_success=integration_success
+                )
+            else:
+                self.logger.debug(
+                    "Processed backtest result without integration",
+                    strategy=backtest_result.strategy_name,
+                    reason="integration_disabled"
+                )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(
+                "Error processing backtest result",
+                strategy=backtest_result.strategy_name,
+                error=str(e)
+            )
+            # Return basic result even if integration fails
+            return {
+                "strategy_name": backtest_result.strategy_name,
+                "processed_at": datetime.now().isoformat(),
+                "integration_enabled": False,
+                "error": str(e)
+            }
+    
+    def get_validation_performance_history(self) -> List[Dict[str, Any]]:
+        """Get validation performance tracking history."""
+        if self.backtest_integrator and self.backtest_integrator.is_enabled():
+            try:
+                history = self.backtest_integrator.get_performance_tracking_history()
+                return [
+                    {
+                        "backtest_metrics": comparison.backtest_metrics,
+                        "live_metrics": comparison.live_metrics,
+                        "deviations": comparison.deviations,
+                        "comparison_window": comparison.comparison_window,
+                        "created_at": comparison.created_at.isoformat()
+                    }
+                    for comparison in history
+                ]
+            except Exception as e:
+                self.logger.warning("Error getting validation performance history", error=str(e))
+                return []
+        else:
+            return []
+    
+    def get_backtest_integration_metrics(self) -> Dict[str, Any]:
+        """Get backtest integration metrics and statistics."""
+        if self.backtest_integrator:
+            try:
+                return self.backtest_integrator.get_integration_metrics()
+            except Exception as e:
+                self.logger.warning("Error getting integration metrics", error=str(e))
+                return {
+                    "status": "error",
+                    "enabled": False,
+                    "error": str(e)
+                }
+        else:
+            return {
+                "status": "disabled",
+                "enabled": False,
+                "reason": "integrator_not_initialized"
+            }
+    
+    async def validate_and_process_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and process data with integration support."""
+        if self.validator:
+            try:
+                validation_result = await self.validator.validate_data_quality(data)
+                self.logger.debug("Data validation completed", validation_passed=validation_result.get("validation_passed"))
+                return validation_result
+            except Exception as e:
+                self.logger.warning("Data validation failed", error=str(e))
+                return {
+                    "validation_passed": False,
+                    "error": str(e),
+                    "data_processed": True
+                }
+        else:
+            # Process without validation
+            return {
+                "validation_passed": True,
+                "data_processed": True,
+                "validator_available": False
+            }
+    
+    async def validate_backtest_results(self, backtest_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate backtest results before integration."""
+        if self.validator:
+            try:
+                validation_result = await self.validator.validate_backtest_results(backtest_results)
+                self.logger.debug("Backtest validation completed", validation_passed=validation_result.get("validation_passed"))
+                return validation_result
+            except Exception as e:
+                self.logger.warning("Backtest validation failed", error=str(e))
+                return {
+                    "validation_passed": False,
+                    "error": str(e),
+                    "results_processed": True
+                }
+        else:
+            # Process without validation
+            return {
+                "validation_passed": True,
+                "results_processed": True,
+                "validator_available": False
+            }
+    
+    async def monitor_analysis_resources(self, analysis_id: str):
+        """Context manager for monitoring analysis resources."""
+        return AnalysisResourceMonitor(self, analysis_id)
+    
+    async def calculate_analysis_quality(self, quality_inputs: Dict[str, float]) -> Dict[str, Any]:
+        """Calculate analysis quality score."""
+        if self.validator:
+            try:
+                quality_score = await self.validator.calculate_analysis_quality_score(quality_inputs)
+                self.logger.debug("Analysis quality calculated", overall_score=quality_score.get("overall_score"))
+                return quality_score
+            except Exception as e:
+                self.logger.warning("Analysis quality calculation failed", error=str(e))
+                return {
+                    "overall_score": 0.5,
+                    "error": str(e),
+                    "quality_calculated": False
+                }
+        else:
+            # Basic quality estimation without validator
+            overall_score = sum(quality_inputs.values()) / len(quality_inputs) if quality_inputs else 0.5
+            return {
+                "overall_score": overall_score,
+                "component_scores": quality_inputs,
+                "quality_calculated": True,
+                "validator_available": False
+            }
+    
+    async def validate_and_process_data_safely(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely validate and process data with error handling."""
+        try:
+            return await self.validate_and_process_data(data)
+        except Exception as e:
+            self.logger.warning("Safe data validation failed", error=str(e))
+            return {
+                "validation_passed": False,
+                "data_processed": True,
+                "error_handled": True,
+                "error": str(e)
+            }
+    
+    async def validate_and_record_metrics(self, data: Dict[str, Any]) -> None:
+        """Validate data and record validation metrics."""
+        try:
+            validation_results = await self.validate_and_process_data(data)
+            
+            # Record validation metrics if metrics collector is available
+            if self.metrics_collector and hasattr(self.metrics_collector, 'record_validation_results'):
+                self.metrics_collector.record_validation_results(validation_results)
+                
+        except Exception as e:
+            self.logger.warning("Error in validation and metrics recording", error=str(e))
 
 
 # Helper classes for analysis components
@@ -3308,3 +3545,37 @@ class AnalysisExecutionTracker:
                 
             except Exception as e:
                 self.analysis_mode.logger.warning("Failed to complete execution tracking", error=str(e))
+
+
+class AnalysisResourceMonitor:
+    """Context manager for monitoring analysis resource usage."""
+    
+    def __init__(self, analysis_mode: 'AnalysisMode', analysis_id: str):
+        self.analysis_mode = analysis_mode
+        self.analysis_id = analysis_id
+        self.start_time = None
+    
+    async def __aenter__(self):
+        self.start_time = datetime.now()
+        if self.analysis_mode.validator:
+            try:
+                await self.analysis_mode.validator.start_resource_monitoring(self.analysis_id)
+                self.analysis_mode.logger.debug("Started resource monitoring", analysis_id=self.analysis_id)
+            except Exception as e:
+                self.analysis_mode.logger.warning("Failed to start resource monitoring", error=str(e))
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.start_time and self.analysis_mode.validator:
+            try:
+                resource_metrics = await self.analysis_mode.validator.stop_resource_monitoring(self.analysis_id)
+                
+                self.analysis_mode.logger.debug(
+                    "Completed resource monitoring", 
+                    analysis_id=self.analysis_id,
+                    duration=resource_metrics.get("duration_seconds"),
+                    peak_memory=resource_metrics.get("peak_memory_mb")
+                )
+                
+            except Exception as e:
+                self.analysis_mode.logger.warning("Failed to complete resource monitoring", error=str(e))

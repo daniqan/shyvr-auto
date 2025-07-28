@@ -19,7 +19,10 @@ import numpy as np
 import structlog
 import random
 
-from src.modes.analysis_mode import BacktestResult
+# Import BacktestResult type at runtime to avoid circular import
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.modes.analysis_mode import BacktestResult
 from src.rl_agent.base import TradeAction, MarketState
 from src.rl_agent.experience_replay import Experience
 from src.discovery.base import DiscoveredToken, TokenStatus
@@ -174,7 +177,7 @@ class BacktestResultIntegrator:
         self.status = status
         logger.info("Integration status updated", status=status.value)
     
-    async def process_backtest_result(self, backtest_result: BacktestResult) -> bool:
+    async def process_backtest_result(self, backtest_result: 'BacktestResult') -> bool:
         """
         Process backtest result and integrate with learning system
         
@@ -233,14 +236,14 @@ class BacktestResultIntegrator:
             self.set_status(IntegrationStatus.ERROR)
             raise
     
-    def _validate_backtest_result(self, backtest_result: BacktestResult) -> None:
+    def _validate_backtest_result(self, backtest_result: 'BacktestResult') -> None:
         """Validate backtest result meets minimum requirements"""
         if backtest_result.total_trades < self.config.min_backtest_trades:
             raise BacktestValidationError(
                 f"Insufficient trades: {backtest_result.total_trades} < {self.config.min_backtest_trades}"
             )
     
-    async def convert_backtest_to_validation_data(self, backtest_result: BacktestResult) -> List[ValidationDataPoint]:
+    async def convert_backtest_to_validation_data(self, backtest_result: 'BacktestResult') -> List[ValidationDataPoint]:
         """
         Convert backtest result to validation data points
         
@@ -323,7 +326,7 @@ class BacktestResultIntegrator:
         else:
             return TradeAction.HOLD
     
-    def _calculate_confidence(self, trade: Dict[str, Any], backtest_result: BacktestResult) -> float:
+    def _calculate_confidence(self, trade: Dict[str, Any], backtest_result: 'BacktestResult') -> float:
         """Calculate confidence score for a trade based on various factors"""
         confidence = 0.5  # Base confidence
         
@@ -430,7 +433,7 @@ class BacktestResultIntegrator:
             
         return learning_data
     
-    async def compare_model_performance(self, backtest_result: BacktestResult) -> ModelPerformanceComparison:
+    async def compare_model_performance(self, backtest_result: 'BacktestResult') -> ModelPerformanceComparison:
         """
         Compare backtest performance with live model performance
         
