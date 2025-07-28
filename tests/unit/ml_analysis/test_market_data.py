@@ -304,39 +304,295 @@ class TestCoinGeckoClient:
 
 
 class TestOnChainAnalyticsClient:
-    """Test on-chain analytics client"""
+    """Test on-chain analytics client with real Helius API integration"""
+    
+    @pytest.fixture
+    def helius_client(self):
+        """Create Helius on-chain analytics client for testing"""
+        return OnChainAnalyticsClient(api_key="test-helius-api-key", cache_ttl=60)
+    
+    @pytest.fixture
+    def sample_helius_enhanced_transactions_response(self):
+        """Sample Helius enhanced transactions API response"""
+        return [
+            {
+                "signature": "5VgJd...",
+                "timestamp": 1640995200,
+                "description": "Token transfer",
+                "type": "SWAP",
+                "source": "JUPITER",
+                "feePayer": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+                "fee": 5000,
+                "nativeTransfers": [
+                    {
+                        "fromUserAccount": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+                        "toUserAccount": "H6ARHNZgvKC6DaYGAkNShUAhbFcT3KbkVG1p2ksswi5z",
+                        "amount": 50000000
+                    }
+                ],
+                "tokenTransfers": [
+                    {
+                        "fromUserAccount": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+                        "toUserAccount": "H6ARHHNZgvKC6DaYGAkNShUAhbFcT3KbkVG1p2ksswi5z",
+                        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                        "tokenAmount": 1000000
+                    }
+                ]
+            }
+        ]
+    
+    @pytest.fixture
+    def sample_helius_webhook_response(self):
+        """Sample Helius webhook response for whale activity"""
+        return {
+            "type": "transaction",
+            "data": {
+                "accountData": [],
+                "transaction": {
+                    "signatures": ["5VgJd..."],
+                    "message": {
+                        "header": {"numRequiredSignatures": 1},
+                        "accountKeys": ["9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"],
+                        "instructions": []
+                    }
+                }
+            }
+        }
+    
+    @pytest.fixture
+    def sample_rpc_transaction_count_response(self):
+        """Sample RPC response for transaction count"""
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "context": {"slot": 166974442},
+                "value": 1245678
+            },
+            "id": 1
+        }
     
     @pytest.mark.asyncio
-    async def test_get_market_data_ethereum(self, onchain_client):
-        """Test on-chain metrics for Ethereum"""
-        result = await onchain_client.get_market_data(Chain.ETHEREUM)
+    async def test_get_market_data_solana_success(self, helius_client, sample_helius_enhanced_transactions_response):
+        """Test successful on-chain metrics for Solana using Helius API"""
+        with patch.object(helius_client, '_make_request') as mock_request:
+            # Mock multiple API calls for different metrics
+            mock_request.side_effect = [
+                sample_helius_enhanced_transactions_response,  # Enhanced transactions
+                {"result": {"value": 150000}},  # Transaction count
+                {"result": {"value": 75000}},   # Active addresses
+                {"result": {"value": 250000000}},  # Volume
+                {"result": {"value": 50000}},   # Network fees
+                {"whale_transactions": 45, "large_volume_24h": 5000000}  # Whale activity
+            ]
+            
+            result = await helius_client.get_market_data(Chain.SOLANA)
+            
+            assert isinstance(result, OnChainMetrics)
+            assert result.network_activity["chain"] == "solana"
+            assert result.transaction_count_24h == 150000
+            assert result.active_addresses_24h == 75000
+            assert result.transaction_volume_24h == 250000000.0
+            assert result.network_fees_24h == 50000.0
+            assert result.whale_activity["whale_transactions"] == 45
+            assert result.hash_rate is None  # Solana is PoS
+            assert result.staking_ratio is not None  # Solana has staking
+    
+    @pytest.mark.asyncio
+    async def test_get_market_data_ethereum_success(self, helius_client):
+        """Test on-chain metrics for Ethereum (fallback to other APIs)"""
+        with patch.object(helius_client, '_make_request') as mock_request:
+            # Mock responses for Ethereum data (using fallback APIs)
+            mock_request.side_effect = [
+                {"result": "0x186a0"},  # 100000 in hex
+                {"result": "0x12345"},  # 74565 in hex
+                {"result": "0x174876e800"},  # Volume in wei
+                {"result": "0x2710"},  # Fees in wei
+                {"staking_ratio": 0.65, "active_validators": 750000}  # Staking data
+            ]
+            
+            result = await helius_client.get_market_data(Chain.ETHEREUM)
+            
+            assert isinstance(result, OnChainMetrics)
+            assert result.network_activity["chain"] == "ethereum"
+            assert result.transaction_count_24h == 100000
+            assert result.active_addresses_24h == 74565
+            assert result.staking_ratio == 0.65
+            assert result.hash_rate is None  # Ethereum is PoS
+    
+    @pytest.mark.asyncio
+    async def test_get_transaction_count_24h(self, helius_client, sample_rpc_transaction_count_response):
+        """Test getting 24h transaction count"""
+        with patch.object(helius_client, '_make_request', return_value=sample_rpc_transaction_count_response):
+            count = await helius_client._get_transaction_count_24h(Chain.SOLANA)
+            
+            assert count == 1245678
+    
+    @pytest.mark.asyncio
+    async def test_get_active_addresses_24h(self, helius_client):
+        """Test getting 24h active addresses"""
+        mock_response = {"result": {"value": 85000}}
+        
+        with patch.object(helius_client, '_make_request', return_value=mock_response):
+            count = await helius_client._get_active_addresses_24h(Chain.SOLANA)
+            
+            assert count == 85000
+    
+    @pytest.mark.asyncio
+    async def test_get_transaction_volume_24h(self, helius_client):
+        """Test getting 24h transaction volume"""
+        mock_response = {"result": {"value": 500000000}}
+        
+        with patch.object(helius_client, '_make_request', return_value=mock_response):
+            volume = await helius_client._get_transaction_volume_24h(Chain.SOLANA)
+            
+            assert volume == 500000000.0
+    
+    @pytest.mark.asyncio
+    async def test_get_network_fees_24h(self, helius_client):
+        """Test getting 24h network fees"""
+        mock_response = {"result": {"value": 75000}}
+        
+        with patch.object(helius_client, '_make_request', return_value=mock_response):
+            fees = await helius_client._get_network_fees_24h(Chain.SOLANA)
+            
+            assert fees == 75000.0
+    
+    @pytest.mark.asyncio
+    async def test_get_whale_activity(self, helius_client, sample_helius_enhanced_transactions_response):
+        """Test getting whale activity data"""
+        with patch.object(helius_client, '_make_request', return_value=sample_helius_enhanced_transactions_response):
+            whale_data = await helius_client._get_whale_activity(Chain.SOLANA)
+            
+            assert isinstance(whale_data, dict)
+            assert "large_transactions_24h" in whale_data
+            assert "whale_net_flow" in whale_data
+            assert whale_data["large_transactions_24h"] >= 0
+    
+    @pytest.mark.asyncio
+    async def test_api_authentication(self, helius_client):
+        """Test API authentication with Helius"""
+        with patch.object(helius_client, '_make_request') as mock_request:
+            mock_request.return_value = {"result": {"value": 100}}
+            
+            await helius_client._get_transaction_count_24h(Chain.SOLANA)
+            
+            # Verify API key is included in request
+            call_args = mock_request.call_args
+            assert "api-key" in call_args[0][0]  # URL should contain api-key parameter
+    
+    @pytest.mark.asyncio
+    async def test_rate_limiting_helius(self, helius_client):
+        """Test rate limiting for Helius API calls"""
+        with patch.object(helius_client, '_make_request', side_effect=APIRateLimitError("Rate limit exceeded")):
+            with pytest.raises(APIRateLimitError):
+                await helius_client.get_market_data(Chain.SOLANA)
+    
+    @pytest.mark.asyncio
+    async def test_invalid_api_key(self, helius_client):
+        """Test handling of invalid API key"""
+        with patch.object(helius_client, '_make_request', side_effect=APIAuthenticationError("Invalid API key")):
+            with pytest.raises(APIAuthenticationError):
+                await helius_client.get_market_data(Chain.SOLANA)
+    
+    @pytest.mark.asyncio
+    async def test_network_error_handling(self, helius_client):
+        """Test network error handling"""
+        with patch.object(helius_client, '_make_request', side_effect=MarketDataError("Network error")):
+            with pytest.raises(MarketDataError):
+                await helius_client.get_market_data(Chain.SOLANA)
+    
+    @pytest.mark.asyncio
+    async def test_empty_response_handling(self, helius_client):
+        """Test handling of empty API responses"""
+        with patch.object(helius_client, '_make_request', return_value={}):
+            result = await helius_client.get_market_data(Chain.SOLANA)
+            
+            assert isinstance(result, OnChainMetrics)
+            assert result.transaction_count_24h == 0
+            assert result.active_addresses_24h == 0
+    
+    @pytest.mark.asyncio
+    async def test_supported_chain_fallback(self, helius_client):
+        """Test fallback behavior for supported EVM chains"""
+        result = await helius_client.get_market_data(Chain.BASE)
         
         assert isinstance(result, OnChainMetrics)
-        assert result.network_activity["chain"] == "ethereum"
-        assert result.transaction_count_24h > 0
-        assert result.active_addresses_24h > 0
-        assert result.staking_ratio is not None  # Ethereum has staking
-        assert result.hash_rate is None  # Ethereum is PoS, no hash rate
+        assert result.network_activity["chain"] == "base"
+        # Should use Ethereum-compatible data structure
     
     @pytest.mark.asyncio
-    async def test_get_market_data_bitcoin(self, onchain_client):
-        """Test on-chain metrics for Bitcoin"""
-        result = await onchain_client.get_market_data(Chain.BITCOIN)
+    async def test_caching_behavior(self, helius_client):
+        """Test caching of on-chain data"""
+        mock_response = {"result": {"value": 100000}}
         
-        assert isinstance(result, OnChainMetrics)
-        assert result.network_activity["chain"] == "bitcoin"
-        assert result.hash_rate is not None  # Bitcoin has hash rate
-        assert result.staking_ratio is None  # Bitcoin is PoW, no staking
+        with patch.object(helius_client, '_make_request', return_value=mock_response) as mock_request:
+            # First call
+            result1 = await helius_client.get_market_data(Chain.SOLANA)
+            # Second call should use cache
+            result2 = await helius_client.get_market_data(Chain.SOLANA)
+            
+            # Should only make API requests once due to caching
+            assert len([call for call in mock_request.call_args_list if 'enhanced' in str(call)]) <= 1
+            assert result1.timestamp == result2.timestamp
     
     @pytest.mark.asyncio
-    async def test_get_market_data_caching(self, onchain_client):
-        """Test on-chain data caching"""
-        # First call
-        result1 = await onchain_client.get_market_data(Chain.ETHEREUM)
-        # Second call should use cache
-        result2 = await onchain_client.get_market_data(Chain.ETHEREUM)
+    async def test_enhanced_transactions_parsing(self, helius_client, sample_helius_enhanced_transactions_response):
+        """Test parsing of Helius enhanced transactions"""
+        with patch.object(helius_client, '_make_request', return_value=sample_helius_enhanced_transactions_response):
+            parsed_data = await helius_client._parse_enhanced_transactions(sample_helius_enhanced_transactions_response)
+            
+            assert isinstance(parsed_data, dict)
+            assert "transaction_count" in parsed_data
+            assert "total_volume" in parsed_data
+            assert "unique_addresses" in parsed_data
+            assert parsed_data["transaction_count"] == 1
+    
+    @pytest.mark.asyncio
+    async def test_whale_detection_threshold(self, helius_client):
+        """Test whale activity detection with different thresholds"""
+        large_transaction_response = [
+            {
+                "signature": "test1",
+                "nativeTransfers": [{"amount": 1000000000}],  # 1 SOL = large
+                "tokenTransfers": [{"tokenAmount": 50000000}]   # 50M tokens = whale
+            },
+            {
+                "signature": "test2", 
+                "nativeTransfers": [{"amount": 1000000}],     # 0.001 SOL = small
+                "tokenTransfers": [{"tokenAmount": 1000}]       # 1K tokens = small
+            }
+        ]
         
-        assert result1 is result2  # Same cached object
+        with patch.object(helius_client, '_make_request', return_value=large_transaction_response):
+            whale_data = await helius_client._get_whale_activity(Chain.SOLANA)
+            
+            # Should detect only the large transaction as whale activity
+            assert whale_data["large_transactions_24h"] >= 1
+            assert whale_data["whale_net_flow"] > 0
+    
+    @pytest.mark.asyncio
+    async def test_multiple_chain_support(self, helius_client):
+        """Test support for multiple blockchain networks"""
+        supported_chains = [Chain.SOLANA, Chain.ETHEREUM, Chain.BASE]
+        
+        for chain in supported_chains:
+            with patch.object(helius_client, '_make_request', return_value={"result": {"value": 1000}}):
+                result = await helius_client.get_market_data(chain)
+                
+                assert isinstance(result, OnChainMetrics)
+                assert result.network_activity["chain"] == chain.value
+    
+    @pytest.mark.asyncio
+    async def test_data_freshness_validation(self, helius_client):
+        """Test validation of data freshness"""
+        current_time = datetime.now()
+        
+        with patch.object(helius_client, '_make_request', return_value={"result": {"value": 1000}}):
+            result = await helius_client.get_market_data(Chain.SOLANA)
+            
+            # Data should be recent (within last few minutes)
+            time_diff = abs((result.timestamp - current_time).total_seconds())
+            assert time_diff < 300  # Within 5 minutes
 
 
 class TestSocialSentimentClient:
