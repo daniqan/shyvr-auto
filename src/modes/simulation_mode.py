@@ -23,6 +23,9 @@ from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
 from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
 from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLearningConfig
+from src.modes.simulation_safety import (
+    SimulationSafetyManager, VirtualPortfolioProtector, SimulationSafetyConfig
+)
 from src.rl_agent.dqn_agent import DQNTradingAgent
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
@@ -52,6 +55,14 @@ class SimulationConfig:
     enable_learning_persistence: bool = True
     learning_model_storage_path: str = "models/simulation/"
     min_learning_improvement_threshold: float = 0.02
+    
+    # Simulation safety configuration
+    enable_simulation_safety: bool = True
+    max_simulation_drawdown_pct: float = 20.0  # More lenient than live
+    max_simulation_position_size_pct: float = 15.0  # More lenient than live
+    enable_virtual_portfolio_protection: bool = True
+    enable_simulation_circuit_breakers: bool = True
+    simulation_risk_monitoring_interval: float = 2.0
 
 
 @dataclass
@@ -782,6 +793,42 @@ class SimulationMode(ModeBase):
             else:
                 self.logger.warning("Continuous learning requested but experience collection not enabled")
                 self.enable_continuous_learning = False
+        
+        # Simulation safety systems setup
+        self.enable_simulation_safety = params.get("enable_simulation_safety", True)
+        self.simulation_safety_manager = None
+        self.virtual_portfolio_protector = None
+        self.simulation_safety_config = None
+        
+        if self.enable_simulation_safety:
+            # Create simulation safety configuration
+            self.simulation_safety_config = SimulationSafetyConfig(
+                max_drawdown_pct=params.get("max_simulation_drawdown_pct", 20.0),
+                max_position_size_pct=params.get("max_simulation_position_size_pct", 15.0),
+                max_daily_loss_pct=params.get("max_simulation_daily_loss_pct", 8.0),
+                max_open_positions=params.get("max_simulation_open_positions", 15),
+                enable_experimental_strategies=params.get("enable_experimental_strategies", True),
+                experimental_position_limit_pct=params.get("experimental_position_limit_pct", 5.0),
+                enable_simulation_circuit_breakers=params.get("enable_simulation_circuit_breakers", True),
+                safety_check_interval=params.get("simulation_risk_monitoring_interval", 2.0)
+            )
+            
+            # Initialize simulation safety manager
+            self.simulation_safety_manager = SimulationSafetyManager(
+                config=self.simulation_safety_config,
+                virtual_portfolio=self.virtual_portfolio
+            )
+            
+            # Initialize virtual portfolio protector if enabled
+            if params.get("enable_virtual_portfolio_protection", True):
+                self.virtual_portfolio_protector = VirtualPortfolioProtector(
+                    config=self.simulation_safety_config
+                )
+            
+            self.logger.info("Simulation safety systems enabled",
+                           max_drawdown_pct=self.simulation_safety_config.max_drawdown_pct,
+                           max_position_size_pct=self.simulation_safety_config.max_position_size_pct,
+                           experimental_strategies=self.simulation_safety_config.enable_experimental_strategies)
     
     async def initialize(self) -> None:
         """Initialize simulation mode resources."""
@@ -1005,7 +1052,31 @@ class SimulationMode(ModeBase):
                 if action == TradeAction.STRONG_BUY:
                     position_size *= Decimal("1.5")
                 
-                # Check risk limits
+                # Check simulation safety limits first
+                if self.simulation_safety_manager:
+                    safety_validation = await self.simulation_safety_manager.validate_position_size(
+                        market_state.token.address, position_size
+                    )
+                    
+                    if not safety_validation.is_safe:
+                        # Create failed result due to safety validation
+                        trading_result = TradingResult(
+                            action=action,
+                            token=market_state.token,
+                            executed_at=datetime.now(),
+                            price=market_state.price_usd,
+                            quantity=0.0,
+                            value_usd=0.0,
+                            success=False,
+                            error_message=f"Safety validation failed: {safety_validation.message}"
+                        )
+                        
+                        self.logger.warning("Trade blocked by simulation safety",
+                                          reason=safety_validation.message,
+                                          risk_level=safety_validation.risk_level.value)
+                        return
+                
+                # Check legacy risk limits
                 risk_check = await self.risk_manager.validate_position_size("SIMULATION_TOKEN", position_size)
                 if risk_check.is_valid:
                     # Create simulated buy result
@@ -1133,6 +1204,20 @@ class SimulationMode(ModeBase):
                 self.logger.warning("Failed to get learning statistics", error=str(e))
         
         return stats
+    
+    async def get_simulation_safety_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive simulation safety metrics."""
+        if not self.simulation_safety_manager:
+            return {"safety_disabled": True}
+        
+        return await self.simulation_safety_manager.get_simulation_safety_metrics()
+    
+    async def get_simulation_risk_metrics(self) -> Dict[str, Any]:
+        """Get simulation-specific risk metrics."""
+        if not self.simulation_safety_manager:
+            return {"safety_disabled": True}
+        
+        return await self.simulation_safety_manager.get_simulation_risk_metrics()
     
     def _update_simulation_metrics(self) -> None:
         """Update simulation performance metrics."""
