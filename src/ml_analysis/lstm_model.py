@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import structlog
+from sklearn.preprocessing import StandardScaler
 
 from src.discovery.base import DiscoveredToken
 from .base import (
@@ -21,6 +22,7 @@ from .base import (
     TechnicalIndicators, MarketFeatures, ModelNotTrainedError, PredictionError
 )
 from .feature_engineer import FeatureEngineer
+from .market_data import CoinGeckoClient, MarketDataError, APIRateLimitError, DataNotAvailableError
 
 
 logger = structlog.get_logger()
@@ -108,14 +110,19 @@ class LSTMPricePredictor(MLAnalyzerBase):
         
         # Model components
         self._model: Optional[LSTMNetwork] = None
-        self._scaler = None
+        self._scaler = StandardScaler()
         self._feature_engineer = FeatureEngineer()
         self._device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
+        # Market data client
+        coingecko_api_key = os.getenv('COINGECKO_API_KEY')
+        self._coingecko_client = CoinGeckoClient(api_key=coingecko_api_key, cache_ttl=300)
+        
         # Model metadata
-        self._model_version = "1.0.0"
+        self._model_version = "2.0.0"  # Updated version for real data integration
         self._training_history = []
         self._feature_names = []
+        self._scaler_fitted = False
         
         self.logger.info("LSTM Predictor initialized", 
                         device=str(self._device),
@@ -201,14 +208,15 @@ class LSTMPricePredictor(MLAnalyzerBase):
                             error=str(e))
             raise PredictionError(f"LSTM analysis failed: {str(e)}")
     
-    async def train_model(self, training_data: pd.DataFrame) -> bool:
+    async def train_model(self, training_data: pd.DataFrame, coin_id: str = "bitcoin") -> bool:
         """Train the LSTM model on historical data"""
         try:
             self.logger.info("Starting LSTM model training", 
-                           data_shape=training_data.shape)
+                           data_shape=training_data.shape,
+                           coin_id=coin_id)
             
-            # Prepare training data
-            X, y, feature_names = await self._prepare_training_data(training_data)
+            # Prepare training data using real market data
+            X, y, feature_names = await self._prepare_training_data(training_data, coin_id)
             
             if len(X) < 100:  # Need sufficient training data
                 self.logger.error("Insufficient training data", samples=len(X))
@@ -305,39 +313,29 @@ class LSTMPricePredictor(MLAnalyzerBase):
     
     async def _prepare_features(self, token: DiscoveredToken, 
                               historical_data: pd.DataFrame) -> np.ndarray:
-        """Prepare features for prediction"""
-        # Calculate technical indicators
-        tech_indicators = await self._feature_engineer.calculate_technical_indicators(
-            token, historical_data
-        )
-        market_features = await self._feature_engineer.calculate_market_features()
-        
-        # Create feature matrix for the sequence
-        feature_vectors = []
-        
-        # Use the last sequence_length rows for prediction
-        recent_data = historical_data.tail(self.sequence_length)
-        
-        for _, row in recent_data.iterrows():
-            # Combine price, technical, and market features
-            price_features = [
-                row.get('open', 0), row.get('high', 0), 
-                row.get('low', 0), row.get('close', 0), 
-                row.get('volume', 0)
-            ]
+        """Prepare features for prediction using the same enhanced features as training"""
+        try:
+            # Prepare enhanced features similar to training
+            feature_data = await self._prepare_enhanced_features(historical_data)
             
-            tech_vector = tech_indicators.to_feature_vector()
-            market_vector = market_features.to_feature_vector()
+            # Use the last sequence_length rows for prediction
+            if len(feature_data) < self.sequence_length:
+                raise MarketDataError(f"Insufficient data for prediction: need {self.sequence_length} rows, got {len(feature_data)}")
             
-            combined = np.concatenate([price_features, tech_vector, market_vector])
-            feature_vectors.append(combined)
-        
-        # Normalize features if scaler is available
-        feature_matrix = np.array(feature_vectors)
-        if self._scaler is not None:
-            feature_matrix = self._scaler.transform(feature_matrix)
-        
-        return feature_matrix.reshape(1, self.sequence_length, -1)  # Batch size 1
+            recent_features = feature_data.tail(self.sequence_length)
+            feature_matrix = recent_features.values
+            
+            # Normalize features using the fitted scaler
+            if self._scaler_fitted:
+                feature_matrix = self._scaler.transform(feature_matrix)
+            else:
+                self.logger.warning("Scaler not fitted, using raw features for prediction")
+            
+            return feature_matrix.reshape(1, self.sequence_length, -1)  # Batch size 1
+            
+        except Exception as e:
+            self.logger.error("Failed to prepare features for prediction", error=str(e))
+            raise PredictionError(f"Failed to prepare features: {str(e)}")
     
     async def _generate_predictions(self, features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Generate price predictions using trained model"""
@@ -353,40 +351,154 @@ class LSTMPricePredictor(MLAnalyzerBase):
         
         return predictions, uncertainty
     
-    async def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        """Prepare training data for LSTM"""
-        # This is a simplified version - in production, you'd process multiple tokens
-        # For now, return placeholder values
-        
-        # Create sequences and targets from price data
-        sequences = []
-        targets = []
-        
-        # Use sliding window approach
-        for i in range(len(data) - self.sequence_length - 3):  # -3 for 3 prediction horizons
-            # Input sequence
-            seq_data = data.iloc[i:i + self.sequence_length]
+    async def _prepare_training_data(self, data: pd.DataFrame, coin_id: str = "bitcoin") -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Prepare training data for LSTM using real market data"""
+        try:
+            # Get extended historical data from CoinGecko for better training
+            self.logger.info("Fetching extended historical data for training", coin_id=coin_id)
             
-            # Target prices (1h, 4h, 24h later - simplified as next 3 values)
-            target_prices = data['close'].iloc[i + self.sequence_length:i + self.sequence_length + 3].values
+            # Get 90 days of historical data for training
+            extended_data = await self._coingecko_client.get_ohlcv_data(coin_id, days=90)
             
-            if len(target_prices) == 3:  # Ensure we have all targets
-                # Create feature sequence (simplified)
-                seq_features = seq_data[['open', 'high', 'low', 'close', 'volume']].values
+            if len(extended_data) < self.sequence_length + 24:  # Need data for 24h predictions
+                raise MarketDataError(f"Insufficient historical data: got {len(extended_data)} records, need at least {self.sequence_length + 24}")
+            
+            # Prepare features with technical indicators
+            feature_data = await self._prepare_enhanced_features(extended_data)
+            
+            # Create sequences and targets
+            sequences = []
+            targets = []
+            
+            # Use sliding window approach
+            for i in range(len(feature_data) - self.sequence_length - 24):  # -24 for 24h prediction
+                # Input sequence
+                seq_features = feature_data.iloc[i:i + self.sequence_length].values
+                
+                # Target prices at different horizons (1h, 4h, 24h later)
+                base_idx = i + self.sequence_length
+                target_1h = extended_data['close'].iloc[base_idx + 1] if base_idx + 1 < len(extended_data) else extended_data['close'].iloc[-1]
+                target_4h = extended_data['close'].iloc[base_idx + 4] if base_idx + 4 < len(extended_data) else extended_data['close'].iloc[-1]
+                target_24h = extended_data['close'].iloc[base_idx + 24] if base_idx + 24 < len(extended_data) else extended_data['close'].iloc[-1]
+                
                 sequences.append(seq_features)
-                targets.append(target_prices)
-        
-        X = np.array(sequences)
-        y = np.array(targets)
-        
-        feature_names = ['open', 'high', 'low', 'close', 'volume']
-        
-        self.logger.info("Training data prepared", 
-                        sequences=len(X), 
-                        sequence_length=self.sequence_length,
-                        features=len(feature_names))
-        
-        return X, y, feature_names
+                targets.append([target_1h, target_4h, target_24h])
+            
+            X = np.array(sequences, dtype=np.float32)
+            y = np.array(targets, dtype=np.float32)
+            
+            # Get feature names
+            feature_names = list(feature_data.columns)
+            
+            # Normalize features
+            if not self._scaler_fitted:
+                # Fit scaler on training data
+                X_reshaped = X.reshape(-1, X.shape[-1])
+                self._scaler.fit(X_reshaped)
+                self._scaler_fitted = True
+            
+            # Transform features
+            X_reshaped = X.reshape(-1, X.shape[-1])
+            X_normalized = self._scaler.transform(X_reshaped)
+            X = X_normalized.reshape(X.shape)
+            
+            self.logger.info("Real training data prepared", 
+                            sequences=len(X), 
+                            sequence_length=self.sequence_length,
+                            features=len(feature_names),
+                            coin_id=coin_id)
+            
+            return X, y, feature_names
+            
+        except Exception as e:
+            self.logger.error("Failed to prepare real training data", error=str(e))
+            raise MarketDataError(f"Failed to prepare training data: {str(e)}")
+    
+    async def _prepare_enhanced_features(self, ohlcv_data: pd.DataFrame) -> pd.DataFrame:
+        """Prepare enhanced features with technical indicators"""
+        try:
+            df = ohlcv_data.copy()
+            
+            # Basic OHLCV features
+            features = df[['open', 'high', 'low', 'close', 'volume']].copy()
+            
+            # Price-based features
+            features['price_change'] = df['close'].pct_change()
+            features['high_low_ratio'] = df['high'] / df['low']
+            features['volume_price_ratio'] = df['volume'] / df['close']
+            
+            # Moving averages
+            features['sma_5'] = df['close'].rolling(window=5).mean()
+            features['sma_10'] = df['close'].rolling(window=10).mean()
+            features['sma_20'] = df['close'].rolling(window=20).mean()
+            features['ema_12'] = df['close'].ewm(span=12).mean()
+            features['ema_26'] = df['close'].ewm(span=26).mean()
+            
+            # Technical indicators
+            features['rsi'] = self._calculate_rsi(df['close'], window=14)
+            features['macd'] = features['ema_12'] - features['ema_26']
+            features['atr'] = self._calculate_atr(df, window=14)
+            
+            # Bollinger Bands
+            bb_window = 20
+            bb_std = 2
+            bb_mean = df['close'].rolling(window=bb_window).mean()
+            bb_std_val = df['close'].rolling(window=bb_window).std()
+            features['bollinger_upper'] = bb_mean + (bb_std_val * bb_std)
+            features['bollinger_lower'] = bb_mean - (bb_std_val * bb_std)
+            features['bollinger_width'] = features['bollinger_upper'] - features['bollinger_lower']
+            features['bollinger_position'] = (df['close'] - features['bollinger_lower']) / features['bollinger_width']
+            
+            # Volume indicators
+            features['volume_sma'] = df['volume'].rolling(window=20).mean()
+            features['volume_ratio'] = df['volume'] / features['volume_sma']
+            features['obv'] = self._calculate_obv(df)
+            
+            # Volatility indicators
+            features['returns'] = df['close'].pct_change()
+            features['volatility'] = features['returns'].rolling(window=20).std()
+            features['volatility_ratio'] = features['volatility'] / features['volatility'].rolling(window=50).mean()
+            
+            # Time-based features
+            features['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+            features['day_of_week'] = pd.to_datetime(df['timestamp']).dt.dayofweek
+            
+            # Fill NaN values
+            features = features.fillna(method='forward').fillna(method='backward').fillna(0)
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to prepare enhanced features", error=str(e))
+            raise MarketDataError(f"Failed to prepare enhanced features: {str(e)}")
+    
+    def _calculate_rsi(self, prices: pd.Series, window: int = 14) -> pd.Series:
+        """Calculate Relative Strength Index"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    
+    def _calculate_atr(self, df: pd.DataFrame, window: int = 14) -> pd.Series:
+        """Calculate Average True Range"""
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        true_range = np.maximum(high_low, np.maximum(high_close, low_close))
+        atr = true_range.rolling(window=window).mean()
+        return atr
+    
+    def _calculate_obv(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate On-Balance Volume"""
+        obv = np.where(df['close'] > df['close'].shift(), df['volume'], 
+                      np.where(df['close'] < df['close'].shift(), -df['volume'], 0))
+        return pd.Series(obv, index=df.index).cumsum()
+    
+    async def _prepare_training_data_real(self, data: pd.DataFrame, coin_id: str = "bitcoin") -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Alias for the new real data preparation method (for testing compatibility)"""
+        return await self._prepare_training_data(data, coin_id)
     
     def _create_fallback_result(self, token: DiscoveredToken, start_time: datetime) -> PredictionResult:
         """Create a fallback result when prediction fails"""
@@ -585,3 +697,14 @@ class LSTMPricePredictor(MLAnalyzerBase):
         except Exception as e:
             self.logger.error("Failed to load model", error=str(e))
             return False
+    
+    async def close(self):
+        """Close resources and cleanup"""
+        if self._coingecko_client:
+            await self._coingecko_client.close()
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()

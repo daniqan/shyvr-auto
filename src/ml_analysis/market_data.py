@@ -11,6 +11,9 @@ from typing import Dict, List, Optional, Any, Union
 import structlog
 from dataclasses import dataclass, field
 import json
+import pandas as pd
+import numpy as np
+import time
 
 from src.utils.base import Chain
 
@@ -100,6 +103,37 @@ class DataNotAvailableError(MarketDataError):
     pass
 
 
+class RateLimiter:
+    """Rate limiter for API requests"""
+    
+    def __init__(self, max_requests: int, time_window: float = 60.0):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self._requests = []
+        self._lock = asyncio.Lock()
+    
+    async def acquire(self):
+        """Acquire rate limit permission"""
+        async with self._lock:
+            now = time.time()
+            
+            # Remove old requests outside time window
+            self._requests = [req_time for req_time in self._requests 
+                           if now - req_time < self.time_window]
+            
+            # Check if we can make a request
+            if len(self._requests) >= self.max_requests:
+                # Calculate wait time
+                oldest_request = min(self._requests)
+                wait_time = self.time_window - (now - oldest_request)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                    return await self.acquire()  # Recursive call after waiting
+            
+            # Record this request
+            self._requests.append(now)
+
+
 class MarketDataClientBase(ABC):
     """Base class for market data API clients"""
     
@@ -111,6 +145,7 @@ class MarketDataClientBase(ABC):
         self.session: Optional[aiohttp.ClientSession] = None
         self._cache: Dict[str, Any] = {}
         self._cache_timestamps: Dict[str, datetime] = {}
+        self._rate_limiter = RateLimiter(max_requests=rate_limit, time_window=60.0)
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session"""
@@ -139,7 +174,10 @@ class MarketDataClientBase(ABC):
     
     async def _make_request(self, url: str, params: Optional[Dict] = None, 
                            headers: Optional[Dict] = None) -> Dict:
-        """Make HTTP request with error handling"""
+        """Make HTTP request with error handling and rate limiting"""
+        # Apply rate limiting
+        await self._rate_limiter.acquire()
+        
         session = await self._get_session()
         
         try:
@@ -397,6 +435,149 @@ class CoinGeckoClient(MarketDataClientBase):
         except Exception as e:
             self.logger.error("Failed to get correlation metrics", error=str(e))
             raise MarketDataError(f"Failed to get correlation metrics: {str(e)}")
+    
+    async def get_ohlcv_data(self, coin_id: str, days: int = 7, 
+                            from_date: Optional[datetime] = None, 
+                            to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get OHLCV (Open, High, Low, Close, Volume) data for a coin"""
+        cache_key = f"ohlcv_{coin_id}_{days}_{from_date}_{to_date}"
+        cached = self._get_cached_data(cache_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            # Prepare API parameters
+            params = {"vs_currency": "usd", "days": days}
+            
+            # Add date range if specified
+            if from_date and to_date:
+                params["from"] = int(from_date.timestamp())
+                params["to"] = int(to_date.timestamp())
+            
+            # Make API request
+            url = f"{self.BASE_URL}/coins/{coin_id}/ohlc"
+            data = await self._make_request(url, params=params, headers=self.headers)
+            
+            if not data:
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Convert to DataFrame
+            ohlcv_data = []
+            for entry in data:
+                if len(entry) != 6:  # timestamp, o, h, l, c, v
+                    raise MarketDataError(f"Invalid OHLCV data format: expected 6 values, got {len(entry)}")
+                
+                ohlcv_data.append({
+                    'timestamp': pd.to_datetime(entry[0], unit='ms'),
+                    'open': float(entry[1]),
+                    'high': float(entry[2]),
+                    'low': float(entry[3]),
+                    'close': float(entry[4]),
+                    'volume': float(entry[5])
+                })
+            
+            df = pd.DataFrame(ohlcv_data)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            # Cache the result
+            self._cache_data(cache_key, df)
+            
+            self.logger.info("Retrieved OHLCV data", 
+                           coin_id=coin_id, 
+                           days=days, 
+                           records=len(df))
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error("Failed to get OHLCV data", 
+                            coin_id=coin_id, 
+                            error=str(e))
+            raise MarketDataError(f"Failed to get OHLCV data for {coin_id}: {str(e)}")
+    
+    async def search_coin_id(self, query: str) -> str:
+        """Search for coin ID by name or symbol"""
+        cache_key = f"search_{query.lower()}"
+        cached = self._get_cached_data(cache_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            # Get coin list
+            url = f"{self.BASE_URL}/coins/list"
+            coins_list = await self._make_request(url, headers=self.headers)
+            
+            query_lower = query.lower()
+            
+            # First, try exact match by ID
+            for coin in coins_list:
+                if coin.get("id", "").lower() == query_lower:
+                    self._cache_data(cache_key, coin["id"])
+                    return coin["id"]
+            
+            # Then try exact match by symbol
+            for coin in coins_list:
+                if coin.get("symbol", "").lower() == query_lower:
+                    self._cache_data(cache_key, coin["id"])
+                    return coin["id"]
+            
+            # Finally, try partial match by name
+            for coin in coins_list:
+                if query_lower in coin.get("name", "").lower():
+                    self._cache_data(cache_key, coin["id"])
+                    return coin["id"]
+            
+            raise DataNotAvailableError(f"Coin not found: {query}")
+            
+        except Exception as e:
+            self.logger.error("Failed to search coin ID", query=query, error=str(e))
+            raise MarketDataError(f"Failed to search coin ID for {query}: {str(e)}")
+    
+    async def get_historical_data_for_token(self, token_address: str, days: int = 7,
+                                          from_date: Optional[datetime] = None,
+                                          to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get historical OHLCV data for a token by its contract address"""
+        try:
+            # First, try to find the coin by contract address
+            # Note: CoinGecko API doesn't directly support contract address lookup for OHLCV
+            # This would need to be enhanced with contract platform mapping
+            
+            # For now, we'll assume the token_address maps to a known coin ID
+            # In production, you would need to:
+            # 1. Use CoinGecko's coins/{id}/contract/{contract_address} endpoint
+            # 2. Or maintain a mapping of contract addresses to coin IDs
+            
+            # Placeholder implementation - would need proper contract address resolution
+            coin_id = await self._resolve_contract_to_coin_id(token_address)
+            
+            return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
+            
+        except Exception as e:
+            self.logger.error("Failed to get historical data for token", 
+                            token_address=token_address, 
+                            error=str(e))
+            raise MarketDataError(f"Failed to get historical data for token {token_address}: {str(e)}")
+    
+    async def _resolve_contract_to_coin_id(self, contract_address: str) -> str:
+        """Resolve contract address to CoinGecko coin ID"""
+        # This is a simplified implementation
+        # In production, you would use CoinGecko's contract address endpoints
+        # or maintain a mapping of known contract addresses
+        
+        # For common tokens, we can provide direct mappings
+        contract_mappings = {
+            "0xa0b86a33e6b58ee28de3a76f8a9e54e4da5e7f2f": "bitcoin",  # Example
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "ethereum", # WETH
+            # Add more mappings as needed
+        }
+        
+        address_lower = contract_address.lower()
+        if address_lower in contract_mappings:
+            return contract_mappings[address_lower]
+        
+        # If not in mapping, try to search by the address
+        # This would need enhancement with proper CoinGecko contract lookup
+        raise DataNotAvailableError(f"Cannot resolve contract address to coin ID: {contract_address}")
 
 
 class OnChainAnalyticsClient(MarketDataClientBase):

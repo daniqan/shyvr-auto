@@ -5,6 +5,7 @@ Unit tests for market data API clients
 import pytest
 import aiohttp
 import asyncio
+import pandas as pd
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -492,3 +493,153 @@ class TestDataValidation:
             
             assert result.btc_dominance == 100.0
             assert result.eth_dominance == 0.0
+
+
+class TestCoinGeckoOHLCVMethods:
+    """Test CoinGecko OHLCV data fetching methods"""
+    
+    @pytest.fixture
+    def sample_ohlcv_response(self):
+        """Sample OHLCV response from CoinGecko API"""
+        return [
+            [1640995200000, 47000.0, 48000.0, 46000.0, 47500.0, 1000000000.0],  # timestamp, o, h, l, c, v
+            [1641081600000, 47500.0, 49000.0, 47000.0, 48200.0, 1100000000.0],
+            [1641168000000, 48200.0, 48500.0, 47800.0, 48000.0, 950000000.0],
+        ]
+    
+    @pytest.fixture
+    def sample_coin_list_response(self):
+        """Sample coin list response from CoinGecko API"""
+        return [
+            {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
+            {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+        ]
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_success(self, coingecko_client, sample_ohlcv_response):
+        """Test successful OHLCV data retrieval"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_ohlcv_response):
+            result = await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+            
+            assert isinstance(result, pd.DataFrame)
+            assert len(result) == 3
+            assert list(result.columns) == ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            assert result['open'].iloc[0] == 47000.0
+            assert result['high'].iloc[0] == 48000.0
+            assert result['low'].iloc[0] == 46000.0
+            assert result['close'].iloc[0] == 47500.0
+            assert result['volume'].iloc[0] == 1000000000.0
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_with_custom_range(self, coingecko_client, sample_ohlcv_response):
+        """Test OHLCV data retrieval with custom date range"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_ohlcv_response):
+            from_date = datetime(2022, 1, 1)
+            to_date = datetime(2022, 1, 7)
+            
+            result = await coingecko_client.get_ohlcv_data(
+                "bitcoin", 
+                from_date=from_date, 
+                to_date=to_date
+            )
+            
+            assert isinstance(result, pd.DataFrame)
+            assert len(result) == 3
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_rate_limiting(self, coingecko_client):
+        """Test rate limiting for OHLCV requests"""
+        with patch.object(coingecko_client, '_make_request', side_effect=APIRateLimitError("Rate limit exceeded")):
+            with pytest.raises(APIRateLimitError):
+                await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_invalid_coin(self, coingecko_client):
+        """Test OHLCV data retrieval with invalid coin ID"""
+        with patch.object(coingecko_client, '_make_request', side_effect=DataNotAvailableError("Coin not found")):
+            with pytest.raises(DataNotAvailableError):
+                await coingecko_client.get_ohlcv_data("invalid-coin", days=7)
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_empty_response(self, coingecko_client):
+        """Test OHLCV data retrieval with empty response"""
+        with patch.object(coingecko_client, '_make_request', return_value=[]):
+            result = await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+            
+            assert isinstance(result, pd.DataFrame)
+            assert len(result) == 0
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_malformed_data(self, coingecko_client):
+        """Test OHLCV data retrieval with malformed data"""
+        malformed_data = [
+            [1640995200000, 47000.0, 48000.0],  # Missing low, close, volume
+            [1641081600000, 47500.0, 49000.0, 47000.0, 48200.0, 1100000000.0],
+        ]
+        
+        with patch.object(coingecko_client, '_make_request', return_value=malformed_data):
+            with pytest.raises(MarketDataError):
+                await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+    
+    @pytest.mark.asyncio
+    async def test_search_coin_id_success(self, coingecko_client, sample_coin_list_response):
+        """Test successful coin ID search"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_coin_list_response):
+            result = await coingecko_client.search_coin_id("bitcoin")
+            
+            assert result == "bitcoin"
+    
+    @pytest.mark.asyncio
+    async def test_search_coin_id_by_symbol(self, coingecko_client, sample_coin_list_response):
+        """Test coin ID search by symbol"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_coin_list_response):
+            result = await coingecko_client.search_coin_id("BTC")
+            
+            assert result == "bitcoin"
+    
+    @pytest.mark.asyncio
+    async def test_search_coin_id_not_found(self, coingecko_client, sample_coin_list_response):
+        """Test coin ID search for non-existent coin"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_coin_list_response):
+            with pytest.raises(DataNotAvailableError):
+                await coingecko_client.search_coin_id("unknown-coin")
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_caching(self, coingecko_client, sample_ohlcv_response):
+        """Test OHLCV data caching"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_ohlcv_response) as mock_request:
+            # First call
+            result1 = await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+            # Second call should use cache
+            result2 = await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+            
+            # Should only make one API request
+            assert mock_request.call_count == 1
+            pd.testing.assert_frame_equal(result1, result2)
+    
+    @pytest.mark.asyncio
+    async def test_get_ohlcv_data_cache_key_uniqueness(self, coingecko_client, sample_ohlcv_response):
+        """Test that different parameters create different cache keys"""
+        with patch.object(coingecko_client, '_make_request', return_value=sample_ohlcv_response) as mock_request:
+            # Different coins should create separate cache entries
+            await coingecko_client.get_ohlcv_data("bitcoin", days=7)
+            await coingecko_client.get_ohlcv_data("ethereum", days=7)
+            
+            # Should make two API requests
+            assert mock_request.call_count == 2
+    
+    @pytest.mark.asyncio
+    async def test_get_historical_data_for_token_address(self, coingecko_client, sample_ohlcv_response):
+        """Test getting historical data using token address"""
+        # Mock the coin ID resolution
+        coin_list_response = [{"id": "some-token", "symbol": "token", "name": "Some Token"}]
+        
+        with patch.object(coingecko_client, '_make_request') as mock_request:
+            # First call returns coin list, second returns OHLCV data
+            mock_request.side_effect = [coin_list_response, sample_ohlcv_response]
+            
+            result = await coingecko_client.get_historical_data_for_token("0x1234567890abcdef", days=7)
+            
+            assert isinstance(result, pd.DataFrame)
+            assert len(result) == 3
+            assert mock_request.call_count == 2

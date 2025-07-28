@@ -18,6 +18,9 @@ from src.ml_analysis.base import (
     ModelType, PredictionDirection, PredictionResult,
     ModelNotTrainedError, PredictionError
 )
+from src.ml_analysis.market_data import (
+    MarketDataError, APIRateLimitError, DataNotAvailableError
+)
 
 
 class TestLSTMNetwork:
@@ -50,25 +53,219 @@ class TestLSTMNetwork:
     def test_lstm_network_forward_pass(self):
         """Test LSTM network forward pass"""
         input_size = 20
-        hidden_size = 64
+        batch_size = 16
         sequence_length = 50
-        batch_size = 4
         
-        model = LSTMNetwork(input_size=input_size, hidden_size=hidden_size)
+        model = LSTMNetwork(input_size=input_size)
         
-        # Create sample input
+        # Create random input
         x = torch.randn(batch_size, sequence_length, input_size)
         
-        # Forward pass
         predictions, uncertainty = model(x)
         
-        # Check output shapes
         assert predictions.shape == (batch_size, 3)  # 3 time horizons
-        assert uncertainty.shape == (batch_size, 3)  # 3 uncertainty estimates
+        assert uncertainty.shape == (batch_size, 3)
+        assert not torch.isnan(predictions).any()
+        assert not torch.isnan(uncertainty).any()
+
+
+class TestLSTMPrepareTrainingDataWithRealData:
+    """Test LSTM _prepare_training_data method with real market data integration"""
+    
+    @pytest.fixture
+    def lstm_predictor(self):
+        """Create LSTM predictor for testing"""
+        config = {
+            'sequence_length': 20,
+            'hidden_size': 32,
+            'num_layers': 1,
+            'dropout': 0.1,
+            'learning_rate': 0.001,
+            'batch_size': 16,
+            'num_epochs': 10
+        }
+        return LSTMPricePredictor(config)
+    
+    @pytest.fixture
+    def mock_coingecko_client(self):
+        """Mock CoinGecko client with OHLCV data"""
+        client = MagicMock()
         
-        # Check output types
-        assert isinstance(predictions, torch.Tensor)
-        assert isinstance(uncertainty, torch.Tensor)
+        # Mock OHLCV data response
+        ohlcv_data = pd.DataFrame({
+            'timestamp': pd.date_range(start='2023-01-01', periods=100, freq='1H'),
+            'open': np.random.uniform(40000, 50000, 100),
+            'high': np.random.uniform(50000, 55000, 100),
+            'low': np.random.uniform(35000, 40000, 100),
+            'close': np.random.uniform(40000, 50000, 100),
+            'volume': np.random.uniform(1e9, 5e9, 100)
+        })
+        
+        client.get_ohlcv_data = AsyncMock(return_value=ohlcv_data)
+        client.search_coin_id = AsyncMock(return_value="bitcoin")
+        client.get_historical_data_for_token = AsyncMock(return_value=ohlcv_data)
+        
+        return client
+    
+    @pytest.fixture
+    def sample_historical_data(self):
+        """Create sample historical data for testing"""
+        np.random.seed(42)  # For reproducible tests
+        
+        dates = pd.date_range(start='2023-01-01', periods=100, freq='1H')
+        base_price = 45000
+        
+        # Generate realistic price data with trends
+        price_changes = np.random.normal(0, 0.02, 100)  # 2% volatility
+        prices = [base_price]
+        
+        for change in price_changes[1:]:
+            new_price = prices[-1] * (1 + change)
+            prices.append(max(new_price, 1000))  # Minimum price floor
+        
+        volumes = np.random.uniform(1e9, 5e9, 100)
+        
+        # Create OHLC data
+        data = []
+        for i, (date, close, volume) in enumerate(zip(dates, prices, volumes)):
+            open_price = prices[i-1] if i > 0 else close
+            high = max(open_price, close) * (1 + np.random.uniform(0, 0.01))
+            low = min(open_price, close) * (1 - np.random.uniform(0, 0.01))
+            
+            data.append({
+                'timestamp': date,
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume
+            })
+        
+        return pd.DataFrame(data)
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_with_real_ohlcv(self, lstm_predictor, mock_coingecko_client, sample_historical_data):
+        """Test _prepare_training_data method using real OHLCV data from CoinGecko"""
+        # Mock the CoinGecko client
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_coingecko_client):
+            # Test the new real data implementation
+            X, y, feature_names = await lstm_predictor._prepare_training_data_real(
+                sample_historical_data, 
+                coin_id="bitcoin"
+            )
+            
+            # Verify structure
+            assert isinstance(X, np.ndarray)
+            assert isinstance(y, np.ndarray)
+            assert isinstance(feature_names, list)
+            
+            # Check dimensions
+            expected_sequences = len(sample_historical_data) - lstm_predictor.sequence_length - 2  # -2 for prediction horizons
+            assert X.shape[0] == expected_sequences
+            assert X.shape[1] == lstm_predictor.sequence_length
+            assert X.shape[2] == len(feature_names)
+            assert y.shape[0] == expected_sequences
+            assert y.shape[1] == 3  # 1h, 4h, 24h predictions
+            
+            # Verify feature names include OHLCV data
+            assert 'open' in feature_names
+            assert 'high' in feature_names
+            assert 'low' in feature_names
+            assert 'close' in feature_names
+            assert 'volume' in feature_names
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_insufficient_data(self, lstm_predictor, mock_coingecko_client):
+        """Test _prepare_training_data with insufficient historical data"""
+        # Create minimal data that's too short
+        short_data = pd.DataFrame({
+            'timestamp': pd.date_range(start='2023-01-01', periods=10, freq='1H'),
+            'open': [45000] * 10,
+            'high': [46000] * 10,
+            'low': [44000] * 10,
+            'close': [45000] * 10,
+            'volume': [1e9] * 10
+        })
+        
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_coingecko_client):
+            with pytest.raises(MarketDataError):
+                await lstm_predictor._prepare_training_data_real(short_data, coin_id="bitcoin")
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_with_feature_engineering(self, lstm_predictor, mock_coingecko_client, sample_historical_data):
+        """Test that _prepare_training_data includes engineered features"""
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_coingecko_client):
+            X, y, feature_names = await lstm_predictor._prepare_training_data_real(
+                sample_historical_data,
+                coin_id="bitcoin"
+            )
+            
+            # Should include technical indicators
+            technical_features = ['sma_20', 'ema_12', 'rsi', 'macd', 'atr', 'bollinger_width']
+            for tech_feature in technical_features:
+                assert any(tech_feature in name for name in feature_names), f"Missing {tech_feature}"
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_target_alignment(self, lstm_predictor, mock_coingecko_client, sample_historical_data):
+        """Test that targets are properly aligned with input sequences"""
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_coingecko_client):
+            X, y, feature_names = await lstm_predictor._prepare_training_data_real(
+                sample_historical_data,
+                coin_id="bitcoin"
+            )
+            
+            # Verify target alignment
+            # y[0] should correspond to prices 1h, 4h, 24h after the end of X[0] sequence
+            assert y[0][0] > 0  # 1h prediction should be positive price
+            assert y[0][1] > 0  # 4h prediction should be positive price
+            assert y[0][2] > 0  # 24h prediction should be positive price
+            
+            # Targets should be in reasonable price range
+            assert all(1000 < price < 100000 for price in y[0])
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_normalization(self, lstm_predictor, mock_coingecko_client, sample_historical_data):
+        """Test that features are properly normalized"""
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_coingecko_client):
+            X, y, feature_names = await lstm_predictor._prepare_training_data_real(
+                sample_historical_data,
+                coin_id="bitcoin"
+            )
+            
+            # Check that features are normalized (most should be between -3 and 3 for normalized data)
+            price_features = ['open', 'high', 'low', 'close']
+            price_indices = [i for i, name in enumerate(feature_names) if any(pf in name for pf in price_features)]
+            
+            if price_indices:
+                price_data = X[:, :, price_indices]
+                # After normalization, most values should be in reasonable range
+                assert np.std(price_data) < 100  # Should be normalized, not raw prices
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_api_rate_limiting(self, lstm_predictor, sample_historical_data):
+        """Test handling of API rate limiting during data preparation"""
+        mock_client = MagicMock()
+        mock_client.get_ohlcv_data = AsyncMock(side_effect=APIRateLimitError("Rate limit exceeded"))
+        
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_client):
+            with pytest.raises(APIRateLimitError):
+                await lstm_predictor._prepare_training_data_real(
+                    sample_historical_data,
+                    coin_id="bitcoin"
+                )
+    
+    @pytest.mark.asyncio
+    async def test_prepare_training_data_invalid_coin_id(self, lstm_predictor, sample_historical_data):
+        """Test handling of invalid coin ID"""
+        mock_client = MagicMock()
+        mock_client.search_coin_id = AsyncMock(side_effect=DataNotAvailableError("Coin not found"))
+        
+        with patch('src.ml_analysis.lstm_model.CoinGeckoClient', return_value=mock_client):
+            with pytest.raises(DataNotAvailableError):
+                await lstm_predictor._prepare_training_data_real(
+                    sample_historical_data,
+                    coin_id="invalid-coin"
+                )
     
     def test_lstm_network_with_different_parameters(self):
         """Test LSTM network with different parameter configurations"""
