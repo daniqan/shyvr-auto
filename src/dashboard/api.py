@@ -52,6 +52,44 @@ class SystemResponse(BaseModel):
     timestamp: datetime
 
 
+class ManualTradeRequest(BaseModel):
+    symbol: str
+    side: str  # "buy" or "sell"
+    amount: float
+    order_type: str = "market"  # "market" or "limit"
+    price: Optional[float] = None
+    
+    @validator('side')
+    def validate_side(cls, v):
+        if v not in ['buy', 'sell']:
+            raise ValueError('Side must be either "buy" or "sell"')
+        return v
+    
+    @validator('order_type') 
+    def validate_order_type(cls, v):
+        if v not in ['market', 'limit']:
+            raise ValueError('Order type must be either "market" or "limit"')
+        return v
+
+
+class SignalOverrideRequest(BaseModel):
+    signal_id: str
+    action: str  # "override", "pause", "resume"
+    reason: Optional[str] = None
+    
+    @validator('action')
+    def validate_action(cls, v):
+        if v not in ['override', 'pause', 'resume']:
+            raise ValueError('Action must be one of: override, pause, resume')
+        return v
+
+
+class StrategyPauseRequest(BaseModel):
+    strategy_name: str
+    duration_minutes: Optional[int] = None  # None for indefinite
+    reason: Optional[str] = None
+
+
 class DashboardAPI:
     """Dashboard API handler"""
     
@@ -169,6 +207,109 @@ class DashboardAPI:
             self.export_activity_logs,
             methods=["GET"],
             dependencies=[Depends(require_admin)]
+        )
+        
+        # XAI explanation endpoints
+        self.router.add_api_route(
+            "/xai/explanations",
+            self.get_xai_explanations,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/xai/explanations/{decision_id}",
+            self.get_xai_explanation,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/xai/feature-importance",
+            self.get_feature_importance_summary,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/xai/cache-stats",
+            self.get_xai_cache_stats,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        # Interactive charting endpoints
+        self.router.add_api_route(
+            "/charts/price-data",
+            self.get_price_chart_data,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/charts/performance-data",
+            self.get_performance_chart_data,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/charts/trading-volume-data",
+            self.get_trading_volume_chart_data,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        # Performance attribution endpoints
+        self.router.add_api_route(
+            "/performance/attribution",
+            self.get_performance_attribution,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/performance/risk-metrics",
+            self.get_risk_metrics,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        # Manual override control endpoints
+        self.router.add_api_route(
+            "/controls/manual-trade",
+            self.execute_manual_trade,
+            methods=["POST"],
+            dependencies=[Depends(require_trading)]
+        )
+        
+        self.router.add_api_route(
+            "/controls/override-signal",
+            self.override_trading_signal,
+            methods=["POST"],
+            dependencies=[Depends(require_trading)]
+        )
+        
+        self.router.add_api_route(
+            "/controls/pause-strategy",
+            self.pause_trading_strategy,
+            methods=["POST"],
+            dependencies=[Depends(require_trading)]
+        )
+        
+        # Real-time metrics endpoints
+        self.router.add_api_route(
+            "/realtime/metrics",
+            self.get_realtime_metrics,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/realtime/live-positions",
+            self.get_live_positions,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
         )
         
         # WebSocket endpoint
@@ -893,6 +1034,512 @@ class DashboardAPI:
             # Disconnect from WebSocket manager
             await websocket_manager.disconnect(connection_id)
             logger.info("WebSocket client disconnected", connection_id=connection_id)
+    
+    # =============================================================================
+    # XAI EXPLANATION ENDPOINTS
+    # =============================================================================
+    
+    async def get_xai_explanations(
+        self,
+        symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
+        decision_type: Optional[str] = Query(None, description="Filter by decision type"),
+        limit: int = Query(100, ge=1, le=1000, description="Number of explanations to return"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get recent XAI explanations"""
+        try:
+            # Log API call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_api",
+                event_type="xai_explanations_request",
+                title=f"XAI explanations requested by {user.username}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/dashboard/xai/explanations",
+                http_method="GET",
+                metadata={
+                    "username": user.username,
+                    "symbol": symbol,
+                    "decision_type": decision_type,
+                    "limit": limit
+                }
+            )
+            
+            # Get XAI explanations from service
+            explanations = await dashboard_service.get_xai_explanations(
+                symbol=symbol,
+                decision_type=decision_type,
+                limit=limit
+            )
+            
+            return {
+                "explanations": explanations,
+                "count": len(explanations),
+                "filters": {
+                    "symbol": symbol,
+                    "decision_type": decision_type,
+                    "limit": limit
+                },
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get XAI explanations", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve XAI explanations"
+            )
+    
+    async def get_xai_explanation(
+        self,
+        decision_id: str,
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get specific XAI explanation by decision ID"""
+        try:
+            # Get explanation from service
+            explanation = await dashboard_service.get_xai_explanation(decision_id)
+            
+            if not explanation:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Explanation not found for decision ID: {decision_id}"
+                )
+            
+            return {
+                "explanation": explanation,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to get XAI explanation", error=str(e), decision_id=decision_id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve XAI explanation"
+            )
+    
+    async def get_feature_importance_summary(
+        self,
+        symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get aggregated feature importance summary"""
+        try:
+            # Get feature importance from service
+            feature_importance = await dashboard_service.get_feature_importance_summary(
+                symbol=symbol,
+                hours_back=hours_back
+            )
+            
+            return {
+                "feature_importance": feature_importance,
+                "time_range": {
+                    "hours_back": hours_back,
+                    "start_time": (datetime.utcnow() - timedelta(hours=hours_back)).isoformat(),
+                    "end_time": datetime.utcnow().isoformat()
+                },
+                "filters": {"symbol": symbol},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get feature importance summary", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve feature importance summary"
+            )
+    
+    async def get_xai_cache_stats(
+        self,
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get XAI cache statistics"""
+        try:
+            # Get cache stats from service
+            cache_stats = await dashboard_service.get_xai_cache_stats()
+            
+            return {
+                "cache_stats": cache_stats,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get XAI cache stats", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve XAI cache statistics"
+            )
+    
+    # =============================================================================
+    # INTERACTIVE CHARTING ENDPOINTS  
+    # =============================================================================
+    
+    async def get_price_chart_data(
+        self,
+        symbol: str = Query(..., description="Trading symbol"),
+        timeframe: str = Query("1h", description="Chart timeframe (1m, 5m, 1h, 4h, 1d)"),
+        limit: int = Query(200, ge=1, le=1000, description="Number of data points"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get price chart data for visualization"""
+        try:
+            # Get price data from service
+            price_data = await dashboard_service.get_price_chart_data(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit
+            )
+            
+            return {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "data": price_data,
+                "count": len(price_data),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get price chart data", error=str(e), symbol=symbol)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve price chart data"
+            )
+    
+    async def get_performance_chart_data(
+        self,
+        timeframe: str = Query("1d", description="Chart timeframe"),
+        days_back: int = Query(30, ge=1, le=365, description="Days to look back"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get performance chart data"""
+        try:
+            # Get performance data from service
+            performance_data = await dashboard_service.get_performance_chart_data(
+                timeframe=timeframe,
+                days_back=days_back
+            )
+            
+            return {
+                "timeframe": timeframe,
+                "days_back": days_back,
+                "data": performance_data,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get performance chart data", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve performance chart data"
+            )
+    
+    async def get_trading_volume_chart_data(
+        self,
+        timeframe: str = Query("1h", description="Chart timeframe"),
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to look back"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get trading volume chart data"""
+        try:
+            # Get volume data from service
+            volume_data = await dashboard_service.get_trading_volume_chart_data(
+                timeframe=timeframe,
+                hours_back=hours_back
+            )
+            
+            return {
+                "timeframe": timeframe,
+                "hours_back": hours_back,
+                "data": volume_data,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get trading volume chart data", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve trading volume chart data"
+            )
+    
+    # =============================================================================
+    # PERFORMANCE ATTRIBUTION ENDPOINTS
+    # =============================================================================
+    
+    async def get_performance_attribution(
+        self,
+        timeframe: str = Query("1d", description="Timeframe for attribution analysis"),
+        days_back: int = Query(30, ge=1, le=365, description="Days to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get performance attribution analysis"""
+        try:
+            # Get attribution data from service
+            attribution_data = await dashboard_service.get_performance_attribution(
+                timeframe=timeframe,
+                days_back=days_back
+            )
+            
+            return {
+                "attribution": attribution_data,
+                "timeframe": timeframe,
+                "days_back": days_back,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get performance attribution", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve performance attribution"
+            )
+    
+    async def get_risk_metrics(
+        self,
+        timeframe: str = Query("1d", description="Timeframe for risk analysis"),
+        days_back: int = Query(30, ge=1, le=365, description="Days to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get detailed risk metrics"""
+        try:
+            # Get risk metrics from service
+            risk_metrics = await dashboard_service.get_risk_metrics(
+                timeframe=timeframe,
+                days_back=days_back
+            )
+            
+            return {
+                "risk_metrics": risk_metrics,
+                "timeframe": timeframe,
+                "days_back": days_back,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get risk metrics", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve risk metrics"
+            )
+    
+    # =============================================================================
+    # MANUAL OVERRIDE CONTROL ENDPOINTS
+    # =============================================================================
+    
+    async def execute_manual_trade(
+        self,
+        request: ManualTradeRequest,
+        user: User = Depends(require_trading)
+    ) -> SystemResponse:
+        """Execute a manual trade"""
+        try:
+            # Log manual trade request
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_api",
+                event_type="manual_trade_request",
+                title=f"Manual {request.side} trade requested for {request.symbol}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "symbol": request.symbol,
+                    "side": request.side,
+                    "amount": request.amount,
+                    "order_type": request.order_type,
+                    "price": request.price,
+                    "username": user.username
+                }
+            )
+            
+            # Execute trade via service
+            success = await dashboard_service.execute_manual_trade(
+                symbol=request.symbol,
+                side=request.side,
+                amount=request.amount,
+                order_type=request.order_type,
+                price=request.price,
+                user_id=user.user_id
+            )
+            
+            if success:
+                return SystemResponse(
+                    success=True,
+                    message=f"Manual {request.side} trade executed for {request.symbol}",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to execute manual trade"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to execute manual trade", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal error executing manual trade"
+            )
+    
+    async def override_trading_signal(
+        self,
+        request: SignalOverrideRequest,
+        user: User = Depends(require_trading)
+    ) -> SystemResponse:
+        """Override or control a trading signal"""
+        try:
+            # Log signal override request
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_api",
+                event_type="signal_override_request",
+                title=f"Trading signal {request.action} requested for {request.signal_id}",
+                severity=ActivitySeverity.WARNING,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "signal_id": request.signal_id,
+                    "action": request.action,
+                    "reason": request.reason,
+                    "username": user.username
+                }
+            )
+            
+            # Execute override via service
+            success = await dashboard_service.override_trading_signal(
+                signal_id=request.signal_id,
+                action=request.action,
+                reason=request.reason,
+                user_id=user.user_id
+            )
+            
+            if success:
+                return SystemResponse(
+                    success=True,
+                    message=f"Trading signal {request.action} completed for {request.signal_id}",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to override trading signal"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to override trading signal", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal error overriding trading signal"
+            )
+    
+    async def pause_trading_strategy(
+        self,
+        request: StrategyPauseRequest,
+        user: User = Depends(require_trading)
+    ) -> SystemResponse:
+        """Pause a trading strategy"""
+        try:
+            # Log strategy pause request
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_api",
+                event_type="strategy_pause_request",
+                title=f"Strategy pause requested for {request.strategy_name}",
+                severity=ActivitySeverity.WARNING,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "strategy_name": request.strategy_name,
+                    "duration_minutes": request.duration_minutes,
+                    "reason": request.reason,
+                    "username": user.username
+                }
+            )
+            
+            # Pause strategy via service
+            success = await dashboard_service.pause_trading_strategy(
+                strategy_name=request.strategy_name,
+                duration_minutes=request.duration_minutes,
+                reason=request.reason,
+                user_id=user.user_id
+            )
+            
+            if success:
+                duration_msg = f" for {request.duration_minutes} minutes" if request.duration_minutes else " indefinitely"
+                return SystemResponse(
+                    success=True,
+                    message=f"Strategy {request.strategy_name} paused{duration_msg}",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to pause trading strategy"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to pause trading strategy", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal error pausing trading strategy"
+            )
+    
+    # =============================================================================
+    # REAL-TIME METRICS ENDPOINTS
+    # =============================================================================
+    
+    async def get_realtime_metrics(
+        self,
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get real-time trading and system metrics"""
+        try:
+            # Get real-time metrics from service
+            realtime_metrics = await dashboard_service.get_realtime_metrics()
+            
+            return {
+                "metrics": realtime_metrics,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get real-time metrics", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve real-time metrics"
+            )
+    
+    async def get_live_positions(
+        self,
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get current live trading positions"""
+        try:
+            # Get live positions from service
+            positions = await dashboard_service.get_live_positions()
+            
+            return {
+                "positions": [self._serialize_position(pos) for pos in positions],
+                "count": len(positions),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get live positions", error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve live positions"
+            )
     
     def _serialize_dashboard_data(self, data: DashboardData) -> Dict[str, Any]:
         """Serialize complete dashboard data"""

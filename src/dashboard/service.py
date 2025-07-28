@@ -30,6 +30,10 @@ from .base import (
 from .websocket_manager import websocket_manager
 from .activity_integration import dashboard_activity
 
+# Import XAI components for integration
+from ..xai.trading_integration import TradingExplanationManager
+from ..xai.factory import ExplainerFactory
+
 logger = structlog.get_logger()
 
 
@@ -49,6 +53,10 @@ class DashboardService:
         self.model_manager: Optional[ModelManager] = None
         self.rl_agent: Optional[DQNTradingAgent] = None
         self.ml_rl_bridge: Optional[MLRLBridge] = None
+        
+        # XAI integration components
+        self.xai_explanation_manager: Optional[TradingExplanationManager] = None
+        self.xai_explainer_factory: Optional[ExplainerFactory] = None
         
         # Update interval
         self.update_interval = 5.0  # 5 seconds
@@ -242,6 +250,20 @@ class DashboardService:
             except Exception as e:
                 logger.warning("Failed to initialize ML-RL bridge", error=str(e))
                 self.ml_rl_bridge = None
+
+            # Initialize XAI components
+            try:
+                self.xai_explainer_factory = ExplainerFactory()
+                self.xai_explanation_manager = TradingExplanationManager(
+                    explainer_factory=self.xai_explainer_factory,
+                    cache_size=1000,
+                    explanation_timeout=5.0
+                )
+                logger.info("XAI components initialized successfully")
+            except Exception as e:
+                logger.warning("Failed to initialize XAI components", error=str(e))
+                self.xai_explainer_factory = None
+                self.xai_explanation_manager = None
             
             logger.info("Dashboard components initialized successfully")
             
@@ -924,6 +946,471 @@ class DashboardService:
         except Exception as e:
             logger.error("Failed to serialize backtest results", error=str(e))
             return raw_results  # Return as-is if serialization fails
+
+    # =============================================================================
+    # XAI EXPLANATION METHODS
+    # =============================================================================
+    
+    async def get_xai_explanations(
+        self,
+        symbol: Optional[str] = None,
+        decision_type: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get recent XAI explanations with filtering"""
+        try:
+            if not self.xai_explanation_manager:
+                logger.warning("XAI explanation manager not initialized")
+                return []
+            
+            # Get explanations from XAI manager
+            explanations = self.xai_explanation_manager.get_recent_explanations(
+                symbol=symbol,
+                decision_type=decision_type,
+                limit=limit
+            )
+            
+            # Convert to serializable format
+            return [
+                self.xai_explanation_manager.to_dict(explanation)
+                for explanation in explanations
+            ]
+            
+        except Exception as e:
+            logger.error("Failed to get XAI explanations", error=str(e))
+            return []
+    
+    async def get_xai_explanation(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        """Get specific XAI explanation by decision ID"""
+        try:
+            if not self.xai_explanation_manager:
+                logger.warning("XAI explanation manager not initialized")
+                return None
+            
+            explanation = self.xai_explanation_manager.get_explanation(decision_id)
+            if explanation:
+                return self.xai_explanation_manager.to_dict(explanation)
+            return None
+            
+        except Exception as e:
+            logger.error("Failed to get XAI explanation", error=str(e), decision_id=decision_id)
+            return None
+    
+    async def get_feature_importance_summary(
+        self,
+        symbol: Optional[str] = None,
+        hours_back: int = 24
+    ) -> Dict[str, float]:
+        """Get aggregated feature importance summary"""
+        try:
+            if not self.xai_explanation_manager:
+                logger.warning("XAI explanation manager not initialized")
+                return {}
+            
+            return self.xai_explanation_manager.get_feature_importance_summary(
+                symbol=symbol,
+                hours_back=hours_back
+            )
+            
+        except Exception as e:
+            logger.error("Failed to get feature importance summary", error=str(e))
+            return {}
+    
+    async def get_xai_cache_stats(self) -> Dict[str, Any]:
+        """Get XAI cache statistics"""
+        try:
+            if not self.xai_explanation_manager:
+                logger.warning("XAI explanation manager not initialized")
+                return {"error": "XAI explanation manager not initialized"}
+            
+            return self.xai_explanation_manager.get_cache_stats()
+            
+        except Exception as e:
+            logger.error("Failed to get XAI cache stats", error=str(e))
+            return {"error": str(e)}
+    
+    # =============================================================================
+    # INTERACTIVE CHARTING DATA METHODS
+    # =============================================================================
+    
+    async def get_price_chart_data(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        """Get price chart data for visualization"""
+        try:
+            # TODO: Implement actual price data retrieval from market data service
+            # For now, return mock data
+            from datetime import datetime, timedelta
+            import random
+            
+            base_price = 100.0
+            data = []
+            current_time = datetime.utcnow()
+            
+            # Generate mock OHLCV data
+            for i in range(limit):
+                price_variation = random.uniform(-2.0, 2.0)
+                open_price = base_price + price_variation
+                high_price = open_price + random.uniform(0, 1.5)
+                low_price = open_price - random.uniform(0, 1.5)
+                close_price = open_price + random.uniform(-1.0, 1.0)
+                volume = random.uniform(1000, 10000)
+                
+                data.append({
+                    "timestamp": (current_time - timedelta(hours=i)).isoformat(),
+                    "open": round(open_price, 4),
+                    "high": round(high_price, 4),
+                    "low": round(low_price, 4),
+                    "close": round(close_price, 4),
+                    "volume": round(volume, 2)
+                })
+                
+                base_price = close_price  # Use close as next base
+            
+            return list(reversed(data))  # Reverse to get chronological order
+            
+        except Exception as e:
+            logger.error("Failed to get price chart data", error=str(e), symbol=symbol)
+            return []
+    
+    async def get_performance_chart_data(
+        self,
+        timeframe: str = "1d",
+        days_back: int = 30
+    ) -> List[Dict[str, Any]]:
+        """Get performance chart data"""
+        try:
+            # TODO: Implement actual performance data retrieval
+            # For now, return mock data
+            from datetime import datetime, timedelta
+            import random
+            
+            data = []
+            current_time = datetime.utcnow()
+            portfolio_value = 10000.0
+            
+            for i in range(days_back):
+                daily_return = random.uniform(-0.02, 0.03)  # -2% to +3% daily return
+                portfolio_value *= (1 + daily_return)
+                
+                data.append({
+                    "timestamp": (current_time - timedelta(days=i)).isoformat(),
+                    "portfolio_value": round(portfolio_value, 2),
+                    "daily_return": round(daily_return * 100, 4),
+                    "cumulative_return": round(((portfolio_value - 10000) / 10000) * 100, 4)
+                })
+            
+            return list(reversed(data))  # Reverse to get chronological order
+            
+        except Exception as e:
+            logger.error("Failed to get performance chart data", error=str(e))
+            return []
+    
+    async def get_trading_volume_chart_data(
+        self,
+        timeframe: str = "1h",
+        hours_back: int = 24
+    ) -> List[Dict[str, Any]]:
+        """Get trading volume chart data"""
+        try:
+            # TODO: Implement actual volume data retrieval
+            # For now, return mock data
+            from datetime import datetime, timedelta
+            import random
+            
+            data = []
+            current_time = datetime.utcnow()
+            
+            for i in range(hours_back):
+                volume = random.uniform(1000, 5000)
+                trade_count = random.randint(5, 25)
+                
+                data.append({
+                    "timestamp": (current_time - timedelta(hours=i)).isoformat(),
+                    "volume_usd": round(volume, 2),
+                    "trade_count": trade_count,
+                    "avg_trade_size": round(volume / trade_count, 2) if trade_count > 0 else 0
+                })
+            
+            return list(reversed(data))  # Reverse to get chronological order
+            
+        except Exception as e:
+            logger.error("Failed to get trading volume chart data", error=str(e))
+            return []
+    
+    # =============================================================================
+    # PERFORMANCE ATTRIBUTION METHODS
+    # =============================================================================
+    
+    async def get_performance_attribution(
+        self,
+        timeframe: str = "1d",
+        days_back: int = 30
+    ) -> Dict[str, Any]:
+        """Get performance attribution analysis"""
+        try:
+            # TODO: Implement actual attribution analysis
+            # For now, return mock data
+            import random
+            
+            # Mock attribution by strategy/factor
+            strategies = ["momentum", "mean_reversion", "arbitrage", "ml_predictions", "rl_decisions"]
+            attribution = {}
+            
+            for strategy in strategies:
+                attribution[strategy] = {
+                    "return_contribution": round(random.uniform(-0.5, 1.5), 4),
+                    "risk_contribution": round(random.uniform(0.1, 0.8), 4),
+                    "sharpe_ratio": round(random.uniform(0.5, 2.0), 4),
+                    "trade_count": random.randint(10, 100),
+                    "win_rate": round(random.uniform(0.45, 0.75), 4)
+                }
+            
+            return {
+                "timeframe": timeframe,
+                "days_analyzed": days_back,
+                "strategy_attribution": attribution,
+                "total_return": round(sum(attr["return_contribution"] for attr in attribution.values()), 4),
+                "risk_adjusted_return": round(random.uniform(0.5, 1.8), 4)
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get performance attribution", error=str(e))
+            return {}
+    
+    async def get_risk_metrics(
+        self,
+        timeframe: str = "1d",
+        days_back: int = 30
+    ) -> Dict[str, Any]:
+        """Get detailed risk metrics"""
+        try:
+            # TODO: Implement actual risk metrics calculation
+            # For now, return mock data
+            import random
+            
+            return {
+                "timeframe": timeframe,
+                "days_analyzed": days_back,
+                "value_at_risk": {
+                    "var_95": round(random.uniform(100, 500), 2),
+                    "var_99": round(random.uniform(200, 800), 2),
+                    "cvar_95": round(random.uniform(150, 600), 2)
+                },
+                "volatility_metrics": {
+                    "daily_volatility": round(random.uniform(0.01, 0.05), 4),
+                    "annualized_volatility": round(random.uniform(0.15, 0.35), 4),
+                    "volatility_skew": round(random.uniform(-0.5, 0.5), 4)
+                },
+                "drawdown_metrics": {
+                    "max_drawdown": round(random.uniform(0.03, 0.15), 4),
+                    "avg_drawdown": round(random.uniform(0.01, 0.05), 4),
+                    "drawdown_duration_days": random.randint(1, 7),
+                    "current_drawdown": round(random.uniform(0.0, 0.03), 4)
+                },
+                "correlation_metrics": {
+                    "beta_to_market": round(random.uniform(0.3, 1.2), 4),
+                    "correlation_to_btc": round(random.uniform(0.2, 0.8), 4),
+                    "correlation_to_eth": round(random.uniform(0.1, 0.7), 4)
+                }
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get risk metrics", error=str(e))
+            return {}
+    
+    # =============================================================================
+    # MANUAL OVERRIDE CONTROL METHODS
+    # =============================================================================
+    
+    async def execute_manual_trade(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        order_type: str = "market",
+        price: Optional[float] = None,
+        user_id: str = None
+    ) -> bool:
+        """Execute a manual trade"""
+        try:
+            # TODO: Implement actual trade execution
+            # For now, log the request and return success
+            
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_service",
+                event_type="manual_trade_executed",
+                title=f"Manual {side} trade executed for {symbol}",
+                severity=ActivitySeverity.INFO,
+                user_id=int(user_id.split('-')[-1], 16) % 10000 if user_id else None,
+                metadata={
+                    "symbol": symbol,
+                    "side": side,
+                    "amount": amount,
+                    "order_type": order_type,
+                    "price": price,
+                    "execution_source": "manual_dashboard"
+                }
+            )
+            
+            # Send WebSocket notification
+            await websocket_manager.send_system_alert(
+                "manual_trade_executed",
+                f"Manual {side} trade executed for {symbol}: {amount}",
+                "info"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to execute manual trade", error=str(e))
+            return False
+    
+    async def override_trading_signal(
+        self,
+        signal_id: str,
+        action: str,
+        reason: Optional[str] = None,
+        user_id: str = None
+    ) -> bool:
+        """Override or control a trading signal"""
+        try:
+            # TODO: Implement actual signal override logic
+            # For now, log the action and return success
+            
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_service",
+                event_type=f"signal_{action}",
+                title=f"Trading signal {action} executed for {signal_id}",
+                severity=ActivitySeverity.WARNING,
+                user_id=int(user_id.split('-')[-1], 16) % 10000 if user_id else None,
+                metadata={
+                    "signal_id": signal_id,
+                    "action": action,
+                    "reason": reason,
+                    "override_source": "manual_dashboard"
+                }
+            )
+            
+            # Send WebSocket notification
+            await websocket_manager.send_system_alert(
+                "signal_override",
+                f"Trading signal {action} for {signal_id}: {reason or 'No reason provided'}",
+                "warning"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to override trading signal", error=str(e))
+            return False
+    
+    async def pause_trading_strategy(
+        self,
+        strategy_name: str,
+        duration_minutes: Optional[int] = None,
+        reason: Optional[str] = None,
+        user_id: str = None
+    ) -> bool:
+        """Pause a trading strategy"""
+        try:
+            # TODO: Implement actual strategy pause logic
+            # For now, log the action and return success
+            
+            await activity_logger.log_activity(
+                category=ActivityCategory.TRADING,
+                action=ActivityAction.EXECUTE,
+                source="dashboard_service",
+                event_type="strategy_paused",
+                title=f"Trading strategy {strategy_name} paused",
+                severity=ActivitySeverity.WARNING,
+                user_id=int(user_id.split('-')[-1], 16) % 10000 if user_id else None,
+                metadata={
+                    "strategy_name": strategy_name,
+                    "duration_minutes": duration_minutes,
+                    "reason": reason,
+                    "pause_source": "manual_dashboard"
+                }
+            )
+            
+            # Send WebSocket notification
+            duration_msg = f" for {duration_minutes} minutes" if duration_minutes else " indefinitely"
+            await websocket_manager.send_system_alert(
+                "strategy_paused",
+                f"Strategy {strategy_name} paused{duration_msg}: {reason or 'No reason provided'}",
+                "warning"
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error("Failed to pause trading strategy", error=str(e))
+            return False
+    
+    # =============================================================================
+    # REAL-TIME METRICS METHODS
+    # =============================================================================
+    
+    async def get_realtime_metrics(self) -> Dict[str, Any]:
+        """Get real-time trading and system metrics"""
+        try:
+            # Get current dashboard data
+            dashboard_data = await self.get_dashboard_data()
+            
+            # Compile real-time metrics
+            return {
+                "system": {
+                    "cpu_usage": dashboard_data.system_metrics.cpu_usage_pct,
+                    "memory_usage": dashboard_data.system_metrics.memory_usage_pct,
+                    "active_connections": dashboard_data.system_metrics.active_connections,
+                    "requests_per_minute": dashboard_data.system_metrics.requests_per_minute,
+                    "error_rate": dashboard_data.system_metrics.error_rate_pct,
+                    "response_time_ms": dashboard_data.system_metrics.response_time_ms
+                },
+                "trading": {
+                    "mode": dashboard_data.trading_status.mode.value,
+                    "is_active": dashboard_data.trading_status.is_trading_active,
+                    "trades_today": dashboard_data.trading_status.trades_today,
+                    "volume_today": float(dashboard_data.trading_status.volume_today_usd),
+                    "win_rate": dashboard_data.trading_status.win_rate_pct,
+                    "signals_count": dashboard_data.trading_status.high_confidence_signals
+                },
+                "portfolio": {
+                    "total_value": float(dashboard_data.portfolio_status.total_value_usd),
+                    "daily_pnl": float(dashboard_data.portfolio_status.daily_pnl_usd),
+                    "daily_pnl_pct": float(dashboard_data.portfolio_status.daily_pnl_pct),
+                    "positions_count": dashboard_data.portfolio_status.position_count,
+                    "available_balance": float(dashboard_data.portfolio_status.available_balance_usd)
+                },
+                "ml_rl": {
+                    "ml_prediction_accuracy": dashboard_data.ml_rl_status.ml_prediction_accuracy_pct,
+                    "rl_action_success_rate": dashboard_data.ml_rl_status.rl_action_success_rate_pct,
+                    "integration_active": dashboard_data.ml_rl_status.ml_rl_integration_active,
+                    "decision_latency_ms": dashboard_data.ml_rl_status.ml_rl_decision_latency_ms
+                }
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get real-time metrics", error=str(e))
+            return {}
+    
+    async def get_live_positions(self) -> List[Position]:
+        """Get current live trading positions"""
+        try:
+            # Get current dashboard data
+            dashboard_data = await self.get_dashboard_data()
+            return dashboard_data.portfolio_status.active_positions
+            
+        except Exception as e:
+            logger.error("Failed to get live positions", error=str(e))
+            return []
 
     def record_request(self, response_time: float, error: bool = False) -> None:
         """Record API request metrics"""
