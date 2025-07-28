@@ -52,7 +52,7 @@ def onchain_client():
 @pytest.fixture
 def social_client():
     """Create social sentiment client for testing"""
-    return SocialSentimentClient(cache_ttl=60)
+    return SocialSentimentClient(api_key="test-lunarcrush-api-key", cache_ttl=60)
 
 
 @pytest.fixture
@@ -596,38 +596,331 @@ class TestOnChainAnalyticsClient:
 
 
 class TestSocialSentimentClient:
-    """Test social sentiment client"""
+    """Test social sentiment client with real LunarCrush API integration"""
+    
+    @pytest.fixture
+    def lunarcrush_client(self):
+        """Create LunarCrush social sentiment client for testing"""
+        return SocialSentimentClient(api_key="test-lunarcrush-api-key", cache_ttl=60)
+    
+    @pytest.fixture
+    def sample_lunarcrush_topic_response(self):
+        """Sample LunarCrush topic API response"""
+        return {
+            "data": {
+                "topic": "bitcoin",
+                "rank": 1,
+                "title": "Bitcoin",
+                "summary": "24h social activity summary for Bitcoin",
+                "interactions_24h": 125000,
+                "posts_24h": 5500,
+                "contributors_24h": 2800,
+                "sentiment": 3.2,  # 1-5 scale
+                "sentiment_absolute": 0.64,  # 0-1 scale
+                "galaxy_score": 78.5,
+                "alt_rank": 1,
+                "social_dominance": 15.2,
+                "platforms": {
+                    "reddit": {
+                        "posts": 1500,
+                        "interactions": 35000,
+                        "sentiment": 3.1
+                    },
+                    "twitter": {
+                        "posts": 3000,
+                        "interactions": 75000,
+                        "sentiment": 3.3
+                    },
+                    "youtube": {
+                        "posts": 1000,
+                        "interactions": 15000,
+                        "sentiment": 3.0
+                    }
+                },
+                "keywords": ["bullish", "moon", "hodl", "btc", "crypto"]
+            }
+        }
+    
+    @pytest.fixture
+    def sample_lunarcrush_time_series_response(self):
+        """Sample LunarCrush time series API response"""
+        return {
+            "data": [
+                {
+                    "time": 1640995200,
+                    "interactions": 120000,
+                    "posts": 5200,
+                    "contributors": 2600,
+                    "sentiment": 3.1,
+                    "galaxy_score": 76.2,
+                    "social_dominance": 14.8
+                },
+                {
+                    "time": 1641081600,
+                    "interactions": 125000,
+                    "posts": 5500,
+                    "contributors": 2800,
+                    "sentiment": 3.2,
+                    "galaxy_score": 78.5,
+                    "social_dominance": 15.2
+                }
+            ]
+        }
+    
+    @pytest.fixture
+    def sample_lunarcrush_posts_response(self):
+        """Sample LunarCrush posts API response"""
+        return {
+            "data": [
+                {
+                    "id": "post_123",
+                    "title": "Bitcoin to the moon!",
+                    "content": "BTC looking bullish today",
+                    "url": "https://twitter.com/user/status/123",
+                    "platform": "twitter",
+                    "interactions": 1500,
+                    "sentiment": 4,
+                    "creator": {
+                        "name": "crypto_influencer",
+                        "followers": 100000,
+                        "influence_score": 85
+                    },
+                    "created_time": 1640995200
+                }
+            ]
+        }
     
     @pytest.mark.asyncio
-    async def test_get_market_data_bitcoin(self, social_client):
-        """Test social sentiment for Bitcoin"""
-        result = await social_client.get_market_data("bitcoin")
-        
-        assert isinstance(result, SocialSentimentData)
-        assert 0 <= result.social_score <= 1
-        assert result.mention_volume > 0
-        assert "twitter" in result.platform_mentions
-        assert "reddit" in result.platform_mentions
-        assert len(result.trending_keywords) > 0
+    async def test_get_market_data_bitcoin_success(self, lunarcrush_client, sample_lunarcrush_topic_response):
+        """Test successful social sentiment retrieval for Bitcoin using LunarCrush API"""
+        with patch.object(lunarcrush_client, '_get_topic_data', return_value=sample_lunarcrush_topic_response), \
+             patch.object(lunarcrush_client, '_calculate_sentiment_trend', return_value=0.1), \
+             patch.object(lunarcrush_client, '_calculate_influencer_sentiment', return_value=0.65):
+            result = await lunarcrush_client.get_market_data("bitcoin")
+            
+            assert isinstance(result, SocialSentimentData)
+            assert result.social_score == 0.64  # Converted from 1-5 to 0-1 scale
+            assert result.mention_volume == 5500  # posts_24h
+            assert result.sentiment_trend > 0  # Should be positive based on data
+            assert "reddit" in result.platform_mentions
+            assert "twitter" in result.platform_mentions
+            assert "youtube" in result.platform_mentions
+            assert result.platform_mentions["reddit"] == 1500
+            assert result.platform_mentions["twitter"] == 3000
+            assert result.platform_mentions["youtube"] == 1000
+            assert "bullish" in result.trending_keywords
+            assert "moon" in result.trending_keywords
+            assert result.influencer_sentiment is not None
     
     @pytest.mark.asyncio
-    async def test_get_market_data_ethereum(self, social_client):
+    async def test_get_market_data_ethereum_success(self, lunarcrush_client):
         """Test social sentiment for Ethereum"""
-        result = await social_client.get_market_data("ethereum")
+        ethereum_response = {
+            "data": {
+                "topic": "ethereum",
+                "interactions_24h": 85000,
+                "posts_24h": 3200,
+                "sentiment_absolute": 0.58,
+                "platforms": {
+                    "reddit": {"posts": 1200, "sentiment": 2.9},
+                    "twitter": {"posts": 2000, "sentiment": 2.8}
+                },
+                "keywords": ["eth", "ethereum", "defi"]
+            }
+        }
         
-        assert isinstance(result, SocialSentimentData)
-        assert result.social_score is not None
-        assert result.influencer_sentiment is not None
+        with patch.object(lunarcrush_client, '_get_topic_data', return_value=ethereum_response), \
+             patch.object(lunarcrush_client, '_calculate_sentiment_trend', return_value=0.05), \
+             patch.object(lunarcrush_client, '_calculate_influencer_sentiment', return_value=0.6):
+            result = await lunarcrush_client.get_market_data("ethereum")
+            
+            assert isinstance(result, SocialSentimentData)
+            assert result.social_score == 0.58
+            assert result.mention_volume == 3200
+            assert "eth" in result.trending_keywords
     
     @pytest.mark.asyncio
-    async def test_get_market_data_caching(self, social_client):
-        """Test social sentiment caching"""
-        # First call
-        result1 = await social_client.get_market_data("bitcoin")
-        # Second call should use cache
-        result2 = await social_client.get_market_data("bitcoin")
+    async def test_api_authentication_header(self, lunarcrush_client):
+        """Test that API key is included in Authorization header"""
+        sample_response = {"data": {"topic": "bitcoin", "sentiment_absolute": 0.5, "posts_24h": 100, "platforms": {}, "keywords": []}}
         
-        assert result1 is result2  # Same cached object
+        with patch.object(lunarcrush_client, '_make_request') as mock_request:
+            mock_request.return_value = sample_response
+            
+            await lunarcrush_client._get_topic_data("bitcoin")
+            
+            # Check that Authorization header with Bearer token was used
+            call_args = mock_request.call_args
+            headers = call_args[1].get("headers", {})
+            assert "Authorization" in headers
+            assert headers["Authorization"] == "Bearer test-lunarcrush-api-key"
+    
+    @pytest.mark.asyncio
+    async def test_rate_limiting_lunarcrush_api(self, lunarcrush_client):
+        """Test rate limiting for LunarCrush API calls"""
+        with patch.object(lunarcrush_client, '_get_topic_data', side_effect=APIRateLimitError("Rate limit exceeded")):
+            with pytest.raises(APIRateLimitError):
+                await lunarcrush_client.get_market_data("bitcoin")
+    
+    @pytest.mark.asyncio
+    async def test_invalid_api_key_lunarcrush(self, lunarcrush_client):
+        """Test handling of invalid LunarCrush API key"""
+        with patch.object(lunarcrush_client, '_get_topic_data', side_effect=APIAuthenticationError("Invalid API key")):
+            with pytest.raises(APIAuthenticationError):
+                await lunarcrush_client.get_market_data("bitcoin")
+    
+    @pytest.mark.asyncio
+    async def test_asset_not_found_lunarcrush(self, lunarcrush_client):
+        """Test handling when asset is not found in LunarCrush"""
+        with patch.object(lunarcrush_client, '_get_topic_data', side_effect=DataNotAvailableError("Asset not found")):
+            with pytest.raises(DataNotAvailableError):
+                await lunarcrush_client.get_market_data("unknown-asset")
+    
+    @pytest.mark.asyncio
+    async def test_caching_behavior_lunarcrush(self, lunarcrush_client, sample_lunarcrush_topic_response):
+        """Test caching behavior for LunarCrush API responses"""
+        with patch.object(lunarcrush_client, '_get_topic_data', return_value=sample_lunarcrush_topic_response) as mock_topic, \
+             patch.object(lunarcrush_client, '_calculate_sentiment_trend', return_value=0.1), \
+             patch.object(lunarcrush_client, '_calculate_influencer_sentiment', return_value=0.65):
+            # First call
+            result1 = await lunarcrush_client.get_market_data("bitcoin")
+            # Second call should use cache
+            result2 = await lunarcrush_client.get_market_data("bitcoin")
+            
+            # Should use caching - only make API requests once
+            assert mock_topic.call_count == 1
+            assert result1 is result2  # Same cached object
+    
+    @pytest.mark.asyncio
+    async def test_get_topic_data_success(self, lunarcrush_client):
+        """Test _get_topic_data method"""
+        expected_response = {"data": {"topic": "bitcoin", "sentiment_absolute": 0.5}}
+        
+        with patch.object(lunarcrush_client, '_make_request', return_value=expected_response):
+            result = await lunarcrush_client._get_topic_data("bitcoin")
+            
+            assert result == expected_response
+    
+    @pytest.mark.asyncio
+    async def test_get_topic_data_error(self, lunarcrush_client):
+        """Test _get_topic_data method with error"""
+        with patch.object(lunarcrush_client, '_make_request', side_effect=MarketDataError("API error")):
+            with pytest.raises(MarketDataError):
+                await lunarcrush_client._get_topic_data("bitcoin")
+    
+    @pytest.mark.asyncio
+    async def test_calculate_sentiment_trend_success(self, lunarcrush_client, sample_lunarcrush_time_series_response):
+        """Test _calculate_sentiment_trend method"""
+        with patch.object(lunarcrush_client, '_make_request', return_value=sample_lunarcrush_time_series_response):
+            result = await lunarcrush_client._calculate_sentiment_trend("bitcoin")
+            
+            assert isinstance(result, float)
+            assert -1.0 <= result <= 1.0
+    
+    @pytest.mark.asyncio
+    async def test_calculate_sentiment_trend_insufficient_data(self, lunarcrush_client):
+        """Test _calculate_sentiment_trend with insufficient data"""
+        insufficient_data = {"data": [{"sentiment": 3.0}]}  # Only one data point
+        
+        with patch.object(lunarcrush_client, '_make_request', return_value=insufficient_data):
+            result = await lunarcrush_client._calculate_sentiment_trend("bitcoin")
+            
+            assert result == 0.0
+    
+    @pytest.mark.asyncio
+    async def test_calculate_sentiment_trend_error(self, lunarcrush_client):
+        """Test _calculate_sentiment_trend with API error"""
+        with patch.object(lunarcrush_client, '_make_request', side_effect=MarketDataError("API error")):
+            result = await lunarcrush_client._calculate_sentiment_trend("bitcoin")
+            
+            assert result == 0.0  # Should return 0.0 on error
+    
+    @pytest.mark.asyncio
+    async def test_calculate_influencer_sentiment_success(self, lunarcrush_client, sample_lunarcrush_posts_response):
+        """Test _calculate_influencer_sentiment method"""
+        with patch.object(lunarcrush_client, '_make_request', return_value=sample_lunarcrush_posts_response):
+            result = await lunarcrush_client._calculate_influencer_sentiment("bitcoin")
+            
+            assert isinstance(result, float)
+            assert 0.0 <= result <= 1.0
+    
+    @pytest.mark.asyncio
+    async def test_calculate_influencer_sentiment_no_posts(self, lunarcrush_client):
+        """Test _calculate_influencer_sentiment with no posts"""
+        empty_posts = {"data": []}
+        
+        with patch.object(lunarcrush_client, '_make_request', return_value=empty_posts):
+            result = await lunarcrush_client._calculate_influencer_sentiment("bitcoin")
+            
+            assert result is None
+    
+    @pytest.mark.asyncio
+    async def test_calculate_influencer_sentiment_error(self, lunarcrush_client):
+        """Test _calculate_influencer_sentiment with API error"""
+        with patch.object(lunarcrush_client, '_make_request', side_effect=MarketDataError("API error")):
+            result = await lunarcrush_client._calculate_influencer_sentiment("bitcoin")
+            
+            assert result is None  # Should return None on error
+    
+    @pytest.mark.asyncio
+    async def test_no_data_available_error(self, lunarcrush_client):
+        """Test handling when no data is available from API"""
+        empty_response = {"data": {}}  # Empty data object
+        
+        with patch.object(lunarcrush_client, '_get_topic_data', return_value=empty_response):
+            with pytest.raises(DataNotAvailableError):
+                await lunarcrush_client.get_market_data("bitcoin")
+    
+    @pytest.mark.asyncio
+    async def test_platform_sentiment_conversion(self, lunarcrush_client):
+        """Test conversion of platform sentiment from 1-5 scale to 0-1 scale"""
+        platform_response = {
+            "data": {
+                "sentiment_absolute": 0.6,
+                "posts_24h": 1000,
+                "platforms": {
+                    "twitter": {"posts": 500, "sentiment": 4.0},  # Should convert to 0.75
+                    "reddit": {"posts": 300, "sentiment": 2.0},   # Should convert to 0.25
+                    "youtube": {"posts": 200, "sentiment": 5.0}   # Should convert to 1.0
+                },
+                "keywords": ["btc", "bitcoin"]
+            }
+        }
+        
+        with patch.object(lunarcrush_client, '_get_topic_data', return_value=platform_response), \
+             patch.object(lunarcrush_client, '_calculate_sentiment_trend', return_value=0.1), \
+             patch.object(lunarcrush_client, '_calculate_influencer_sentiment', return_value=0.65):
+            result = await lunarcrush_client.get_market_data("bitcoin")
+            
+            # Check sentiment conversion
+            assert result.sentiment_breakdown["twitter"] == 0.75
+            assert result.sentiment_breakdown["reddit"] == 0.25
+            assert result.sentiment_breakdown["youtube"] == 1.0
+    
+    @pytest.mark.asyncio
+    async def test_multiple_assets(self, lunarcrush_client):
+        """Test fetching data for different cryptocurrency assets"""
+        assets = ["bitcoin", "ethereum", "solana"]
+        
+        for asset in assets:
+            asset_response = {
+                "data": {
+                    "topic": asset,
+                    "sentiment_absolute": 0.5,
+                    "posts_24h": 1000,
+                    "platforms": {"twitter": {"posts": 500, "sentiment": 3.0}},
+                    "keywords": [asset.lower()]
+                }
+            }
+            
+            with patch.object(lunarcrush_client, '_get_topic_data', return_value=asset_response), \
+                 patch.object(lunarcrush_client, '_calculate_sentiment_trend', return_value=0.0), \
+                 patch.object(lunarcrush_client, '_calculate_influencer_sentiment', return_value=0.5):
+                result = await lunarcrush_client.get_market_data(asset)
+                
+                assert isinstance(result, SocialSentimentData)
+                assert asset.lower() in result.trending_keywords
+    
 
 
 class TestMarketDataErrorHandling:

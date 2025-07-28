@@ -14,6 +14,7 @@ import json
 import pandas as pd
 import numpy as np
 import time
+import os
 
 from src.utils.base import Chain
 
@@ -984,50 +985,161 @@ class OnChainAnalyticsClient(MarketDataClientBase):
 
 
 class SocialSentimentClient(MarketDataClientBase):
-    """Client for social sentiment analysis"""
+    """Client for social sentiment analysis using LunarCrush API"""
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Would integrate with services like:
-        # - LunarCrush API
-        # - Santiment API
-        # - Twitter API
-        # - Reddit API
+    BASE_URL = "https://lunarcrush.com/api4"
+    
+    def __init__(self, api_key: Optional[str] = None, **kwargs):
+        # Get API key from environment if not provided
+        if not api_key:
+            api_key = os.getenv("LUNARCRUSH_API_KEY")
+        
+        super().__init__(api_key=api_key, **kwargs)
+        
+        if not self.api_key:
+            raise APIAuthenticationError("LunarCrush API key is required. Set LUNARCRUSH_API_KEY environment variable or pass api_key parameter.")
+        
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
     
     async def get_market_data(self, asset: str = "bitcoin") -> SocialSentimentData:
-        """Get social sentiment data for specified asset"""
+        """Get social sentiment data for specified asset using LunarCrush API"""
         cache_key = f"social_{asset}"
         cached = self._get_cached_data(cache_key)
         if cached:
             return cached
         
         try:
-            # This is a placeholder implementation
-            # In production, would integrate with sentiment analysis APIs
+            # Get topic data from LunarCrush
+            topic_data = await self._get_topic_data(asset)
             
-            # Simulate social sentiment data
+            # Get sentiment trend from time series
+            sentiment_trend = await self._calculate_sentiment_trend(asset)
+            
+            # Get influencer sentiment from top posts
+            influencer_sentiment = await self._calculate_influencer_sentiment(asset)
+            
+            # Extract data from LunarCrush response
+            data = topic_data.get("data", {})
+            if not data:
+                raise DataNotAvailableError(f"No social sentiment data available for {asset}")
+            
+            # Extract platform data
+            platforms = data.get("platforms", {})
+            platform_mentions = {}
+            sentiment_breakdown = {}
+            
+            for platform, platform_data in platforms.items():
+                platform_mentions[platform] = platform_data.get("posts", 0)
+                platform_sentiment = platform_data.get("sentiment", 3.0)  # 1-5 scale
+                # Convert 1-5 scale to 0-1 scale
+                sentiment_breakdown[platform] = (platform_sentiment - 1) / 4
+            
+            # Extract keywords
+            trending_keywords = data.get("keywords", [])
+            
+            # Create result
             result = SocialSentimentData(
-                social_score=0.65,  # Placeholder positive sentiment
-                mention_volume=5000,  # Placeholder mentions
-                sentiment_trend=0.05,  # Placeholder trending up
-                platform_mentions={
-                    "twitter": 3000,
-                    "reddit": 1500,
-                    "telegram": 500
-                },
-                sentiment_breakdown={
-                    "twitter": 0.7,
-                    "reddit": 0.6,
-                    "telegram": 0.65
-                },
-                trending_keywords=["bullish", "moon", "hodl"],
-                influencer_sentiment=0.75
+                social_score=data.get("sentiment_absolute", 0.5),  # Already 0-1 scale
+                mention_volume=data.get("posts_24h", 0),
+                sentiment_trend=sentiment_trend,
+                platform_mentions=platform_mentions,
+                sentiment_breakdown=sentiment_breakdown,
+                trending_keywords=trending_keywords,
+                influencer_sentiment=influencer_sentiment
             )
             
             self._cache_data(cache_key, result)
-            self.logger.info("Retrieved social sentiment", asset=asset, score=result.social_score)
+            self.logger.info(
+                "Retrieved social sentiment from LunarCrush", 
+                asset=asset, 
+                score=result.social_score,
+                mentions=result.mention_volume
+            )
             return result
             
+        except (APIRateLimitError, APIAuthenticationError, DataNotAvailableError):
+            # Re-raise API-specific errors
+            raise
         except Exception as e:
             self.logger.error("Failed to get social sentiment", asset=asset, error=str(e))
-            raise MarketDataError(f"Failed to get social sentiment: {str(e)}")
+            raise MarketDataError(f"Failed to get social sentiment for {asset}: {str(e)}")
+    
+    async def _get_topic_data(self, asset: str) -> Dict[str, Any]:
+        """Get topic data from LunarCrush API"""
+        try:
+            url = f"{self.BASE_URL}/public/topic/{asset}/v1"
+            return await self._make_request(url, headers=self.headers)
+        except Exception as e:
+            self.logger.error("Failed to get topic data", asset=asset, error=str(e))
+            raise MarketDataError(f"Failed to get topic data for {asset}: {str(e)}")
+    
+    async def _calculate_sentiment_trend(self, asset: str) -> float:
+        """Calculate sentiment trend from time series data"""
+        try:
+            url = f"{self.BASE_URL}/public/topic/{asset}/time-series/v2"
+            params = {"interval": "1h", "data_points": 24}  # Last 24 hours
+            
+            response = await self._make_request(url, params=params, headers=self.headers)
+            data_points = response.get("data", [])
+            
+            if len(data_points) < 2:
+                return 0.0  # No trend available
+            
+            # Compare latest sentiment to average of previous points
+            latest_sentiment = data_points[-1].get("sentiment", 3.0)
+            previous_sentiments = [point.get("sentiment", 3.0) for point in data_points[:-1]]
+            
+            if not previous_sentiments:
+                return 0.0
+            
+            avg_previous = sum(previous_sentiments) / len(previous_sentiments)
+            trend = (latest_sentiment - avg_previous) / 4.0  # Normalize to -1 to 1 range
+            
+            return max(-1.0, min(1.0, trend))  # Clamp to valid range
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate sentiment trend", asset=asset, error=str(e))
+            return 0.0  # Return neutral trend on error
+    
+    async def _calculate_influencer_sentiment(self, asset: str) -> Optional[float]:
+        """Calculate weighted influencer sentiment from top posts"""
+        try:
+            url = f"{self.BASE_URL}/public/topic/{asset}/posts/v1"
+            params = {"limit": 50}  # Get top 50 posts
+            
+            response = await self._make_request(url, params=params, headers=self.headers)
+            posts = response.get("data", [])
+            
+            if not posts:
+                return None
+            
+            # Calculate weighted sentiment based on influence and interactions
+            total_weight = 0
+            weighted_sentiment = 0
+            
+            for post in posts:
+                creator = post.get("creator", {})
+                influence_score = creator.get("influence_score", 0)
+                interactions = post.get("interactions", 0)
+                sentiment = post.get("sentiment", 3)  # 1-5 scale
+                
+                # Weight by both influence and interactions
+                weight = (influence_score * 0.7) + (min(interactions, 10000) / 100 * 0.3)
+                
+                if weight > 0:
+                    # Convert sentiment from 1-5 to 0-1 scale
+                    normalized_sentiment = (sentiment - 1) / 4
+                    weighted_sentiment += normalized_sentiment * weight
+                    total_weight += weight
+            
+            if total_weight == 0:
+                return None
+            
+            return weighted_sentiment / total_weight
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate influencer sentiment", asset=asset, error=str(e))
+            return None
