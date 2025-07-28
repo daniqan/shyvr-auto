@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 import structlog
 
 from src.portfolio.base import Portfolio, Position, PositionStatus
-from src.modes.simulation_mode import VirtualPortfolio
+from src.portfolio.virtual_portfolio import VirtualPortfolio
 
 
 logger = structlog.get_logger()
