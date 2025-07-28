@@ -338,6 +338,52 @@ cache:
   token_data_ttl: 180  # 3 minutes for token data
   ml_predictions_ttl: 600  # 10 minutes for ML predictions
   user_data_ttl: 3600  # 1 hour for user data
+
+# Analysis Validation Configuration
+analysis_validation:
+  # Data quality validation settings
+  data_quality:
+    min_completeness_ratio: 0.8           # Minimum 80% data completeness
+    min_temporal_coverage_hours: 24       # Minimum 24 hours of data coverage
+    max_missing_data_points: 100          # Maximum allowed missing data points
+    consistency_check_enabled: true       # Enable data consistency checks
+    outlier_detection_enabled: true       # Enable outlier detection
+    outlier_threshold_std: 3.0            # Standard deviations for outlier detection
+    
+  # Backtest result validation settings
+  backtest_validation:
+    max_realistic_daily_return: 0.5       # Maximum realistic daily return (50%)
+    min_realistic_daily_return: -0.5      # Minimum realistic daily return (-50%)
+    max_sharpe_ratio: 10.0                # Maximum realistic Sharpe ratio
+    min_trade_count: 1                    # Minimum number of trades required
+    max_trade_count: 10000                # Maximum number of trades allowed
+    win_rate_bounds: [0.0, 1.0]          # Valid win rate range (0-100%)
+    profit_factor_bounds: [0.0, 50.0]    # Valid profit factor range
+    
+  # Computational resource monitoring
+  resource_monitoring:
+    max_memory_usage_mb: 1024             # Maximum memory usage in MB
+    max_cpu_usage_percent: 80.0           # Maximum CPU usage percentage
+    max_execution_time_seconds: 300       # Maximum execution time (5 minutes)
+    memory_leak_detection: true           # Enable memory leak detection
+    check_interval_seconds: 5             # Resource check interval
+    
+  # Analysis quality scoring configuration
+  quality_scoring:
+    # Component weights for overall quality score
+    weights:
+      data_completeness: 0.3              # Data completeness weight (30%)
+      temporal_coverage: 0.2              # Temporal coverage weight (20%)
+      result_consistency: 0.25            # Result consistency weight (25%)
+      statistical_validity: 0.25          # Statistical validity weight (25%)
+    min_acceptable_score: 0.6             # Minimum acceptable quality score (60%)
+    
+  # Validation behavior settings
+  behavior:
+    fail_on_validation_error: false       # Continue on validation errors in analysis mode
+    log_validation_details: true          # Log detailed validation results
+    store_validation_history: true        # Store validation history for analysis
+    alert_on_quality_degradation: true    # Alert when quality scores drop
   
 monitoring:
   # General monitoring settings
