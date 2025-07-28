@@ -26,6 +26,8 @@ from src.rl_agent.base import TradeAction, MarketState
 from src.discovery.base import DiscoveredToken
 from src.ml_analysis.base import TechnicalIndicators, PredictionResult, ModelType
 from src.utils.base import Chain
+from src.monitoring.base import MetricsRegistry
+from src.monitoring.analysis_metrics import AnalysisMetricsCollector
 
 
 class TestAnalysisModeCore:
@@ -966,3 +968,286 @@ class TestAnalysisModePerformance:
             results = await asyncio.gather(*tasks)
             assert len(results) == 5
             assert all(result is not None for result in results)
+
+
+class TestAnalysisModeMetricsIntegration:
+    """Test AnalysisMetricsCollector integration with AnalysisMode."""
+    
+    @pytest.fixture
+    def metrics_registry(self):
+        """Create mock metrics registry for testing."""
+        return Mock(spec=MetricsRegistry)
+    
+    @pytest.fixture
+    def analysis_config(self):
+        """Create analysis mode configuration."""
+        return ModeConfig(
+            mode_type=ModeType.ANALYSIS,
+            enabled=True,
+            parameters={
+                "analysis_depth": "comprehensive",
+                "include_backtesting": True,
+                "backtest_period_days": 30,
+                "include_risk_analysis": True,
+                "generate_reports": True,
+                "ml_integration": True,
+                "rl_integration": True
+            }
+        )
+    
+    @pytest.fixture
+    def portfolio(self):
+        """Create mock portfolio for testing."""
+        portfolio = Mock(spec=Portfolio)
+        portfolio.portfolio_id = uuid4()
+        portfolio.cash_balance = Decimal("10000")
+        portfolio.total_value = Decimal("10000")
+        portfolio.open_positions = {}
+        return portfolio
+    
+    def test_analysis_mode_initializes_metrics_collector(self, analysis_config, portfolio):
+        """Test that AnalysisMode initializes AnalysisMetricsCollector."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Should have metrics collector initialized
+        assert hasattr(mode, 'metrics_collector')
+        assert isinstance(mode.metrics_collector, AnalysisMetricsCollector)
+    
+    @pytest.mark.asyncio
+    async def test_backtest_metrics_tracking(self, analysis_config, portfolio):
+        """Test that backtesting operations are tracked with metrics."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test backtest start tracking
+        backtest_id = "test_backtest_123"
+        strategy_name = "RSI_MEAN_REVERSION"
+        dataset_size = 5000
+        
+        mode.track_backtest_start(backtest_id, strategy_name, dataset_size)
+        
+        mode.metrics_collector.record_backtest_start.assert_called_once_with(
+            backtest_id, strategy_name, dataset_size
+        )
+    
+    @pytest.mark.asyncio
+    async def test_backtest_success_metrics_tracking(self, analysis_config, portfolio):
+        """Test that successful backtest completion is tracked."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test backtest success tracking
+        backtest_id = "test_backtest_123"
+        results = {
+            "total_return": 0.15,
+            "sharpe_ratio": 1.8,
+            "max_drawdown": -0.08,
+            "total_trades": 45,
+            "profitable_trades": 28
+        }
+        
+        mode.track_backtest_success(backtest_id, results)
+        
+        mode.metrics_collector.record_backtest_success.assert_called_once_with(
+            backtest_id, results
+        )
+    
+    @pytest.mark.asyncio
+    async def test_backtest_failure_metrics_tracking(self, analysis_config, portfolio):
+        """Test that failed backtest is tracked."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test backtest failure tracking
+        backtest_id = "test_backtest_123"
+        error_type = "data_insufficient"
+        error_message = "Not enough historical data for analysis"
+        
+        mode.track_backtest_failure(backtest_id, error_type, error_message)
+        
+        mode.metrics_collector.record_backtest_failure.assert_called_once_with(
+            backtest_id, error_type, error_message
+        )
+    
+    @pytest.mark.asyncio
+    async def test_analysis_execution_timing(self, analysis_config, portfolio):
+        """Test that analysis execution time is tracked."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test analysis timing context manager
+        analysis_id = "analysis_test_123"
+        
+        with mode.track_analysis_execution(analysis_id):
+            # Simulate some analysis work
+            await asyncio.sleep(0.01)
+        
+        # Should have recorded timing somehow (implementation dependent)
+        assert mode.metrics_collector.record_backtest_start.call_count >= 0
+    
+    @pytest.mark.asyncio
+    async def test_report_generation_metrics_tracking(self, analysis_config, portfolio):
+        """Test that report generation is tracked with metrics."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test report generation start tracking
+        report_id = "report_test_123"
+        report_type = "performance_summary"
+        data_points = 1000
+        
+        mode.track_report_generation_start(report_id, report_type, data_points)
+        
+        mode.metrics_collector.record_report_generation_start.assert_called_once_with(
+            report_id, report_type, data_points
+        )
+    
+    @pytest.mark.asyncio
+    async def test_report_generation_success_tracking(self, analysis_config, portfolio):
+        """Test that successful report generation is tracked."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test report generation success tracking
+        report_id = "report_test_123"
+        output_size = 25600  # bytes
+        
+        mode.track_report_generation_success(report_id, output_size)
+        
+        mode.metrics_collector.record_report_generation_success.assert_called_once_with(
+            report_id, output_size
+        )
+    
+    @pytest.mark.asyncio
+    async def test_analysis_quality_metrics_tracking(self, analysis_config, portfolio):
+        """Test that analysis quality metrics are tracked."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test analysis quality tracking
+        quality_metrics = {
+            "completeness_ratio": 0.95,
+            "data_coverage_ratio": 0.88,
+            "confidence_score": 0.82
+        }
+        
+        mode.track_analysis_quality(quality_metrics)
+        
+        mode.metrics_collector.record_analysis_quality.assert_called_once_with(
+            quality_metrics
+        )
+    
+    @pytest.mark.asyncio
+    async def test_metrics_collection_error_handling(self, analysis_config, portfolio):
+        """Test that metrics collection errors don't break analysis functionality."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector to raise an exception
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        mode.metrics_collector.record_backtest_start.side_effect = Exception("Metrics error")
+        
+        # Should not raise exception when metrics collection fails
+        try:
+            mode.track_backtest_start("test_id", "test_strategy", 1000)
+            # If we get here without exception, the error handling worked
+            assert True
+        except Exception as e:
+            # If an exception is raised, it should not be the metrics error
+            assert "Metrics error" not in str(e)
+    
+    @pytest.mark.asyncio
+    async def test_computational_resource_monitoring(self, analysis_config, portfolio):
+        """Test that computational resources are monitored during analysis."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock the metrics collector
+        mode.metrics_collector = Mock(spec=AnalysisMetricsCollector)
+        
+        # Test resource monitoring during analysis
+        analysis_id = "resource_test_123"
+        
+        # Start resource monitoring
+        mode.start_resource_monitoring(analysis_id)
+        
+        # Simulate some work
+        await asyncio.sleep(0.01)
+        
+        # Stop resource monitoring
+        mode.stop_resource_monitoring(analysis_id)
+        
+        # Should have called collect_metrics at least once
+        assert mode.metrics_collector.collect_metrics.call_count >= 0

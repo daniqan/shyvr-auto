@@ -24,6 +24,7 @@ from src.dashboard.service import dashboard_service
 from src.monitoring.base import MetricsRegistry
 from src.monitoring.trading_metrics import TradingMetricsCollector
 from src.monitoring.safety_metrics import SafetyMetricsCollector
+from src.monitoring.analysis_metrics import AnalysisMetricsCollector
 
 # Configure structured logging
 structlog.configure(
@@ -57,6 +58,7 @@ app = FastAPI(
 metrics_registry = MetricsRegistry()
 trading_metrics = TradingMetricsCollector(metrics_registry)
 safety_metrics = SafetyMetricsCollector(metrics_registry)
+analysis_metrics = AnalysisMetricsCollector(metrics_registry)
 
 # Include dashboard routes
 app.include_router(dashboard_api.router)
@@ -246,6 +248,7 @@ async def get_metrics():
         # Collect fresh metrics from all collectors
         trading_metrics.collect_metrics()
         safety_metrics.collect_metrics()
+        analysis_metrics.collect_metrics()
         
         # Generate Prometheus format output
         metrics_output = metrics_registry.generate_output()

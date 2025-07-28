@@ -26,6 +26,8 @@ from src.rl_agent.base import TradeAction, MarketState, TradingResult
 from src.discovery.base import DiscoveredToken
 from src.ml_analysis.base import TechnicalIndicators, PredictionResult, ModelType
 from src.utils.base import Chain
+from src.monitoring.base import MetricsRegistry
+from src.monitoring.analysis_metrics import AnalysisMetricsCollector
 
 
 logger = structlog.get_logger()
@@ -144,6 +146,15 @@ class AnalysisMode(BaseAnalysisMode):
         self.backtest_engine = None
         self.risk_analyzer = None
         self._should_never_trade = True
+        
+        # Initialize metrics collection
+        try:
+            self._metrics_registry = MetricsRegistry()
+            self.metrics_collector = AnalysisMetricsCollector(self._metrics_registry)
+            self.logger.info("Initialized AnalysisMetricsCollector successfully")
+        except Exception as e:
+            self.logger.warning("Failed to initialize metrics collector", error=str(e))
+            self.metrics_collector = None
         
         # Data storage
         self._historical_data_cache: Dict[str, List[HistoricalDataPoint]] = {}
@@ -1626,6 +1637,94 @@ class AnalysisMode(BaseAnalysisMode):
         
         return anomalies
 
+    # Metrics tracking methods
+    def track_backtest_start(self, backtest_id: str, strategy_name: str, dataset_size: int) -> None:
+        """Track the start of a backtest operation."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_backtest_start(backtest_id, strategy_name, dataset_size)
+                self.logger.debug("Tracked backtest start", backtest_id=backtest_id, strategy=strategy_name)
+            except Exception as e:
+                self.logger.warning("Failed to track backtest start", error=str(e), backtest_id=backtest_id)
+
+    def track_backtest_success(self, backtest_id: str, results: Dict[str, Any]) -> None:
+        """Track successful backtest completion."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_backtest_success(backtest_id, results)
+                self.logger.debug("Tracked backtest success", backtest_id=backtest_id)
+            except Exception as e:
+                self.logger.warning("Failed to track backtest success", error=str(e), backtest_id=backtest_id)
+
+    def track_backtest_failure(self, backtest_id: str, error_type: str, error_message: str) -> None:
+        """Track failed backtest."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_backtest_failure(backtest_id, error_type, error_message)
+                self.logger.debug("Tracked backtest failure", backtest_id=backtest_id, error_type=error_type)
+            except Exception as e:
+                self.logger.warning("Failed to track backtest failure", error=str(e), backtest_id=backtest_id)
+
+    def track_analysis_execution(self, analysis_id: str):
+        """Context manager for tracking analysis execution timing."""
+        return AnalysisExecutionTracker(self, analysis_id)
+
+    def track_analysis_quality(self, quality_metrics: Dict[str, Any]) -> None:
+        """Track analysis quality metrics."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_analysis_quality(quality_metrics)
+                self.logger.debug("Tracked analysis quality", metrics=quality_metrics)
+            except Exception as e:
+                self.logger.warning("Failed to track analysis quality", error=str(e))
+
+    def track_report_generation_start(self, report_id: str, report_type: str, data_points: int) -> None:
+        """Track the start of report generation."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_report_generation_start(report_id, report_type, data_points)
+                self.logger.debug("Tracked report generation start", report_id=report_id, report_type=report_type)
+            except Exception as e:
+                self.logger.warning("Failed to track report generation start", error=str(e), report_id=report_id)
+
+    def track_report_generation_success(self, report_id: str, output_size: int) -> None:
+        """Track successful report generation."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_report_generation_success(report_id, output_size)
+                self.logger.debug("Tracked report generation success", report_id=report_id, output_size=output_size)
+            except Exception as e:
+                self.logger.warning("Failed to track report generation success", error=str(e), report_id=report_id)
+
+    def track_report_generation_failure(self, report_id: str, error_type: str, error_message: str) -> None:
+        """Track failed report generation."""
+        if self.metrics_collector:
+            try:
+                self.metrics_collector.record_report_generation_failure(report_id, error_type, error_message)
+                self.logger.debug("Tracked report generation failure", report_id=report_id, error_type=error_type)
+            except Exception as e:
+                self.logger.warning("Failed to track report generation failure", error=str(e), report_id=report_id)
+
+    def start_resource_monitoring(self, analysis_id: str) -> None:
+        """Start computational resource monitoring for analysis."""
+        if self.metrics_collector:
+            try:
+                # Start periodic metrics collection for resource monitoring
+                self.metrics_collector.collect_metrics()
+                self.logger.debug("Started resource monitoring", analysis_id=analysis_id)
+            except Exception as e:
+                self.logger.warning("Failed to start resource monitoring", error=str(e), analysis_id=analysis_id)
+
+    def stop_resource_monitoring(self, analysis_id: str) -> None:
+        """Stop computational resource monitoring for analysis."""
+        if self.metrics_collector:
+            try:
+                # Final metrics collection
+                self.metrics_collector.collect_metrics()
+                self.logger.debug("Stopped resource monitoring", analysis_id=analysis_id)
+            except Exception as e:
+                self.logger.warning("Failed to stop resource monitoring", error=str(e), analysis_id=analysis_id)
+
 
 # Helper classes for analysis components
 class AnalysisEngine:
@@ -2943,3 +3042,39 @@ class RiskAnalyzer:
         )
         
         return anomalies
+
+
+class AnalysisExecutionTracker:
+    """Context manager for tracking analysis execution timing."""
+    
+    def __init__(self, analysis_mode: 'AnalysisMode', analysis_id: str):
+        self.analysis_mode = analysis_mode
+        self.analysis_id = analysis_id
+        self.start_time = None
+    
+    def __enter__(self):
+        self.start_time = datetime.now()
+        if self.analysis_mode.metrics_collector:
+            try:
+                self.analysis_mode.start_resource_monitoring(self.analysis_id)
+            except Exception as e:
+                self.analysis_mode.logger.warning("Failed to start execution tracking", error=str(e))
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.start_time and self.analysis_mode.metrics_collector:
+            try:
+                execution_time = (datetime.now() - self.start_time).total_seconds()
+                
+                # Track execution time via quality metrics
+                quality_metrics = {
+                    "execution_time_seconds": execution_time,
+                    "success": exc_type is None,
+                    "analysis_id": self.analysis_id
+                }
+                
+                self.analysis_mode.track_analysis_quality(quality_metrics)
+                self.analysis_mode.stop_resource_monitoring(self.analysis_id)
+                
+            except Exception as e:
+                self.analysis_mode.logger.warning("Failed to complete execution tracking", error=str(e))
