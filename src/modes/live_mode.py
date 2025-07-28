@@ -43,6 +43,7 @@ from src.modes.continuous_learning_loop import (
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase, DEXError, DEXConnectionError
 from src.integration.ml_rl_bridge import MLRLBridge, MLRLConfig
+from src.xai.trading_integration import TradingExplanationManager
 
 
 logger = structlog.get_logger()
@@ -1541,10 +1542,26 @@ class LiveMode(ModeBase):
         self.enable_real_trading = self.live_config.enable_real_trading
         self.last_safety_check = datetime.now()
         
+        # XAI (Explainable AI) integration setup
+        self.enable_xai_explanations = params.get("enable_xai_explanations", True)
+        self.xai_explanation_manager = None
+        
+        if self.enable_xai_explanations:
+            # Initialize XAI explanation manager
+            self.xai_explanation_manager = TradingExplanationManager(
+                cache_size=params.get("xai_cache_size", 1000),
+                explanation_timeout=params.get("xai_explanation_timeout", 3.0)  # Shorter timeout for live trading
+            )
+            
+            self.logger.info("XAI explanation system enabled for live trading",
+                           cache_size=params.get("xai_cache_size", 1000),
+                           explanation_timeout=params.get("xai_explanation_timeout", 3.0))
+        
         self.logger.info("Live mode initialized",
                         enable_real_trading=self.enable_real_trading,
                         emergency_stop_enabled=self.live_config.enable_emergency_stop,
-                        dex_count=len(self.live_config.dex_preference_order))
+                        dex_count=len(self.live_config.dex_preference_order),
+                        xai_enabled=self.enable_xai_explanations)
     
     async def initialize(self) -> None:
         """Initialize live mode components and safety systems."""
@@ -1812,8 +1829,8 @@ class LiveMode(ModeBase):
             if not self.session_manager.can_trade_now():
                 return None
             
-            # Make trading decision
-            action = await self._make_trading_decision(market_state)
+            # Make trading decision with XAI explanation
+            action, explanation = await self._make_trading_decision_with_explanation(market_state)
             
             # Enhanced pre-trade safety validation
             if action != TradeAction.HOLD:
@@ -1839,7 +1856,7 @@ class LiveMode(ModeBase):
                         self.logger.warning("Failed to capture pre-trade experience", error=str(e))
                 
                 # Execute live trade
-                trading_result = await self._execute_live_trade(action, market_state, experience_id)
+                trading_result = await self._execute_live_trade(action, market_state, experience_id, explanation)
                 
                 if trading_result and trading_result.success:
                     # Record successful trade
@@ -2211,8 +2228,131 @@ class LiveMode(ModeBase):
         
         return TradeAction.HOLD
     
+    async def _make_trading_decision_with_explanation(self, market_state: MarketState) -> Tuple[TradeAction, Optional[Any]]:
+        """Make trading decision with XAI explanation generation."""
+        # Generate the trading decision
+        action = await self._make_trading_decision(market_state)
+        explanation = None
+        
+        # Generate explanation if XAI is enabled and decision is not HOLD
+        if (self.xai_explanation_manager and 
+            self.enable_xai_explanations and 
+            action != TradeAction.HOLD):
+            
+            try:
+                # Create feature data from market state
+                feature_data = self._extract_features_from_market_state(market_state)
+                feature_names = [
+                    'price_usd', 'rsi', 'volume_24h', 'price_change_24h',
+                    'market_cap', 'volatility', 'liquidity_score'
+                ]
+                
+                # Use the actual ML-RL model if available, otherwise use fallback
+                model = self.ml_rl_bridge.model if (self.ml_rl_bridge and hasattr(self.ml_rl_bridge, 'model')) else self._create_mock_decision_model()
+                
+                # Generate explanation
+                decision_id = f"live_{datetime.now().timestamp()}_{market_state.token.address}"
+                explanation = await self.xai_explanation_manager.explain_trading_decision(
+                    decision_id=decision_id,
+                    model=model,
+                    feature_data=feature_data,
+                    feature_names=feature_names,
+                    decision_type=action.value.lower(),
+                    symbol=market_state.token.symbol,
+                    model_type='ml_rl_bridge' if self.ml_rl_bridge else 'rule_based',
+                    metadata={
+                        'live_mode': True,
+                        'real_trading': self.enable_real_trading,
+                        'market_state_timestamp': market_state.timestamp.isoformat() if market_state.timestamp else None,
+                        'rsi': market_state.rsi,
+                        'price_usd': market_state.price_usd,
+                        'ml_rl_enabled': self.live_config.enable_ml_rl_integration
+                    }
+                )
+                
+                if explanation:
+                    self.logger.info("Generated XAI explanation for live trading decision",
+                                   decision_id=decision_id,
+                                   action=action.value,
+                                   symbol=market_state.token.symbol,
+                                   explanation_type=explanation.explanation_data.explanation_type,
+                                   real_trading=self.enable_real_trading)
+                
+            except Exception as e:
+                # XAI failures should not break live trading - graceful degradation
+                self.logger.warning("Failed to generate XAI explanation in live mode", 
+                                  error=str(e), 
+                                  action=action.value,
+                                  symbol=market_state.token.symbol)
+                explanation = None
+        
+        return action, explanation
+    
+    def _extract_features_from_market_state(self, market_state: MarketState) -> List[float]:
+        """Extract numerical features from market state for XAI."""
+        return [
+            float(market_state.price_usd or 0),
+            float(market_state.rsi or 50),  # Default RSI to neutral
+            float(market_state.volume_24h or 0),
+            float(market_state.price_change_24h or 0),
+            float(getattr(market_state, 'market_cap', 0)),
+            float(getattr(market_state, 'volatility', 0)),
+            float(getattr(market_state, 'liquidity_score', 0.5))
+        ]
+    
+    def _create_mock_decision_model(self):
+        """Create a mock model for explanation generation when ML-RL bridge is not available."""
+        class MockLiveModel:
+            def predict(self, features):
+                """Mock prediction based on RSI strategy for live trading."""
+                if len(features) > 1:  # features[1] is RSI
+                    rsi = features[1]
+                    if rsi < 25:
+                        return [0.8]  # STRONG_BUY probability
+                    elif rsi < 35:
+                        return [0.6]  # BUY probability
+                    elif rsi > 75:
+                        return [0.2]  # STRONG_SELL probability (low buy probability)
+                    elif rsi > 65:
+                        return [0.3]  # SELL probability
+                return [0.5]  # HOLD probability
+        
+        return MockLiveModel()
+    
+    async def _capture_trade_experience(self, experience_id: str, trading_result: TradingResult, 
+                                       market_state: MarketState, explanation: Optional[Any] = None) -> None:
+        """Capture trading experience for RL training with XAI explanation."""
+        if self.experience_collector:
+            # Add explanation data to trading result metadata if available
+            if explanation and hasattr(trading_result, 'metadata'):
+                if not hasattr(trading_result, 'metadata') or trading_result.metadata is None:
+                    trading_result.metadata = {}
+                
+                # Add explanation summary to metadata
+                trading_result.metadata.update({
+                    'xai_explanation_available': True,
+                    'explanation_decision_id': explanation.decision_id,
+                    'explanation_confidence': explanation.confidence,
+                    'explanation_type': explanation.explanation_data.explanation_type,
+                    'feature_importance_summary': dict(list(explanation.explanation_data.feature_importance.items())[:5]),  # Top 5 features
+                    'live_mode': True,
+                    'real_trading': self.enable_real_trading
+                })
+            elif explanation is None:
+                if not hasattr(trading_result, 'metadata') or trading_result.metadata is None:
+                    trading_result.metadata = {}
+                trading_result.metadata.update({
+                    'xai_explanation_available': False,
+                    'live_mode': True,
+                    'real_trading': self.enable_real_trading
+                })
+            
+            await self.experience_collector.capture_post_trade_result(
+                experience_id, trading_result, market_state
+            )
+    
     async def _execute_live_trade(self, action: TradeAction, market_state: MarketState, 
-                                 experience_id: Optional[str] = None) -> Optional[TradingResult]:
+                                 experience_id: Optional[str] = None, explanation: Optional[Any] = None) -> Optional[TradingResult]:
         """Execute live trade through DEX with comprehensive error handling."""
         if not self.trading_executor:
             return None
@@ -2308,9 +2448,7 @@ class LiveMode(ModeBase):
             # Capture post-trade experience if enabled
             if (experience_id and self.experience_collector and trading_result):
                 try:
-                    await self.experience_collector.capture_post_trade_result(
-                        experience_id, trading_result, market_state
-                    )
+                    await self._capture_trade_experience(experience_id, trading_result, market_state, explanation)
                 except Exception as e:
                     self.logger.warning("Failed to capture post-trade experience", error=str(e))
             
@@ -2396,6 +2534,63 @@ class LiveMode(ModeBase):
             "is_emergency_stopped": self.emergency_system.is_emergency_stopped if self.emergency_system else False,
             "enable_real_trading": self.enable_real_trading
         }
+    
+    async def get_xai_explanation(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        """Get XAI explanation by decision ID for dashboard/monitoring."""
+        if not self.xai_explanation_manager:
+            return None
+        
+        explanation = self.xai_explanation_manager.get_explanation(decision_id)
+        if explanation:
+            return self.xai_explanation_manager.to_dict(explanation)
+        return None
+    
+    async def get_recent_explanations(self, symbol: Optional[str] = None, 
+                                    decision_type: Optional[str] = None, 
+                                    limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recent XAI explanations for dashboard/monitoring."""
+        if not self.xai_explanation_manager:
+            return []
+        
+        explanations = self.xai_explanation_manager.get_recent_explanations(
+            symbol=symbol, decision_type=decision_type, limit=limit
+        )
+        return [self.xai_explanation_manager.to_dict(exp) for exp in explanations]
+    
+    async def get_feature_importance_summary(self, symbol: Optional[str] = None, 
+                                           hours_back: int = 24) -> Dict[str, float]:
+        """Get aggregated feature importance for dashboard/monitoring."""
+        if not self.xai_explanation_manager:
+            return {}
+        
+        return self.xai_explanation_manager.get_feature_importance_summary(
+            symbol=symbol, hours_back=hours_back
+        )
+    
+    async def get_xai_cache_stats(self) -> Dict[str, Any]:
+        """Get XAI system cache statistics."""
+        if not self.xai_explanation_manager:
+            return {"xai_disabled": True}
+        
+        stats = self.xai_explanation_manager.get_cache_stats()
+        stats.update({
+            "live_mode": True,
+            "real_trading": self.enable_real_trading
+        })
+        return stats
+    
+    async def clear_xai_cache(self) -> None:
+        """Clear XAI explanation cache."""
+        if self.xai_explanation_manager:
+            self.xai_explanation_manager.clear_cache()
+            self.logger.info("XAI explanation cache cleared in live mode")
+    
+    async def set_xai_enabled(self, enabled: bool) -> None:
+        """Enable or disable XAI explanation generation."""
+        self.enable_xai_explanations = enabled
+        if self.xai_explanation_manager:
+            self.xai_explanation_manager.set_enabled(enabled)
+            self.logger.info(f"XAI explanations {'enabled' if enabled else 'disabled'} in live mode")
     
     async def _initialize_dex_clients(self) -> None:
         """Initialize DEX clients for live trading."""
