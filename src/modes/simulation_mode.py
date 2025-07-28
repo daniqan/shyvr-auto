@@ -26,6 +26,8 @@ from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLe
 from src.modes.simulation_safety import (
     SimulationSafetyManager, VirtualPortfolioProtector, SimulationSafetyConfig
 )
+from src.monitoring.base import MetricsRegistry
+from src.monitoring.simulation_metrics import SimulationMetricsCollector, SimulationDashboard, SimulationAlertManager
 from src.rl_agent.dqn_agent import DQNTradingAgent
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
@@ -63,6 +65,14 @@ class SimulationConfig:
     enable_virtual_portfolio_protection: bool = True
     enable_simulation_circuit_breakers: bool = True
     simulation_risk_monitoring_interval: float = 2.0
+    
+    # Monitoring configuration
+    enable_prometheus_metrics: bool = True
+    enable_simulation_dashboards: bool = True
+    enable_performance_alerts: bool = True
+    metrics_collection_interval: float = 1.0
+    enable_detailed_metrics: bool = True
+    enable_real_time_monitoring: bool = True
 
 
 @dataclass
@@ -829,6 +839,110 @@ class SimulationMode(ModeBase):
                            max_drawdown_pct=self.simulation_safety_config.max_drawdown_pct,
                            max_position_size_pct=self.simulation_safety_config.max_position_size_pct,
                            experimental_strategies=self.simulation_safety_config.enable_experimental_strategies)
+        
+        # Monitoring and metrics setup
+        self.enable_prometheus_metrics = params.get("enable_prometheus_metrics", True)
+        self.enable_simulation_dashboards = params.get("enable_simulation_dashboards", True)
+        self.enable_performance_alerts = params.get("enable_performance_alerts", True)
+        
+        self.metrics_registry = None
+        self.simulation_metrics_collector = None
+        self.simulation_dashboard = None
+        self.simulation_alert_manager = None
+        
+        if self.enable_prometheus_metrics:
+            # Initialize metrics registry
+            self.metrics_registry = MetricsRegistry()
+            
+            # Initialize simulation metrics collector
+            self.simulation_metrics_collector = SimulationMetricsCollector(
+                registry=self.metrics_registry,
+                simulation_mode=self
+            )
+            
+            # Initialize dashboard if enabled
+            if self.enable_simulation_dashboards:
+                dashboard_config = {
+                    'dashboard_name': 'Simulation Trading Performance',
+                    'refresh_interval': params.get("dashboard_refresh_interval", 5),
+                    'panels': [
+                        {
+                            'type': 'portfolio_value_chart',
+                            'title': 'Virtual Portfolio Value Over Time',
+                            'metrics': ['simulation_portfolio_value'],
+                            'time_range': '1h'
+                        },
+                        {
+                            'type': 'pnl_distribution',
+                            'title': 'P&L Distribution', 
+                            'metrics': ['simulation_realized_pnl', 'simulation_unrealized_pnl'],
+                            'chart_type': 'bar'
+                        },
+                        {
+                            'type': 'trade_performance',
+                            'title': 'Trade Performance Metrics',
+                            'metrics': ['simulation_win_rate', 'simulation_sharpe_ratio'],
+                            'display_type': 'gauge'
+                        },
+                        {
+                            'type': 'risk_monitoring',
+                            'title': 'Risk Metrics',
+                            'metrics': ['simulation_drawdown', 'simulation_volatility'],
+                            'alert_thresholds': {'drawdown': 0.15, 'volatility': 0.25}
+                        }
+                    ],
+                    'alerts': [
+                        {
+                            'name': 'High Drawdown Alert',
+                            'condition': 'simulation_drawdown > 0.15',
+                            'severity': 'warning'
+                        },
+                        {
+                            'name': 'Poor Win Rate Alert',
+                            'condition': 'simulation_win_rate < 0.4',
+                            'severity': 'warning'
+                        }
+                    ]
+                }
+                
+                self.simulation_dashboard = SimulationDashboard(dashboard_config)
+            
+            # Initialize alert manager if enabled
+            if self.enable_performance_alerts:
+                alert_config = {
+                    'alerts': [
+                        {
+                            'name': 'simulation_high_drawdown',
+                            'condition': 'simulation_drawdown > 0.15',
+                            'severity': 'warning',
+                            'message': 'Simulation drawdown exceeds 15%',
+                            'cooldown_minutes': 10
+                        },
+                        {
+                            'name': 'simulation_poor_performance',
+                            'condition': 'simulation_win_rate < 0.4 AND simulation_trades_total > 10',
+                            'severity': 'warning',
+                            'message': 'Simulation win rate below 40%',
+                            'cooldown_minutes': 30
+                        },
+                        {
+                            'name': 'simulation_execution_errors',
+                            'condition': 'simulation_execution_errors > 5',
+                            'severity': 'critical',
+                            'message': 'Multiple simulation execution errors detected',
+                            'cooldown_minutes': 5
+                        }
+                    ],
+                    'notification_channels': ['console', 'metrics'],
+                    'enable_alert_escalation': True
+                }
+                
+                self.simulation_alert_manager = SimulationAlertManager(alert_config)
+            
+            self.logger.info("Simulation monitoring systems enabled",
+                           prometheus_metrics=self.enable_prometheus_metrics,
+                           dashboards=self.enable_simulation_dashboards,
+                           alerts=self.enable_performance_alerts)
     
     async def initialize(self) -> None:
         """Initialize simulation mode resources."""
@@ -962,6 +1076,13 @@ class SimulationMode(ModeBase):
             
             # Update simulation metrics
             self._update_simulation_metrics()
+            
+            # Update real-time monitoring metrics
+            if self.simulation_metrics_collector:
+                try:
+                    await self.simulation_metrics_collector.update_real_time_metrics()
+                except Exception as e:
+                    self.logger.warning("Failed to update real-time metrics", error=str(e))
             
             return action
             
@@ -1219,6 +1340,63 @@ class SimulationMode(ModeBase):
         
         return await self.simulation_safety_manager.get_simulation_risk_metrics()
     
+    async def get_dashboard_metrics(self) -> Dict[str, Any]:
+        """Get dashboard-ready metrics for simulation monitoring."""
+        if not self.simulation_dashboard:
+            return {"dashboard_disabled": True}
+        
+        try:
+            # Prepare current metrics for dashboard
+            current_metrics = {
+                'current_portfolio_value': float(self.virtual_portfolio.equity),
+                'total_pnl': float(self.virtual_portfolio.equity - self.virtual_portfolio.initial_balance),
+                'unrealized_pnl': float(self.virtual_portfolio.total_unrealized_pnl),
+                'win_rate': float(self.simulation_metrics.win_rate),
+                'total_trades': self.simulation_metrics.total_trades,
+                'drawdown': self._calculate_current_drawdown(),
+                'sharpe_ratio': float(self.simulation_metrics.sharpe_ratio),
+                'active_positions': len([p for p in self.virtual_portfolio.positions.values() if p.status.value == "OPEN"])
+            }
+            
+            # Add performance charts data
+            performance_charts = {
+                'portfolio_value_history': [float(self.virtual_portfolio.equity)],  # Would track over time
+                'pnl_history': [float(self.virtual_portfolio.total_unrealized_pnl)],
+                'trade_distribution': {
+                    'wins': max(0, int(self.simulation_metrics.total_trades * float(self.simulation_metrics.win_rate))),
+                    'losses': max(0, self.simulation_metrics.total_trades - int(self.simulation_metrics.total_trades * float(self.simulation_metrics.win_rate)))
+                }
+            }
+            
+            # Add risk metrics
+            risk_metrics = {
+                'current_drawdown_pct': self._calculate_current_drawdown(),
+                'max_position_risk_pct': self._get_max_position_risk(),
+                'portfolio_volatility': 0.15,  # Placeholder
+                'risk_score': self._calculate_risk_score()
+            }
+            
+            # Add trading statistics
+            trade_statistics = {
+                'total_volume': float(self.simulation_metrics.total_trades * 1000),  # Placeholder calculation
+                'avg_trade_size': 1000.0,  # Placeholder
+                'avg_holding_period': "2.5 hours",  # Placeholder
+                'success_rate': float(self.simulation_metrics.win_rate)
+            }
+            
+            return {
+                'current_portfolio_value': current_metrics['current_portfolio_value'],
+                'total_pnl': current_metrics['total_pnl'],
+                'trade_statistics': trade_statistics,
+                'risk_metrics': risk_metrics,
+                'performance_charts': performance_charts,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error("Error generating dashboard metrics", error=str(e))
+            return {"error": str(e)}
+    
     def _update_simulation_metrics(self) -> None:
         """Update simulation performance metrics."""
         self.simulation_metrics.virtual_balance = self.virtual_portfolio.equity
@@ -1234,6 +1412,67 @@ class SimulationMode(ModeBase):
         # This would initialize real DEX clients in production
         # For now, create mock clients
         self.logger.info("DEX clients would be initialized here")
+    
+    def _calculate_current_drawdown(self) -> float:
+        """Calculate current portfolio drawdown percentage."""
+        try:
+            if self.virtual_portfolio.peak_value <= 0:
+                return 0.0
+            
+            current_value = self.virtual_portfolio.equity
+            peak_value = self.virtual_portfolio.peak_value
+            
+            drawdown = ((peak_value - current_value) / peak_value) * 100
+            return float(drawdown)
+            
+        except Exception:
+            return 0.0
+    
+    def _get_max_position_risk(self) -> float:
+        """Get maximum position risk percentage."""
+        try:
+            if not self.virtual_portfolio.positions:
+                return 0.0
+            
+            portfolio_value = float(self.virtual_portfolio.equity)
+            if portfolio_value <= 0:
+                return 0.0
+            
+            max_position_value = 0.0
+            for position in self.virtual_portfolio.positions.values():
+                if position.status.value == "OPEN":
+                    position_value = float(position.quantity * position.current_price)
+                    max_position_value = max(max_position_value, position_value)
+            
+            return (max_position_value / portfolio_value) * 100
+            
+        except Exception:
+            return 0.0
+    
+    def _calculate_risk_score(self) -> float:
+        """Calculate overall portfolio risk score."""
+        try:
+            risk_score = 0.0
+            
+            # Add drawdown risk
+            drawdown = self._calculate_current_drawdown()
+            risk_score += drawdown * 2  # 2 points per % drawdown
+            
+            # Add concentration risk
+            max_position_risk = self._get_max_position_risk()
+            if max_position_risk > 20:  # 20% concentration threshold
+                risk_score += (max_position_risk - 20) * 1.5
+            
+            # Add active position count risk
+            active_positions = len([p for p in self.virtual_portfolio.positions.values() if p.status.value == "OPEN"])
+            max_positions = 15  # Simulation limit
+            if active_positions > max_positions * 0.8:  # 80% of limit
+                risk_score += (active_positions - max_positions * 0.8) * 5
+            
+            return min(100.0, max(0.0, risk_score))
+            
+        except Exception:
+            return 50.0  # Default moderate risk
         
     def get_result(self):
         """Get simulation mode result with enhanced metrics."""
