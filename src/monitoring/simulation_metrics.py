@@ -14,12 +14,14 @@ Key Features:
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from decimal import Decimal
 import structlog
 
 from src.monitoring.base import MetricsCollector, MetricsRegistry
-from src.modes.simulation_mode import SimulationMode
+
+if TYPE_CHECKING:
+    from src.modes.simulation_mode import SimulationMode
 
 
 logger = structlog.get_logger()
@@ -37,7 +39,7 @@ class SimulationMetricsCollector(MetricsCollector):
     - Simulation accuracy metrics
     """
     
-    def __init__(self, registry: MetricsRegistry, simulation_mode: SimulationMode):
+    def __init__(self, registry: MetricsRegistry, simulation_mode: "SimulationMode"):
         """
         Initialize simulation metrics collector.
         

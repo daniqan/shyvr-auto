@@ -30,6 +30,7 @@ from src.modes.simulation_safety import (
 from src.monitoring.base import MetricsRegistry
 from src.monitoring.simulation_metrics import SimulationMetricsCollector, SimulationDashboard, SimulationAlertManager
 from src.rl_agent.dqn_agent import DQNTradingAgent
+from src.rl_agent.base import AgentConfig, ModelType
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
 
@@ -622,13 +623,15 @@ class SimulationMode(ModeBase):
             )
             
             # Initialize DQN agent for learning
-            self.dqn_agent = DQNTradingAgent(
-                state_size=20,  # Market state features
-                action_size=5,  # Number of possible actions
+            agent_config = AgentConfig(
+                model_type=ModelType.DQN,
                 learning_rate=0.001,
-                memory_size=10000,
-                batch_size=32
+                batch_size=32,
+                replay_buffer_size=10000,
+                hidden_size=256,
+                num_layers=3
             )
+            self.dqn_agent = DQNTradingAgent(config=agent_config)
             
             # Initialize continuous learning engine if we have required components
             if self.experience_collector and self.replay_buffer:
