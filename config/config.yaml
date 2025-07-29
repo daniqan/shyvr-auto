@@ -54,6 +54,12 @@ apis:
     base_url: "https://api.x.com"
     rate_limit: 300  # requests per 15 minutes (Basic tier)
     timeout: 30
+    
+  lunarcrush:
+    api_key: "${LUNARCRUSH_API_KEY}"
+    base_url: "https://lunarcrush.com/api4"
+    rate_limit: 100  # requests per minute (depends on plan)
+    timeout: 30
 
 telegram:
   token: "${TELEGRAM_TOKEN}"
