@@ -1,0 +1,64 @@
+{
+  "dashboard": {
+    "title": "RL Experience Storage Production Monitoring",
+    "tags": ["rl", "database", "production"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "title": "Cloud SQL CPU Usage",
+        "type": "graph",
+        "targets": [{
+          "expr": "cloudsql_googleapis_com_database_cpu_utilization{database_id=\"shvyr-ai-bots:shyvr-rlte-db-prod\"}",
+          "legendFormat": "CPU %"
+        }],
+        "yAxes": [{
+          "label": "Percentage",
+          "min": 0,
+          "max": 100
+        }]
+      },
+      {
+        "title": "Cloud SQL Memory Usage", 
+        "type": "graph",
+        "targets": [{
+          "expr": "cloudsql_googleapis_com_database_memory_utilization{database_id=\"shvyr-ai-bots:shyvr-rlte-db-prod\"}",
+          "legendFormat": "Memory %"
+        }],
+        "yAxes": [{
+          "label": "Percentage",
+          "min": 0,
+          "max": 100
+        }]
+      },
+      {
+        "title": "Database Connections",
+        "type": "graph", 
+        "targets": [{
+          "expr": "cloudsql_googleapis_com_database_network_connections{database_id=\"shvyr-ai-bots:shyvr-rlte-db-prod\"}",
+          "legendFormat": "Connections"
+        }],
+        "yAxes": [{
+          "label": "Count",
+          "min": 0
+        }]
+      },
+      {
+        "title": "RL Database Errors",
+        "type": "graph",
+        "targets": [{
+          "expr": "logging_googleapis_com_user_rl_database_errors",
+          "legendFormat": "Errors/min"
+        }],
+        "yAxes": [{
+          "label": "Errors per minute",
+          "min": 0
+        }]
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}
