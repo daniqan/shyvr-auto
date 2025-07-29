@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 import structlog
 import csv
 import io
@@ -31,7 +31,8 @@ logger = structlog.get_logger()
 class TradingModeRequest(BaseModel):
     mode: str
     
-    @validator('mode')
+    @field_validator('mode')
+    @classmethod
     def validate_mode(cls, v):
         if v not in ['analysis', 'simulation', 'live']:
             raise ValueError('Mode must be one of: analysis, simulation, live')
@@ -59,13 +60,15 @@ class ManualTradeRequest(BaseModel):
     order_type: str = "market"  # "market" or "limit"
     price: Optional[float] = None
     
-    @validator('side')
+    @field_validator('side')
+    @classmethod
     def validate_side(cls, v):
         if v not in ['buy', 'sell']:
             raise ValueError('Side must be either "buy" or "sell"')
         return v
     
-    @validator('order_type') 
+    @field_validator('order_type')
+    @classmethod
     def validate_order_type(cls, v):
         if v not in ['market', 'limit']:
             raise ValueError('Order type must be either "market" or "limit"')
@@ -77,7 +80,8 @@ class SignalOverrideRequest(BaseModel):
     action: str  # "override", "pause", "resume"
     reason: Optional[str] = None
     
-    @validator('action')
+    @field_validator('action')
+    @classmethod
     def validate_action(cls, v):
         if v not in ['override', 'pause', 'resume']:
             raise ValueError('Action must be one of: override, pause, resume')

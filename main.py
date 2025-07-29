@@ -10,6 +10,7 @@ from typing import Any
 
 import structlog
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -113,29 +114,10 @@ async def get_rl_agent_health() -> dict[str, Any]:
         }
 
 
-# FastAPI application
-app = FastAPI(
-    title="Shyvr RLTE",
-    description="AI-augmented cryptocurrency trading bot with reinforcement learning",
-    version="0.1.0"
-)
-
-# Initialize monitoring system
-metrics_registry = MetricsRegistry()
-trading_metrics = TradingMetricsCollector(metrics_registry)
-safety_metrics = SafetyMetricsCollector(metrics_registry)
-analysis_metrics = AnalysisMetricsCollector(metrics_registry)
-
-# Include dashboard routes
-app.include_router(dashboard_api.router)
-
-# Mount static files for dashboard
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialize application on startup"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
     try:
         # Initialize configuration
         config = init_config()
@@ -156,16 +138,38 @@ async def startup_event() -> None:
     except Exception as e:
         logger.error("Startup error", error=str(e))
         raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """Cleanup on application shutdown"""
+    
+    yield
+    
+    # Shutdown
     logger.info("Shyvr RLTE shutting down")
 
     # Stop dashboard service
     await dashboard_service.stop()
     logger.info("Dashboard service stopped")
+
+
+# FastAPI application
+app = FastAPI(
+    title="Shyvr RLTE",
+    description="AI-augmented cryptocurrency trading bot with reinforcement learning",
+    version="0.1.0",
+    lifespan=lifespan
+)
+
+# Initialize monitoring system
+metrics_registry = MetricsRegistry()
+trading_metrics = TradingMetricsCollector(metrics_registry)
+safety_metrics = SafetyMetricsCollector(metrics_registry)
+analysis_metrics = AnalysisMetricsCollector(metrics_registry)
+
+# Include dashboard routes
+app.include_router(dashboard_api.router)
+
+# Mount static files for dashboard
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
 
 
 @app.get("/")

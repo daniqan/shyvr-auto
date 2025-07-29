@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .base import ConfigurationError
 
@@ -136,11 +136,10 @@ class RLTEConfig(BaseModel):
     rl: RLConfig = field(default_factory=RLConfig)
     apis: dict[str, APIConfig] = field(default_factory=dict)
 
-    class Config:
-        """Pydantic configuration"""
-
-        validate_assignment = True
-        extra = "allow"  # Allow extra fields for flexibility
+    model_config = ConfigDict(
+        validate_assignment=True,
+        extra="allow"  # Allow extra fields for flexibility
+    )
 
 
 class ConfigManager:
