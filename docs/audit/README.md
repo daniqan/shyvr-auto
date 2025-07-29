@@ -23,7 +23,7 @@ This directory contains comprehensive audit reports that provide detailed analys
 - Component integration validation
 - Performance benchmarking results (all targets exceeded)
 - Security assessment and compliance
-- Code quality and testing coverage (90% overall)
+- Code quality and testing coverage (30% overall, 95%+ on core components)
 - Operational readiness evaluation
 
 ### 🏥 [System Health Report](./SYSTEM_HEALTH_REPORT.md)
@@ -118,7 +118,7 @@ This directory contains comprehensive audit reports that provide detailed analys
 **Code quality, testing, and development process evaluation**
 
 **Quality Metrics:**
-- **Test Coverage**: 90% overall coverage with 900+ tests (target: 80%)
+- **Test Coverage**: 30% overall coverage with 1,621 tests (95%+ on core components)
 - **XAI System**: 90+ tests covering 3 explainer types with comprehensive coverage
 - **Enhanced Dashboard**: 100+ tests covering 29 API endpoints with complete coverage
 - **Code Quality**: Automated quality gates and reviews
