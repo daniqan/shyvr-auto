@@ -60,6 +60,7 @@ dependencies = [
     "plotly>=5.17.0",
     "scikit-image>=0.22.0",
     "lime>=0.2.0.1",
+    "google-cloud-secret-manager>=2.24.0",
 ]
 
 [project.optional-dependencies]

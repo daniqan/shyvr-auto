@@ -36,58 +36,184 @@ docker push "$IMAGE_NAME:$TAG"
 docker push "$IMAGE_NAME:$TIMESTAMP"
 
 # Configure secrets from Secret Manager
-echo -e "${YELLOW}🔐 Configuring secrets from Google Cloud Secret Manager...${NC}"
-echo -e "${BLUE}💡 Make sure secrets are created in Secret Manager first:${NC}"
-echo -e "   gcloud secrets create TELEGRAM_TOKEN --data-file=<(echo 'your_token')"
+echo -e "${YELLOW}🔐 Configuring comprehensive secret integration...${NC}"
+echo -e "${BLUE}💡 To set up secrets, run: ./deploy/setup_secrets.sh${NC}"
 
-# Define required secrets for RLTE
+# Define core system secrets (required for basic operation)
 REQUIRED_SECRETS=("TELEGRAM_TOKEN" "WEBHOOK_SECRET" "DB_PASSWORD" "DATABASE_URL")
 
-# Define optional secrets for RLTE (APIs, ML models, etc.)
-OPTIONAL_SECRETS=(
-    # Social/Market APIs
-    "X_BEARER_TOKEN" 
-    "X_API_KEY" 
-    "X_API_SECRET"
-    
-    # Blockchain APIs (Note: Base now uses Etherscan API v2, same key as Ethereum)
-    "ETHERSCAN_API_KEY" 
-    "HELIUS_API_KEY" 
-    "BIRDEYE_API_KEY"
-    
-    # AI/ML APIs
-    "XAI_API_KEY" 
-    "OPENAI_API_KEY"
-    "AGENT_API_KEY"
-    
-    # Database and Infrastructure (Cloud SQL additional secrets)
-    "postgres-password"
-    
-    # Trading (for live mode - disabled by default)
-    "SOLANA_RPC_URL"
-    "ETHEREUM_RPC_URL"
-    "WALLET_PRIVATE_KEY"
+# Define blockchain & RPC secrets
+BLOCKCHAIN_SECRETS=(
+    "HELIUS_API_KEY"           # Solana RPC provider
+    "BIRDEYE_API_KEY"          # DeFi data aggregator
+    "ETHERSCAN_API_KEY"        # Ethereum blockchain explorer
+    "ALCHEMY_API_KEY"          # General Ethereum/Polygon RPC
+    "ETHEREUM_API_KEY"         # Ethereum-specific RPC
+    "BASE_API_KEY"             # Base chain RPC
+    "SOLANA_RPC_URL"           # Custom Solana RPC endpoint
+    "ETHEREUM_RPC_URL"         # Custom Ethereum RPC endpoint
 )
+
+# Define AI & ML API secrets
+AI_SECRETS=(
+    "XAI_API_KEY"              # xAI/Grok API for analysis
+    "OPENAI_API_KEY"           # OpenAI GPT API
+    "AGENT_API_KEY"            # Custom AI agent API
+)
+
+# Define market data & analytics secrets
+MARKET_SECRETS=(
+    "LUNARCRUSH_API_KEY"       # Social sentiment data
+    "COINGECKO_API_KEY"        # CoinGecko market data
+    "COINGECKO_PRO_API_KEY"    # CoinGecko Pro API
+    "GLASSNODE_API_KEY"        # On-chain analytics
+    "MESSARI_API_KEY"          # Crypto research data
+    "JUPITER_API_KEY"          # Jupiter DEX aggregator
+)
+
+# Define social media & external API secrets
+SOCIAL_SECRETS=(
+    "X_BEARER_TOKEN"           # X (Twitter) API bearer token
+    "X_API_KEY"                # X (Twitter) API key
+    "X_API_SECRET"             # X (Twitter) API secret
+)
+
+# Define trading & wallet secrets (CRITICAL - Live Trading Only)
+TRADING_SECRETS=(
+    "SOLANA_PRIVATE_KEY"       # Solana wallet private key
+    "ETHEREUM_PRIVATE_KEY"     # Ethereum wallet private key
+    "HYPERLIQUID_PRIVATE_KEY"  # Hyperliquid exchange private key
+    "HYPERLIQUID_API_KEY"      # Hyperliquid exchange API key
+    "WALLET_PRIVATE_KEY"       # Primary wallet private key
+)
+
+# Combine all optional secrets
+OPTIONAL_SECRETS=(
+    "${BLOCKCHAIN_SECRETS[@]}"
+    "${AI_SECRETS[@]}"
+    "${MARKET_SECRETS[@]}"
+    "${SOCIAL_SECRETS[@]}"
+)
+
+# Function to validate and add secrets
+validate_and_add_secret() {
+    local secret_name=$1
+    local is_required=${2:-false}
+    local category=${3:-""}
+    
+    # Check if secret exists in Secret Manager
+    if gcloud secrets describe "$secret_name" --project=$PROJECT_ID --quiet 2>/dev/null; then
+        # Verify secret has a value
+        local secret_value
+        secret_value=$(gcloud secrets versions access latest --secret="$secret_name" --project=$PROJECT_ID --quiet 2>/dev/null)
+        
+        if [[ -n "$secret_value" && "$secret_value" != "null" ]]; then
+            echo -e "${GREEN}✓${NC} Adding $category secret: $secret_name"
+            SECRET_ARGS="$SECRET_ARGS --set-secrets $secret_name=$secret_name:latest"
+            return 0
+        else
+            echo -e "${RED}❌${NC} Secret $secret_name exists but has no value"
+            if [[ "$is_required" == "true" ]]; then
+                echo -e "${RED}💥 DEPLOYMENT FAILED: Required secret $secret_name is empty${NC}"
+                exit 1
+            fi
+            return 1
+        fi
+    else
+        if [[ "$is_required" == "true" ]]; then
+            echo -e "${RED}❌ DEPLOYMENT FAILED: Required secret $secret_name not found${NC}"
+            echo -e "${BLUE}💡 Create it with: gcloud secrets create $secret_name --data-file=<(echo 'your_value')${NC}"
+            exit 1
+        else
+            echo -e "${YELLOW}⚠${NC} Optional $category secret not configured: $secret_name"
+            return 1
+        fi
+    fi
+}
 
 # Build secrets arguments for Cloud Run
 SECRET_ARGS=""
+SECRETS_ADDED=0
+SECRETS_SKIPPED=0
 
-# Add required secrets
+# Process required secrets (must exist)
+echo -e "${BLUE}🔍 Validating required secrets...${NC}"
 for secret in "${REQUIRED_SECRETS[@]}"; do
-    echo -e "${GREEN}✓${NC} Adding required secret: $secret"
-    SECRET_ARGS="$SECRET_ARGS --set-secrets $secret=$secret:latest"
-done
-
-# Add optional secrets (check if they exist in Secret Manager)
-for secret in "${OPTIONAL_SECRETS[@]}"; do
-    # Check if secret exists in Secret Manager
-    if gcloud secrets describe "$secret" --quiet 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Adding optional secret: $secret"
-        SECRET_ARGS="$SECRET_ARGS --set-secrets $secret=$secret:latest"
-    else
-        echo -e "${YELLOW}⚠${NC} Optional secret not found in Secret Manager: $secret"
+    if validate_and_add_secret "$secret" true "required"; then
+        ((SECRETS_ADDED++))
     fi
 done
+
+# Process blockchain secrets
+echo -e "${BLUE}🔗 Processing blockchain & RPC secrets...${NC}"
+for secret in "${BLOCKCHAIN_SECRETS[@]}"; do
+    if validate_and_add_secret "$secret" false "blockchain"; then
+        ((SECRETS_ADDED++))
+    else
+        ((SECRETS_SKIPPED++))
+    fi
+done
+
+# Process AI/ML secrets
+echo -e "${BLUE}🤖 Processing AI & ML API secrets...${NC}"
+for secret in "${AI_SECRETS[@]}"; do
+    if validate_and_add_secret "$secret" false "AI/ML"; then
+        ((SECRETS_ADDED++))
+    else
+        ((SECRETS_SKIPPED++))
+    fi
+done
+
+# Process market data secrets
+echo -e "${BLUE}📊 Processing market data & analytics secrets...${NC}"
+for secret in "${MARKET_SECRETS[@]}"; do
+    if validate_and_add_secret "$secret" false "market data"; then
+        ((SECRETS_ADDED++))
+    else
+        ((SECRETS_SKIPPED++))
+    fi
+done
+
+# Process social media secrets
+echo -e "${BLUE}📱 Processing social media API secrets...${NC}"
+for secret in "${SOCIAL_SECRETS[@]}"; do
+    if validate_and_add_secret "$secret" false "social media"; then
+        ((SECRETS_ADDED++))
+    else
+        ((SECRETS_SKIPPED++))
+    fi
+done
+
+# Handle trading secrets with extra caution
+echo -e "${RED}⚠️  WARNING: Processing CRITICAL trading secrets...${NC}"
+echo -e "${RED}   These secrets control real cryptocurrency wallets${NC}"
+echo -e "${RED}   Only configure for production live trading mode${NC}"
+
+TRADING_MODE=${TRADING_MODE:-"simulation"}
+if [[ "$TRADING_MODE" == "live" ]]; then
+    echo -e "${YELLOW}🔴 LIVE TRADING MODE ENABLED - Processing wallet secrets...${NC}"
+    for secret in "${TRADING_SECRETS[@]}"; do
+        if validate_and_add_secret "$secret" false "CRITICAL trading"; then
+            ((SECRETS_ADDED++))
+            echo -e "${RED}🔥 LIVE TRADING SECRET CONFIGURED: $secret${NC}"
+        else
+            ((SECRETS_SKIPPED++))
+        fi
+    done
+else
+    echo -e "${GREEN}✅ SIMULATION MODE - Skipping trading secrets for safety${NC}"
+    SECRETS_SKIPPED=$((SECRETS_SKIPPED + ${#TRADING_SECRETS[@]}))
+fi
+
+# Summary
+echo -e "${BLUE}📋 Secret configuration summary:${NC}"
+echo -e "${GREEN}  ✅ Secrets configured: $SECRETS_ADDED${NC}"
+echo -e "${YELLOW}  ⚠️  Secrets skipped: $SECRETS_SKIPPED${NC}"
+
+if [[ $SECRETS_ADDED -eq 0 ]]; then
+    echo -e "${RED}❌ No secrets configured - deployment may fail${NC}"
+    exit 1
+fi
 
 # Configure Cloud SQL connection
 CLOUD_SQL_INSTANCE="shvyr-ai-bots:us-central1:shyvr-rlte-db"
