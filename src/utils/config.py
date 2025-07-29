@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .base import ConfigurationError
 
@@ -99,6 +99,64 @@ class MLConfig(BaseModel):
     early_stopping_patience: int = 10
 
 
+class RLExperiencePerformanceConfig(BaseModel):
+    """RL experience storage performance configuration"""
+    
+    cache_size: int = 1000
+    async_operations: bool = True
+    compression: bool = False
+    query_timeout_seconds: int = 30
+    batch_commit_size: int = 100
+    
+    @model_validator(mode='after')
+    def validate_performance_config(self):
+        if self.cache_size <= 0:
+            raise ValueError("Cache size must be positive")
+        return self
+
+
+class RLExperienceDatabaseConfig(BaseModel):
+    """RL experience database configuration"""
+    
+    pool_size: int = 5
+    max_overflow: int = 10
+    timeout_seconds: int = 30
+    enable_query_logging: bool = False
+    connection_retry_attempts: int = 3
+
+
+class RLExperienceLifecycleConfig(BaseModel):
+    """RL experience lifecycle management configuration"""
+    
+    cleanup_enabled: bool = True
+    max_age_days: int = 30
+    cleanup_interval_hours: int = 24
+    archive_old_experiences: bool = False
+    min_experiences_to_keep: int = 1000
+
+
+class RLExperienceStorageConfig(BaseModel):
+    """RL experience storage configuration"""
+    
+    enabled: bool = True
+    storage_backend: str = "database"
+    max_experiences: int = 50000
+    batch_size: int = 64
+    prioritized_replay: bool = True
+    
+    performance: RLExperiencePerformanceConfig = field(default_factory=RLExperiencePerformanceConfig)
+    database: RLExperienceDatabaseConfig = field(default_factory=RLExperienceDatabaseConfig)
+    lifecycle: RLExperienceLifecycleConfig = field(default_factory=RLExperienceLifecycleConfig)
+    
+    @model_validator(mode='after')
+    def validate_storage_config(self):
+        if self.batch_size <= 0:
+            raise ValueError("Batch size must be positive")
+        if self.max_experiences <= 0:
+            raise ValueError("Max experiences must be positive")
+        return self
+
+
 class RLConfig(BaseModel):
     """Reinforcement learning configuration"""
 
@@ -112,6 +170,8 @@ class RLConfig(BaseModel):
     batch_size: int = 64
     memory_size: int = 50000
     target_update_freq: int = 1000
+    
+    experience_storage: RLExperienceStorageConfig = field(default_factory=RLExperienceStorageConfig)
 
 
 class AppConfig(BaseModel):
@@ -146,7 +206,10 @@ class ConfigManager:
     """Configuration manager with environment variable substitution"""
 
     def __init__(self, config_path: str | Path | None = None):
-        self.config_path = config_path or self._find_config_file()
+        if config_path is None:
+            self.config_path = self._find_config_file()
+        else:
+            self.config_path = Path(config_path) if isinstance(config_path, str) else config_path
         self._config: RLTEConfig | None = None
 
     def _find_config_file(self) -> Path:
@@ -279,11 +342,34 @@ class ConfigManager:
             if config.trading.risk_management.max_position_size_pct > 10.0:
                 logger.warning("Maximum position size is very high (>10%)")
 
+            # Validate RL experience storage
+            self._validate_rl_experience_config(config)
+
             return True
 
         except Exception as e:
             logger.error(f"Configuration validation failed: {e}")
             return False
+
+    def _validate_rl_experience_config(self, config: 'RLTEConfig') -> None:
+        """Validate RL experience storage configuration"""
+        exp_config = config.rl.experience_storage
+        
+        # Warn about potentially problematic values
+        if exp_config.max_experiences > 100000:
+            logger.warning("Very large max_experiences value (>100k) may impact performance")
+        
+        if exp_config.batch_size == 1:
+            logger.warning("Batch size of 1 may be inefficient for database operations")
+            
+        if exp_config.database.pool_size > 50:
+            logger.warning("Very large database pool size (>50) may be excessive")
+            
+        if not exp_config.enabled:
+            logger.info("RL experience storage is disabled")
+            
+        if exp_config.storage_backend not in ["database", "memory"]:
+            logger.warning(f"Unknown storage backend: {exp_config.storage_backend}")
 
 
 # Global configuration instance
