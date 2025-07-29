@@ -22,6 +22,9 @@ class DashboardApp {
         // Backtest results component
         this.backtestResults = null;
         
+        // Experience dashboard component
+        this.experienceDashboard = null;
+        
         // Settings
         this.settings = {
             refreshInterval: 2000,
@@ -56,6 +59,9 @@ class DashboardApp {
         
         // Initialize backtest results component
         this.initializeBacktestResults();
+        
+        // Initialize experience dashboard component
+        this.initializeExperienceDashboard();
         
         console.log('Dashboard initialized');
     }
@@ -322,6 +328,18 @@ class DashboardApp {
                 break;
             case 'activity_batch':
                 this.handleActivityBatch(message.activities);
+                break;
+            case 'experience_update':
+                this.handleExperienceWebSocketUpdate(message);
+                break;
+            case 'experience_stats':
+                this.handleExperienceWebSocketUpdate(message);
+                break;
+            case 'experience_performance':
+                this.handleExperienceWebSocketUpdate(message);
+                break;
+            case 'training_session_update':
+                this.handleExperienceWebSocketUpdate(message);
                 break;
             case 'ping':
                 this.sendWebSocketMessage({ type: 'pong' });
@@ -924,6 +942,16 @@ class DashboardApp {
     }
     
     /**
+     * Handle experience WebSocket updates
+     */
+    handleExperienceWebSocketUpdate(message) {
+        // Forward experience updates to experience dashboard if available
+        if (this.experienceDashboard && this.experienceDashboard.handleWebSocketMessage) {
+            this.experienceDashboard.handleWebSocketMessage(message);
+        }
+    }
+    
+    /**
      * Emergency stop function
      */
     async emergencyStop() {
@@ -1123,6 +1151,15 @@ class DashboardApp {
     async loadMLRLData() {
         // This would load ML/RL-specific data
         console.log('Loading ML/RL data...');
+        
+        // Load experience dashboard data when ML/RL tab is opened
+        if (this.experienceDashboard) {
+            try {
+                await this.experienceDashboard.refreshAllData();
+            } catch (error) {
+                console.error('Failed to load experience data:', error);
+            }
+        }
     }
     
     /**
@@ -1141,6 +1178,20 @@ class DashboardApp {
             this.backtestResults = new BacktestResults();
         } else {
             console.warn('BacktestResults component not available');
+        }
+    }
+    
+    /**
+     * Initialize experience dashboard component
+     */
+    initializeExperienceDashboard() {
+        if (typeof ExperienceDashboard !== 'undefined') {
+            this.experienceDashboard = new ExperienceDashboard(this);
+            this.experienceDashboard.initialize().catch(error => {
+                console.error('Failed to initialize experience dashboard:', error);
+            });
+        } else {
+            console.warn('ExperienceDashboard component not available');
         }
     }
     
@@ -1739,7 +1790,12 @@ document.addEventListener('visibilitychange', () => {
 
 // Handle window beforeunload
 window.addEventListener('beforeunload', () => {
-    if (window.dashboard && window.dashboard.websocket) {
-        window.dashboard.websocket.close();
+    if (window.dashboard) {
+        if (window.dashboard.websocket) {
+            window.dashboard.websocket.close();
+        }
+        if (window.dashboard.experienceDashboard) {
+            window.dashboard.experienceDashboard.cleanup();
+        }
     }
 });

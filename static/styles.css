@@ -1687,3 +1687,315 @@ select:focus-visible {
 .card.full-width {
     grid-column: 1 / -1;
 }
+
+/* Experience Dashboard Styles */
+.experience-monitoring-card,
+.experience-performance-card,
+.experience-session-card {
+    min-height: 400px;
+}
+
+.experience-controls,
+.performance-controls,
+.session-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.timeframe-selector,
+.session-selector {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.refresh-btn,
+.auto-refresh-btn,
+.details-btn,
+.analyze-btn {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.refresh-btn:hover,
+.details-btn:hover,
+.analyze-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+}
+
+.auto-refresh-btn.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.experience-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.metric-item {
+    text-align: center;
+    padding: var(--spacing-sm);
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+}
+
+.metric-item .metric-label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-item .metric-value {
+    display: block;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.performance-metrics {
+    margin-bottom: var(--spacing-lg);
+}
+
+.performance-metrics .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-xs) 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.performance-metrics .metric-row:last-child {
+    border-bottom: none;
+}
+
+.experience-chart-container,
+.performance-chart-container,
+.session-chart-container {
+    position: relative;
+    height: 200px;
+    margin-top: var(--spacing-md);
+}
+
+.session-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: var(--spacing-md);
+}
+
+.session-item {
+    padding: var(--spacing-sm);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    margin-bottom: var(--spacing-xs);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.session-item:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+}
+
+.session-item.loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: var(--text-muted);
+    font-style: italic;
+    cursor: default;
+}
+
+.session-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-xs);
+}
+
+.session-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.session-status {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.session-status.running {
+    background: var(--success-color);
+    color: white;
+}
+
+.session-status.completed {
+    background: var(--secondary-color);
+    color: white;
+}
+
+.session-status.failed {
+    background: var(--danger-color);
+    color: white;
+}
+
+.session-metrics {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.session-metric {
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+    flex: 1;
+}
+
+.session-metric label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.session-metric value {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Performance Details Modal */
+.performance-details {
+    max-width: 600px;
+}
+
+.detail-section {
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+}
+
+.detail-section h5 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.detail-section p {
+    margin-bottom: var(--spacing-xs);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* Session Analysis Modal */
+.session-analysis {
+    max-width: 700px;
+}
+
+.analysis-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.analysis-metrics .metric-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm);
+}
+
+.analysis-metrics .metric-item label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-right: var(--spacing-sm);
+}
+
+.analysis-metrics .metric-item value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.analysis-charts {
+    padding: var(--spacing-md);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Loading State for Experience Elements */
+.loading {
+    opacity: 0.6;
+    position: relative;
+}
+
+.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    margin: -6px 0 0 -6px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+/* Dark Theme Support for Experience Dashboard */
+[data-theme="dark"] .experience-monitoring-card,
+[data-theme="dark"] .experience-performance-card,
+[data-theme="dark"] .experience-session-card {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+[data-theme="dark"] .timeframe-selector,
+[data-theme="dark"] .session-selector,
+[data-theme="dark"] .refresh-btn,
+[data-theme="dark"] .details-btn,
+[data-theme="dark"] .analyze-btn {
+    background: #374151;
+    border-color: #4b5563;
+    color: #f9fafb;
+}
+
+[data-theme="dark"] .metric-item,
+[data-theme="dark"] .session-item {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+[data-theme="dark"] .detail-section,
+[data-theme="dark"] .analysis-charts {
+    background: #374151;
+}
