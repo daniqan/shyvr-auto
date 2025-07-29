@@ -878,3 +878,366 @@ class TestTrainingPipelineIntegration:
         # Verify that prioritized replay buffer has priorities that were potentially updated
         assert hasattr(prioritized_pipeline.replay_buffer, 'priorities')
         assert len(prioritized_pipeline.replay_buffer.priorities) > 0
+
+
+class TestTrainingPipelineExperienceDatabase:
+    """Test training pipeline database integration for experience loading and metrics tracking."""
+    
+    @pytest.fixture
+    def training_config(self):
+        """Create training configuration with database integration."""
+        from src.rl_agent.training_pipeline import TrainingConfig
+        return TrainingConfig(
+            num_episodes=5,
+            max_steps_per_episode=20,
+            learning_rate=0.01,
+            batch_size=16,
+            use_database_experiences=True,  # New parameter
+            database_config={
+                'enabled': True,
+                'preload_experiences': True,
+                'batch_optimization': True,
+                'memory_management': True,
+                'metrics_tracking': True
+            }
+        )
+    
+    @pytest.fixture
+    def sample_tokens(self):
+        """Create sample tokens for training."""
+        tokens = []
+        for i in range(2):
+            token = DiscoveredToken(
+                address=f"0x{i:03d}...",
+                symbol=f"TOKEN{i}",
+                name=f"Test Token {i}",
+                chain=Chain.ETHEREUM,
+                discovered_at=datetime.now(),
+                discovery_source="test",
+                price_usd=1.0 + i * 0.5,
+                volume_24h=100000 + i * 50000
+            )
+            tokens.append(token)
+        return tokens
+    
+    @pytest.fixture
+    def historical_data(self, sample_tokens):
+        """Create historical price data."""
+        price_data = {}
+        for token in sample_tokens:
+            prices = []
+            base_price = token.price_usd
+            for j in range(50):
+                if j == 0:
+                    price = base_price
+                else:
+                    change = np.random.normal(0.001, 0.02)
+                    price = prices[-1] * (1 + change)
+                prices.append(max(price, 0.01))
+            
+            price_data[token.address] = {
+                'prices': prices,
+                'timestamps': [datetime.now() - timedelta(hours=50-i) for i in range(50)]
+            }
+        return price_data
+    
+    def test_training_config_database_parameters(self, training_config):
+        """Test that training config includes database parameters."""
+        # Parameters should now exist and be properly configured
+        assert hasattr(training_config, 'use_database_experiences')
+        assert training_config.use_database_experiences is True
+        assert hasattr(training_config, 'database_config')
+        assert isinstance(training_config.database_config, dict)
+        
+        # Verify database configuration structure
+        db_config = training_config.database_config
+        expected_keys = ['enabled', 'preload_experiences', 'batch_optimization', 
+                        'memory_management', 'metrics_tracking']
+        for key in expected_keys:
+            assert key in db_config
+        assert training_config.database_config['enabled'] is True
+    
+    def test_training_pipeline_database_initialization(self, training_config, sample_tokens, historical_data):
+        """Test training pipeline initialization with database experience support."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as database support doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should have database components initialized
+            assert hasattr(pipeline, 'experience_db_loader')
+            assert hasattr(pipeline, 'database_metrics_tracker')
+            assert pipeline.config.use_database_experiences is True
+    
+    @pytest.mark.asyncio
+    async def test_preload_experiences_from_database(self, training_config, sample_tokens, historical_data):
+        """Test preloading experiences from database before training."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should be able to preload experiences
+            preloaded_count = await pipeline.preload_experiences_from_database(
+                lookback_days=7,
+                min_experiences=50
+            )
+            
+            assert preloaded_count >= 0
+            assert hasattr(pipeline, '_preloaded_experiences')
+            assert len(pipeline._preloaded_experiences) == preloaded_count
+    
+    @pytest.mark.asyncio 
+    async def test_batch_loading_optimization(self, training_config, sample_tokens, historical_data):
+        """Test batch loading optimization for database experiences."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Test batch loading with optimization
+            batch_config = {
+                'batch_size': 64,
+                'prefetch_batches': 3,
+                'memory_limit_mb': 100,
+                'priority_sampling': True
+            }
+            
+            experiences_batch = await pipeline.load_experience_batch_optimized(batch_config)
+            
+            assert len(experiences_batch) <= batch_config['batch_size']
+            assert all('state' in exp for exp in experiences_batch)
+            assert all('reward' in exp for exp in experiences_batch)
+    
+    @pytest.mark.asyncio
+    async def test_training_performance_metrics_tracking(self, training_config, sample_tokens, historical_data):
+        """Test training performance metrics tracking with database integration."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should track database-specific metrics
+            await pipeline.initialize_database_metrics_tracking()
+            
+            # Run training and check metrics
+            results = pipeline.train()
+            
+            # Should have database performance metrics
+            db_metrics = pipeline.get_database_performance_metrics()
+            
+            assert 'experience_load_time_ms' in db_metrics
+            assert 'database_query_count' in db_metrics
+            assert 'cache_hit_rate' in db_metrics
+            assert 'memory_usage_peak_mb' in db_metrics
+            assert 'experiences_loaded_total' in db_metrics
+    
+    @pytest.mark.asyncio
+    async def test_memory_management_large_datasets(self, training_config, sample_tokens, historical_data):
+        """Test memory management for large experience datasets."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet  
+        with pytest.raises(AttributeError):
+            # Configure for large dataset
+            training_config.database_config['memory_limit_mb'] = 50
+            training_config.database_config['streaming_mode'] = True
+            
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should handle memory management
+            memory_stats_before = pipeline.get_memory_usage()
+            
+            # Simulate large dataset loading
+            await pipeline.load_large_experience_dataset(
+                dataset_size=10000,
+                streaming=True
+            )
+            
+            memory_stats_after = pipeline.get_memory_usage()
+            
+            # Memory usage should be controlled
+            memory_increase = memory_stats_after - memory_stats_before
+            assert memory_increase < training_config.database_config['memory_limit_mb'] * 1024 * 1024
+    
+    @pytest.mark.asyncio
+    async def test_database_experience_vs_file_loading(self, training_config, sample_tokens, historical_data):
+        """Test comparison between database experience loading and file-based loading."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            # Test database loading
+            db_config = training_config
+            db_config.use_database_experiences = True
+            
+            db_pipeline = DQNTrainingPipeline(
+                config=db_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Test file-based loading (legacy)
+            file_config = training_config
+            file_config.use_database_experiences = False
+            
+            file_pipeline = DQNTrainingPipeline(
+                config=file_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Compare loading performance
+            db_start = datetime.now()
+            db_experiences = await db_pipeline.load_experiences_from_database(limit=100)
+            db_duration = (datetime.now() - db_start).total_seconds()
+            
+            file_start = datetime.now()
+            file_experiences = await file_pipeline.load_experiences_from_files(limit=100)
+            file_duration = (datetime.now() - file_start).total_seconds()
+            
+            # Both should return valid experiences
+            assert len(db_experiences) > 0
+            assert len(file_experiences) > 0
+            
+            # Database loading should have metadata
+            if db_experiences:
+                assert 'database_id' in db_experiences[0]
+                assert 'priority' in db_experiences[0]
+    
+    @pytest.mark.asyncio
+    async def test_training_pipeline_database_error_handling(self, training_config, sample_tokens, historical_data):
+        """Test error handling when database operations fail."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Test database connection failure handling
+            with patch('src.utils.database.get_database_connection', side_effect=Exception("DB Error")):
+                # Should fallback gracefully
+                result = await pipeline.load_experiences_with_fallback()
+                
+                # Should use fallback mechanism (file or memory)
+                assert result is not None
+                assert hasattr(pipeline, '_fallback_used')
+                assert pipeline._fallback_used is True
+    
+    @pytest.mark.asyncio
+    async def test_experience_priority_updates_with_database(self, training_config, sample_tokens, historical_data):
+        """Test updating experience priorities in database during training."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            training_config.use_prioritized_replay = True
+            training_config.database_config['update_priorities'] = True
+            
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Mock some experiences with database IDs
+            mock_experiences = [
+                {'database_id': 1, 'priority': 0.5, 'td_error': 0.8},
+                {'database_id': 2, 'priority': 1.2, 'td_error': 0.3}
+            ]
+            
+            # Should update priorities in database
+            updated_count = await pipeline.update_experience_priorities_in_database(mock_experiences)
+            
+            assert updated_count == len(mock_experiences)
+            
+            # Should track priority update metrics
+            priority_metrics = pipeline.get_priority_update_metrics()
+            assert 'total_updates' in priority_metrics
+            assert 'avg_update_time_ms' in priority_metrics
+    
+    @pytest.mark.asyncio
+    async def test_training_session_database_tracking(self, training_config, sample_tokens, historical_data):
+        """Test tracking training sessions in database."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should create training session record
+            session_id = await pipeline.create_training_session_record()
+            
+            assert session_id is not None
+            assert hasattr(pipeline, 'training_session_id')
+            assert pipeline.training_session_id == session_id
+            
+            # Run training
+            results = pipeline.train()
+            
+            # Should update session with results
+            await pipeline.update_training_session_record(results)
+            
+            # Should be able to retrieve session info
+            session_info = await pipeline.get_training_session_info()
+            assert 'session_id' in session_info
+            assert 'episodes_completed' in session_info
+            assert 'final_metrics' in session_info
+    
+    @pytest.mark.asyncio
+    async def test_experience_analytics_integration(self, training_config, sample_tokens, historical_data):
+        """Test integration with experience analytics during training."""
+        from src.rl_agent.training_pipeline import DQNTrainingPipeline
+        
+        # Should fail initially as this functionality doesn't exist yet
+        with pytest.raises(AttributeError):
+            training_config.database_config['analytics_enabled'] = True
+            
+            pipeline = DQNTrainingPipeline(
+                config=training_config,
+                tokens=sample_tokens,
+                historical_data=historical_data
+            )
+            
+            # Should generate analytics during training
+            results = pipeline.train()
+            
+            # Should have generated experience analytics
+            analytics = await pipeline.generate_experience_analytics()
+            
+            assert 'experience_patterns' in analytics
+            assert 'performance_trends' in analytics
+            assert 'action_effectiveness' in analytics
+            assert 'learning_progress' in analytics

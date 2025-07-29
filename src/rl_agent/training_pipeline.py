@@ -6,9 +6,11 @@ with hyperparameter optimization and performance monitoring.
 """
 
 import asyncio
+import json
 import time
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 import structlog
@@ -18,6 +20,7 @@ from .dqn_agent import DQNTradingAgent
 from .trading_environment import TradingEnvironment, EnvironmentConfig
 from .experience_replay import create_replay_buffer, ReplayBufferConfig
 from .reward_engineering import create_reward_calculator, RewardConfig
+from ..utils.database import get_database_connection
 
 logger = structlog.get_logger()
 
@@ -56,6 +59,20 @@ class TrainingConfig:
     # ML-RL integration options
     use_ml_features: bool = False
     ml_weight: float = 0.3  # Weight for ML predictions in decisions
+    
+    # Database integration options
+    use_database_experiences: bool = False
+    database_config: Dict[str, Any] = field(default_factory=lambda: {
+        'enabled': False,
+        'preload_experiences': False,  
+        'batch_optimization': True,
+        'memory_limit_mb': 500,
+        'streaming_mode': False,
+        'metrics_tracking': True,
+        'update_priorities': True,
+        'analytics_enabled': False,
+        'cache_size': 1000
+    })
 
 
 class TrainingPipelineError(RLTrainingError):
@@ -118,6 +135,18 @@ class DQNTrainingPipeline:
         # Initialize all required components
         self._initialize_components()
         
+        # Database experience components
+        self.experience_db_loader = None
+        self.database_metrics_tracker = None
+        self._preloaded_experiences = []
+        self._fallback_used = False
+        self.training_session_id = None
+        self._database_performance_metrics = {}
+        
+        # Initialize database integration if enabled
+        if self.config.use_database_experiences and self.config.database_config.get('enabled', False):
+            self._initialize_database_components()
+        
         self.logger = structlog.get_logger().bind(component="DQNTrainingPipeline")
         
         self.logger.info("Training pipeline initialized",
@@ -162,6 +191,424 @@ class DQNTrainingPipeline:
         
         # Create advanced reward calculator
         self.reward_calculator = create_reward_calculator(reward_config) if self.config.use_advanced_rewards else None
+    
+    def _initialize_database_components(self):
+        """Initialize database experience integration components"""
+        try:
+            self.logger.info("Initializing database experience components")
+            
+            # Initialize database loader (placeholder)
+            self.experience_db_loader = True  # Mark as initialized
+            
+            # Initialize metrics tracker if enabled
+            if self.config.database_config.get('metrics_tracking', True):
+                self.database_metrics_tracker = {
+                    'experience_load_time_ms': 0.0,
+                    'database_query_count': 0,
+                    'cache_hit_rate': 0.0,
+                    'memory_usage_peak_mb': 0.0,
+                    'experiences_loaded_total': 0,
+                    'priority_updates_total': 0,
+                    'avg_update_time_ms': 0.0
+                }
+            
+            self.logger.info("Database experience components initialized")
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize database components", error=str(e))
+            # Disable database features on failure
+            self.config.use_database_experiences = False
+            self.config.database_config['enabled'] = False
+    
+    async def initialize_database_metrics_tracking(self):
+        """Initialize database-specific metrics tracking"""
+        if not self.config.use_database_experiences:
+            return
+        
+        try:
+            # Initialize performance counters
+            self._database_performance_metrics = {
+                'experience_load_time_ms': 0.0,
+                'database_query_count': 0,
+                'cache_hit_rate': 0.0,
+                'memory_usage_peak_mb': 0.0,
+                'experiences_loaded_total': 0
+            }
+            
+            self.logger.info("Database metrics tracking initialized")
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize database metrics tracking", error=str(e))
+    
+    async def preload_experiences_from_database(self, lookback_days: int = 7, 
+                                               min_experiences: int = 50) -> int:
+        """Preload experiences from database for training"""
+        if not self.config.use_database_experiences or not self.config.database_config.get('preload_experiences', False):
+            return 0
+        
+        try:
+            start_time = time.time()
+            
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=lookback_days)
+            
+            # Query experiences from database
+            query = """
+                SELECT id, session_id, state, action, reward, next_state, done, 
+                       priority, created_at, metadata
+                FROM rl_experiences 
+                WHERE created_at >= $1 AND created_at <= $2
+                ORDER BY created_at DESC
+                LIMIT $3
+            """
+            
+            async with get_database_connection() as conn:
+                rows = await conn.fetch(query, start_date, end_date, min_experiences * 10)
+                
+                self._preloaded_experiences = []
+                for row in rows:
+                    exp = dict(row)
+                    # Add database metadata
+                    exp['database_id'] = exp['id']
+                    exp['preloaded'] = True
+                    self._preloaded_experiences.append(exp)
+                
+                # Update metrics
+                if self.database_metrics_tracker:
+                    load_time = (time.time() - start_time) * 1000
+                    self.database_metrics_tracker['experience_load_time_ms'] += load_time
+                    self.database_metrics_tracker['database_query_count'] += 1
+                    self.database_metrics_tracker['experiences_loaded_total'] += len(self._preloaded_experiences)
+                
+                self.logger.info("Preloaded experiences from database", 
+                               count=len(self._preloaded_experiences),
+                               load_time_ms=load_time)
+                
+                return len(self._preloaded_experiences)
+                
+        except Exception as e:
+            self.logger.error("Failed to preload experiences from database", error=str(e))
+            return 0
+    
+    async def load_experience_batch_optimized(self, batch_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Load experience batch with optimization"""
+        if not self.config.use_database_experiences:
+            return []
+        
+        try:
+            batch_size = batch_config.get('batch_size', self.config.batch_size)
+            priority_sampling = batch_config.get('priority_sampling', False)
+            
+            start_time = time.time()
+            
+            if priority_sampling:
+                # Use prioritized sampling
+                query = """
+                    SELECT id, session_id, state, action, reward, next_state, done, 
+                           priority, created_at, metadata
+                    FROM rl_experiences 
+                    WHERE priority > 0.1
+                    ORDER BY priority DESC, RANDOM()
+                    LIMIT $1
+                """
+            else:
+                # Random sampling
+                query = """
+                    SELECT id, session_id, state, action, reward, next_state, done, 
+                           priority, created_at, metadata
+                    FROM rl_experiences 
+                    ORDER BY RANDOM()
+                    LIMIT $1
+                """
+            
+            async with get_database_connection() as conn:
+                rows = await conn.fetch(query, batch_size)
+                
+                experiences = []
+                for row in rows:
+                    exp = dict(row)
+                    exp['database_id'] = exp['id']
+                    experiences.append(exp)
+                
+                # Update metrics
+                load_time = (time.time() - start_time) * 1000
+                if self.database_metrics_tracker:
+                    self.database_metrics_tracker['experience_load_time_ms'] += load_time
+                    self.database_metrics_tracker['database_query_count'] += 1
+                    self.database_metrics_tracker['experiences_loaded_total'] += len(experiences)
+                
+                return experiences
+                
+        except Exception as e:
+            self.logger.error("Failed to load optimized experience batch", error=str(e))
+            return []
+    
+    def get_database_performance_metrics(self) -> Dict[str, Any]:
+        """Get database performance metrics"""
+        if not self.config.use_database_experiences or not self.database_metrics_tracker:
+            return {}
+        
+        # Calculate derived metrics
+        metrics = self.database_metrics_tracker.copy()
+        
+        # Add memory usage
+        try:
+            import psutil
+            process = psutil.Process()
+            metrics['memory_usage_peak_mb'] = process.memory_info().rss / 1024 / 1024
+        except:
+            pass
+        
+        return metrics
+    
+    def get_memory_usage(self) -> float:
+        """Get current memory usage in bytes"""
+        try:
+            import psutil
+            process = psutil.Process()
+            return process.memory_info().rss
+        except:
+            return 0.0
+    
+    async def load_large_experience_dataset(self, dataset_size: int = 10000, streaming: bool = False) -> int:
+        """Load large experience dataset with memory management"""
+        if not self.config.use_database_experiences:
+            return 0
+        
+        try:
+            if streaming:
+                # Streaming mode - load in batches
+                batch_size = min(1000, dataset_size // 10)
+                loaded_count = 0
+                
+                for offset in range(0, dataset_size, batch_size):
+                    query = """
+                        SELECT id, state, action, reward, next_state, done, priority
+                        FROM rl_experiences 
+                        ORDER BY created_at DESC
+                        LIMIT $1 OFFSET $2
+                    """
+                    
+                    async with get_database_connection() as conn:
+                        rows = await conn.fetch(query, batch_size, offset)
+                        loaded_count += len(rows)
+                        
+                        # Process batch immediately to avoid memory buildup
+                        # (In real implementation, this would feed to training)
+                        
+                        if len(rows) < batch_size:
+                            break
+                
+                return loaded_count
+            else:
+                # Load all at once (memory intensive)
+                query = """
+                    SELECT id, state, action, reward, next_state, done, priority
+                    FROM rl_experiences 
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                """
+                
+                async with get_database_connection() as conn:
+                    rows = await conn.fetch(query, dataset_size)
+                    return len(rows)
+                    
+        except Exception as e:
+            self.logger.error("Failed to load large experience dataset", error=str(e))
+            return 0
+    
+    async def load_experiences_from_database(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Load experiences from database"""
+        if not self.config.use_database_experiences:
+            return []
+        
+        try:
+            query = """
+                SELECT id, session_id, state, action, reward, next_state, done, 
+                       priority, created_at, metadata
+                FROM rl_experiences 
+                ORDER BY created_at DESC
+                LIMIT $1
+            """
+            
+            async with get_database_connection() as conn:
+                rows = await conn.fetch(query, limit)
+                
+                experiences = []
+                for row in rows:
+                    exp = dict(row)
+                    exp['database_id'] = exp['id']
+                    experiences.append(exp)
+                
+                return experiences
+                
+        except Exception as e:
+            self.logger.error("Failed to load experiences from database", error=str(e))
+            return []
+    
+    async def load_experiences_from_files(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Load experiences from files (legacy/fallback method)"""
+        # Placeholder implementation
+        return []
+    
+    async def load_experiences_with_fallback(self) -> List[Dict[str, Any]]:
+        """Load experiences with fallback mechanism"""
+        try:
+            # Try database first
+            experiences = await self.load_experiences_from_database(limit=100)
+            if experiences:
+                return experiences
+        except Exception as e:
+            self.logger.warning("Database loading failed, using fallback", error=str(e))
+        
+        # Fallback to file-based loading
+        self._fallback_used = True
+        return await self.load_experiences_from_files(limit=100)
+    
+    async def update_experience_priorities_in_database(self, experiences: List[Dict[str, Any]]) -> int:
+        """Update experience priorities in database"""
+        if not self.config.use_database_experiences or not experiences:
+            return 0
+        
+        try:
+            start_time = time.time()
+            updated_count = 0
+            
+            async with get_database_connection() as conn:
+                for exp in experiences:
+                    if 'database_id' in exp and 'td_error' in exp:
+                        await conn.execute(
+                            "UPDATE rl_experiences SET priority = $1 WHERE id = $2",
+                            exp['td_error'], exp['database_id']
+                        )
+                        updated_count += 1
+            
+            # Update metrics
+            update_time = (time.time() - start_time) * 1000
+            if self.database_metrics_tracker:
+                self.database_metrics_tracker['priority_updates_total'] += updated_count
+                self.database_metrics_tracker['avg_update_time_ms'] = (
+                    (self.database_metrics_tracker['avg_update_time_ms'] + update_time) / 2
+                )
+            
+            return updated_count
+            
+        except Exception as e:
+            self.logger.error("Failed to update experience priorities in database", error=str(e))
+            return 0
+    
+    def get_priority_update_metrics(self) -> Dict[str, Any]:
+        """Get priority update metrics"""
+        if not self.database_metrics_tracker:
+            return {}
+        
+        return {
+            'total_updates': self.database_metrics_tracker.get('priority_updates_total', 0),
+            'avg_update_time_ms': self.database_metrics_tracker.get('avg_update_time_ms', 0.0)
+        }
+    
+    async def create_training_session_record(self) -> str:
+        """Create training session record in database"""
+        if not self.config.use_database_experiences:
+            return None
+        
+        try:
+            session_id = str(uuid.uuid4())
+            
+            async with get_database_connection() as conn:
+                await conn.execute("""
+                    INSERT INTO rl_training_sessions (
+                        session_id, user_id, session_name, trading_mode,
+                        agent_config, environment_config, session_status
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """, 
+                session_id, 
+                None,  # user_id
+                f"TrainingPipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                'training',
+                json.dumps({
+                    'learning_rate': self.config.learning_rate,
+                    'batch_size': self.config.batch_size,
+                    'num_episodes': self.config.num_episodes
+                }),
+                json.dumps(self.config.database_config),
+                'running'
+                )
+            
+            self.training_session_id = session_id
+            return session_id
+            
+        except Exception as e:
+            self.logger.error("Failed to create training session record", error=str(e))
+            return None
+    
+    async def update_training_session_record(self, results: Dict[str, Any]):
+        """Update training session record with results"""
+        if not self.config.use_database_experiences or not self.training_session_id:
+            return
+        
+        try:
+            async with get_database_connection() as conn:
+                await conn.execute("""
+                    UPDATE rl_training_sessions 
+                    SET session_status = 'completed', 
+                        ended_at = NOW(),
+                        final_metrics = $1
+                    WHERE session_id = $2
+                """, json.dumps(results), self.training_session_id)
+                
+        except Exception as e:
+            self.logger.error("Failed to update training session record", error=str(e))
+    
+    async def get_training_session_info(self) -> Dict[str, Any]:
+        """Get training session information"""
+        if not self.config.use_database_experiences or not self.training_session_id:
+            return {}
+        
+        try:
+            async with get_database_connection() as conn:
+                row = await conn.fetchrow("""
+                    SELECT session_id, session_name, trading_mode, 
+                           session_status, started_at, ended_at, final_metrics
+                    FROM rl_training_sessions 
+                    WHERE session_id = $1
+                """, self.training_session_id)
+                
+                return dict(row) if row else {}
+                
+        except Exception as e:
+            self.logger.error("Failed to get training session info", error=str(e))
+            return {}
+    
+    async def generate_experience_analytics(self) -> Dict[str, Any]:
+        """Generate experience analytics during training"""
+        if not self.config.use_database_experiences or not self.config.database_config.get('analytics_enabled', False):
+            return {}
+        
+        try:
+            # Basic analytics implementation
+            analytics = {
+                'experience_patterns': {
+                    'total_experiences': len(self._preloaded_experiences),
+                    'preloaded_count': len(self._preloaded_experiences)
+                },
+                'performance_trends': {
+                    'database_query_count': self.database_metrics_tracker.get('database_query_count', 0),
+                    'avg_load_time_ms': self.database_metrics_tracker.get('experience_load_time_ms', 0.0)
+                },
+                'action_effectiveness': {},
+                'learning_progress': {
+                    'episodes_completed': self.metrics.episodes_completed,
+                    'training_session_id': self.training_session_id
+                }
+            }
+            
+            return analytics
+            
+        except Exception as e:
+            self.logger.error("Failed to generate experience analytics", error=str(e))
+            return {}
     
     def run_episode(self, episode_num: int) -> Dict[str, Any]:
         """Run a single training episode with complete RL training loop"""

@@ -40,6 +40,7 @@ logs/
 tmp/
 temp/
 *.tmp
+future_work/
 
 # Local data
 data/
@@ -51,3 +52,5 @@ hist/
 htmlcov/
 .pytest_cache/
 TODO_CHECKLIST.md
+
+
