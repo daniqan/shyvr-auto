@@ -302,6 +302,45 @@ rl:
     retrain_frequency_hours: 24
     min_experiences: 1000
     validation_episodes: 100
+  
+  # RL Experience Storage Configuration
+  experience_storage:
+    # Core storage settings
+    enabled: ${RL_EXPERIENCE_STORAGE_ENABLED:true}
+    storage_backend: "${RL_EXPERIENCE_STORAGE_BACKEND:database}"  # database, memory
+    max_experiences: ${RL_EXPERIENCE_MAX_EXPERIENCES:50000}
+    batch_size: ${RL_EXPERIENCE_BATCH_SIZE:64}
+    prioritized_replay: ${RL_EXPERIENCE_PRIORITIZED_REPLAY:true}
+    
+    # Performance optimization settings
+    performance:
+      cache_size: ${RL_EXPERIENCE_CACHE_SIZE:1000}
+      async_operations: ${RL_EXPERIENCE_ASYNC_OPS:true}
+      compression: ${RL_EXPERIENCE_COMPRESSION:false}
+      query_timeout_seconds: ${RL_EXPERIENCE_QUERY_TIMEOUT:30}
+      batch_commit_size: ${RL_EXPERIENCE_BATCH_COMMIT_SIZE:100}
+    
+    # Database-specific configuration
+    database:
+      pool_size: ${RL_EXPERIENCE_DB_POOL_SIZE:5}
+      max_overflow: ${RL_EXPERIENCE_DB_MAX_OVERFLOW:10}
+      timeout_seconds: ${RL_EXPERIENCE_DB_TIMEOUT:30}
+      enable_query_logging: ${RL_EXPERIENCE_DB_QUERY_LOGGING:false}
+      connection_retry_attempts: ${RL_EXPERIENCE_DB_RETRY_ATTEMPTS:3}
+      # Database connection settings (inherits from main database config if not specified)
+      host: "${RL_EXPERIENCE_DB_HOST:${DB_HOST}}"
+      port: ${RL_EXPERIENCE_DB_PORT:${DB_PORT}}
+      database: "${RL_EXPERIENCE_DB_NAME:${DB_NAME}}"
+      username: "${RL_EXPERIENCE_DB_USER:${DB_USER}}"
+      password: "${RL_EXPERIENCE_DB_PASSWORD:${DB_PASSWORD}}"
+    
+    # Lifecycle management settings
+    lifecycle:
+      cleanup_enabled: ${RL_EXPERIENCE_CLEANUP_ENABLED:true}
+      max_age_days: ${RL_EXPERIENCE_MAX_AGE_DAYS:30}
+      cleanup_interval_hours: ${RL_EXPERIENCE_CLEANUP_INTERVAL:24}
+      archive_old_experiences: ${RL_EXPERIENCE_ARCHIVE_OLD:false}
+      min_experiences_to_keep: ${RL_EXPERIENCE_MIN_TO_KEEP:1000}
 
 discovery:
   chains: ["ethereum", "solana", "base"]
