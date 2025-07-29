@@ -26,7 +26,7 @@ class TestHealthEndpoints:
         assert data["message"] == "Shyvr RLTE API"
         assert data["status"] == "running"
     
-    @patch('src.utils.config.get_config')
+    @patch('main.get_config')
     @patch('src.utils.database.check_database_health')
     @patch('main.get_ml_model_health')
     @patch('main.get_rl_agent_health')
@@ -66,7 +66,7 @@ class TestHealthEndpoints:
         assert "components" in data
         assert data["components"]["database"]["status"] == "healthy"
 
-    @patch('src.utils.config.get_config')
+    @patch('main.get_config')
     @patch('src.utils.database.check_database_health')
     def test_health_check_database_unhealthy(self, mock_db_health, mock_config, client):
         """Test /health endpoint with database unhealthy"""
@@ -86,9 +86,16 @@ class TestHealthEndpoints:
         assert data["status"] == "degraded"
         assert data["components"]["database"]["status"] == "unhealthy"
 
-    def test_health_check_error_handling(self, client):
+    @patch('src.utils.database.check_database_health')
+    def test_health_check_error_handling(self, mock_db_health, client):
         """Test /health endpoint error handling"""
-        with patch('src.utils.config.get_config', side_effect=Exception("Config error")):
+        # Mock database health to avoid side effects
+        mock_db_health.return_value = {
+            "status": "healthy",
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+        
+        with patch('main.get_config', side_effect=Exception("Config error")):
             response = client.get("/health")
             assert response.status_code == 200
             
@@ -101,7 +108,7 @@ class TestMLHealthFunction:
     """Test ML model health check function"""
     
     @patch('src.ml_analysis.model_manager.ModelManager')
-    @patch('src.utils.config.get_config')
+    @patch('main.get_config')
     @pytest.mark.asyncio
     async def test_ml_health_success(self, mock_config, mock_model_manager):
         """Test successful ML health check"""
@@ -126,7 +133,7 @@ class TestMLHealthFunction:
         assert "details" in result
 
     @patch('src.ml_analysis.model_manager.ModelManager')
-    @patch('src.utils.config.get_config')
+    @patch('main.get_config')
     @pytest.mark.asyncio
     async def test_ml_health_unhealthy(self, mock_config, mock_model_manager):
         """Test ML health check with unhealthy models"""
@@ -158,8 +165,8 @@ class TestMLHealthFunction:
 class TestRLHealthFunction:
     """Test RL agent health check function"""
     
-    @patch('src.rl_agent.dqn_agent.DQNAgent')
-    @patch('src.utils.config.get_config')
+    @patch('src.rl_agent.dqn_agent.DQNTradingAgent')
+    @patch('main.get_config')
     @pytest.mark.asyncio
     async def test_rl_health_success(self, mock_config, mock_agent):
         """Test successful RL health check"""
@@ -185,8 +192,8 @@ class TestRLHealthFunction:
         assert result["training_episodes"] == 1000
         assert "performance" in result
 
-    @patch('src.rl_agent.dqn_agent.DQNAgent')
-    @patch('src.utils.config.get_config')
+    @patch('src.rl_agent.dqn_agent.DQNTradingAgent')
+    @patch('main.get_config')
     @pytest.mark.asyncio
     async def test_rl_health_training(self, mock_config, mock_agent):
         """Test RL health check with agent still training"""
@@ -206,7 +213,7 @@ class TestRLHealthFunction:
         assert result["is_trained"] is False
         assert result["meets_targets"] is False
 
-    @patch('src.rl_agent.dqn_agent.DQNAgent', side_effect=Exception("Agent error"))
+    @patch('src.rl_agent.dqn_agent.DQNTradingAgent', side_effect=Exception("Agent error"))
     @pytest.mark.asyncio
     async def test_rl_health_error(self, mock_agent):
         """Test RL health check error handling"""
@@ -220,29 +227,22 @@ class TestRLHealthFunction:
 class TestConfigEndpoint:
     """Test configuration endpoint"""
     
-    @patch('src.utils.config.get_config')
+    @patch('main.get_config')
     def test_config_endpoint_success(self, mock_config, client):
         """Test /config endpoint success"""
-        mock_config.return_value = MagicMock(
-            app=MagicMock(
-                name="test-rlte",
-                version="0.1.0",
-                environment="test",
-                debug=True
-            ),
-            trading=MagicMock(
-                modes=["analysis", "simulation"],
-                risk_management=MagicMock(
-                    max_position_size_pct=10.0,
-                    max_daily_loss_pct=5.0,
-                    max_drawdown_pct=15.0
-                )
-            ),
-            agent=MagicMock(
-                model_type="DQN",
-                max_active_rules=50
-            )
-        )
+        # Create mock with explicit property setting
+        mock_obj = MagicMock()
+        mock_obj.app.name = "test-rlte"
+        mock_obj.app.version = "0.1.0"
+        mock_obj.app.environment = "test"
+        mock_obj.app.debug = True
+        mock_obj.trading.modes = ["analysis", "simulation"]
+        mock_obj.trading.risk_management.max_position_size_pct = 10.0
+        mock_obj.trading.risk_management.max_daily_loss_pct = 5.0
+        mock_obj.trading.risk_management.max_drawdown_pct = 15.0
+        mock_obj.agent.model_type = "DQN"
+        mock_obj.agent.max_active_rules = 50
+        mock_config.return_value = mock_obj
         
         response = client.get("/config")
         assert response.status_code == 200
@@ -255,7 +255,7 @@ class TestConfigEndpoint:
 
     def test_config_endpoint_error(self, client):
         """Test /config endpoint error handling"""
-        with patch('src.utils.config.get_config', side_effect=Exception("Config error")):
+        with patch('main.get_config', side_effect=Exception("Config error")):
             response = client.get("/config")
             assert response.status_code == 200
             
@@ -332,7 +332,11 @@ class TestAPIKeyEndpoint:
 
     def test_api_key_error(self, client):
         """Test /api/auth/key endpoint error handling"""
-        with patch('main.dashboard_auth', side_effect=Exception("Auth error")):
+        # Mock the dashboard_auth._users.items() method to raise exception when called
+        mock_dashboard_auth = MagicMock()
+        mock_dashboard_auth._users.items.side_effect = Exception("Auth error")
+        
+        with patch('src.dashboard.auth.dashboard_auth', mock_dashboard_auth):
             response = client.get("/api/auth/key")
             assert response.status_code == 200
             
