@@ -41,7 +41,7 @@ echo -e "${BLUE}💡 Make sure secrets are created in Secret Manager first:${NC}
 echo -e "   gcloud secrets create TELEGRAM_TOKEN --data-file=<(echo 'your_token')"
 
 # Define required secrets for RLTE
-REQUIRED_SECRETS=("TELEGRAM_TOKEN" "WEBHOOK_SECRET" "DB_PASSWORD")
+REQUIRED_SECRETS=("TELEGRAM_TOKEN" "WEBHOOK_SECRET" "DB_PASSWORD" "DATABASE_URL")
 
 # Define optional secrets for RLTE (APIs, ML models, etc.)
 OPTIONAL_SECRETS=(
@@ -60,8 +60,8 @@ OPTIONAL_SECRETS=(
     "OPENAI_API_KEY"
     "AGENT_API_KEY"
     
-    # Database and Infrastructure
-    "DATABASE_URL"
+    # Database and Infrastructure (Cloud SQL additional secrets)
+    "postgres-password"
     
     # Trading (for live mode - disabled by default)
     "SOLANA_RPC_URL"
@@ -89,7 +89,11 @@ for secret in "${OPTIONAL_SECRETS[@]}"; do
     fi
 done
 
+# Configure Cloud SQL connection
+CLOUD_SQL_INSTANCE="shvyr-ai-bots:us-central1:shyvr-rlte-db"
+
 echo -e "${YELLOW}☁️  Deploying to Cloud Run with enhanced ML/RL configuration...${NC}"
+echo -e "${BLUE}🗄️  Configuring Cloud SQL connection: $CLOUD_SQL_INSTANCE${NC}"
 gcloud run deploy $SERVICE \
   --image "$IMAGE_NAME:$TAG" \
   --region $REGION \
@@ -103,6 +107,7 @@ gcloud run deploy $SERVICE \
   --min-instances 0 \
   --allow-unauthenticated \
   --set-env-vars "ENVIRONMENT=production,LOG_LEVEL=INFO" \
+  --add-cloudsql-instances "$CLOUD_SQL_INSTANCE" \
   $SECRET_ARGS \
   --quiet
 
