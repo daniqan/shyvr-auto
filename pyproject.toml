@@ -63,7 +63,7 @@ dependencies = [
     "google-cloud-secret-manager>=2.24.0",
     # Monitoring and Alerting
     "google-cloud-monitoring>=2.24.0",
-    "google-cloud-logging>=3.14.0",
+    "google-cloud-logging>=3.10.0",
     "httpx>=0.28.1",
 ]
 
