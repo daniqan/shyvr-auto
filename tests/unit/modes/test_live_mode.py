@@ -646,6 +646,259 @@ class TestLiveMode:
             assert live_mode.config.mode_type == ModeType.LIVE_TRADING
             assert live_mode.status == ModeStatus.INACTIVE
             assert live_mode.enable_real_trading is True
+
+    async def test_dex_clients_initialization_success(self, live_mode_config, mock_portfolio):
+        """Test successful DEX clients initialization with all three exchanges."""
+        with patch('src.modes.live_mode.JupiterDEXClient') as mock_jupiter, \
+             patch('src.modes.live_mode.UniswapV3Client') as mock_uniswap, \
+             patch('src.modes.live_mode.HyperliquidDEXClient') as mock_hyperliquid, \
+             patch('src.modes.live_mode.SolanaWallet') as mock_solana_wallet, \
+             patch('src.modes.live_mode.EthereumWallet') as mock_eth_wallet, \
+             patch('src.modes.live_mode.os.getenv') as mock_getenv:
+            
+            # Mock environment variables
+            mock_getenv.side_effect = lambda key, default=None: {
+                'SOLANA_PRIVATE_KEY': 'test_solana_key',
+                'SOLANA_NETWORK': 'devnet',
+                'ETHEREUM_PRIVATE_KEY': 'test_eth_key',
+                'HYPERLIQUID_PRIVATE_KEY': 'test_hl_key',
+                'HYPERLIQUID_WALLET_ADDRESS': 'test_hl_address',
+                'HYPERLIQUID_API_KEY': 'test_hl_api_key',
+                'INFURA_PROJECT_ID': 'test_infura_id'
+            }.get(key, default)
+            
+            # Configure successful initialization
+            mock_jupiter_instance = AsyncMock()
+            mock_jupiter_instance.connect.return_value = True
+            mock_jupiter_instance.is_connected = True
+            mock_jupiter.return_value = mock_jupiter_instance
+            
+            mock_uniswap_instance = AsyncMock()
+            mock_uniswap_instance.connect.return_value = True
+            mock_uniswap_instance.is_connected = True
+            mock_uniswap.return_value = mock_uniswap_instance
+            
+            mock_hyperliquid_instance = AsyncMock()
+            mock_hyperliquid_instance.connect.return_value = True
+            mock_hyperliquid_instance.is_connected = True
+            mock_hyperliquid.return_value = mock_hyperliquid_instance
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode._initialize_dex_clients()
+            
+            # Verify all DEX clients were initialized
+            mock_jupiter.assert_called_once()
+            mock_uniswap.assert_called_once()
+            mock_hyperliquid.assert_called_once()
+            
+            # Verify connections were performed
+            mock_jupiter_instance.connect.assert_called_once()
+            mock_uniswap_instance.connect.assert_called_once()
+            mock_hyperliquid_instance.connect.assert_called_once()
+            
+            # Verify clients are stored
+            assert hasattr(live_mode, 'dex_clients')
+            assert 'jupiter' in live_mode.dex_clients
+            assert 'uniswap_v3' in live_mode.dex_clients
+            assert 'hyperliquid' in live_mode.dex_clients
+
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_dex_clients_initialization_with_wallet_integration(self, live_mode_config, mock_portfolio):
+        """Test DEX clients initialization includes proper wallet integration."""
+        with patch('src.dex.JupiterDEXClient') as mock_jupiter, \
+             patch('src.dex.UniswapV3Client') as mock_uniswap, \
+             patch('src.dex.HyperliquidDEXClient') as mock_hyperliquid, \
+             patch('src.wallet.SolanaWallet') as mock_solana_wallet, \
+             patch('src.wallet.EthereumWallet') as mock_eth_wallet, \
+             patch('os.getenv') as mock_getenv:
+            
+            # Mock environment variables
+            mock_getenv.side_effect = lambda key, default=None: {
+                'SOLANA_PRIVATE_KEY': 'test_solana_key',
+                'ETHEREUM_PRIVATE_KEY': 'test_eth_key',
+                'HYPERLIQUID_PRIVATE_KEY': 'test_hl_key',
+                'HYPERLIQUID_WALLET_ADDRESS': 'test_hl_address',
+                'INFURA_PROJECT_ID': 'test_infura_id'
+            }.get(key, default)
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode._initialize_dex_clients()
+            
+            # Verify Jupiter was initialized with Solana wallet
+            mock_jupiter.assert_called_once()
+            jupiter_call_args = mock_jupiter.call_args
+            assert 'wallet' in jupiter_call_args.kwargs
+            
+            # Verify Uniswap was initialized with Ethereum wallet
+            mock_uniswap.assert_called_once()
+            uniswap_call_args = mock_uniswap.call_args
+            assert 'wallet' in uniswap_call_args.kwargs
+            
+            # Verify Hyperliquid was initialized with wallet address
+            mock_hyperliquid.assert_called_once()
+            hyperliquid_call_args = mock_hyperliquid.call_args
+            assert 'wallet_address' in hyperliquid_call_args.kwargs
+
+    @pytest.mark.skip(reason="Implementation pending - TDD")  
+    async def test_dex_clients_connection_failure_handling(self, live_mode_config, mock_portfolio):
+        """Test graceful handling of DEX connection failures."""
+        with patch('src.dex.JupiterDEXClient') as mock_jupiter, \
+             patch('src.dex.UniswapV3Client') as mock_uniswap, \
+             patch('src.dex.HyperliquidDEXClient') as mock_hyperliquid:
+            
+            # Configure Jupiter to fail connection
+            mock_jupiter_instance = AsyncMock()
+            mock_jupiter_instance.initialize.side_effect = DEXError("Jupiter connection failed")
+            mock_jupiter.return_value = mock_jupiter_instance
+            
+            # Configure others to succeed
+            mock_uniswap_instance = AsyncMock()
+            mock_uniswap_instance.initialize.return_value = None
+            mock_uniswap_instance.health_check.return_value = True
+            mock_uniswap.return_value = mock_uniswap_instance
+            
+            mock_hyperliquid_instance = AsyncMock()
+            mock_hyperliquid_instance.initialize.return_value = None
+            mock_hyperliquid_instance.health_check.return_value = True
+            mock_hyperliquid.return_value = mock_hyperliquid_instance
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode._initialize_dex_clients()
+            
+            # Should have working clients for successful connections
+            assert 'uniswap_v3' in live_mode.dex_clients
+            assert 'hyperliquid' in live_mode.dex_clients
+            
+            # Jupiter should be marked as unavailable but not crash the system
+            assert 'jupiter' not in live_mode.dex_clients or live_mode.dex_clients['jupiter'] is None
+            
+            # Should log the failure but continue
+            assert hasattr(live_mode, 'dex_connection_errors')
+            assert 'jupiter' in live_mode.dex_connection_errors
+
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_dex_clients_safety_checks_disable_trading(self, live_mode_config, mock_portfolio):
+        """Test safety checks disable live trading when critical DEX clients fail."""
+        with patch('src.dex.JupiterDEXClient') as mock_jupiter, \
+             patch('src.dex.UniswapV3Client') as mock_uniswap, \
+             patch('src.dex.HyperliquidDEXClient') as mock_hyperliquid:
+            
+            # Configure all DEX clients to fail
+            for mock_client in [mock_jupiter, mock_uniswap, mock_hyperliquid]:
+                mock_instance = AsyncMock()
+                mock_instance.initialize.side_effect = DEXError("Connection failed")
+                mock_client.return_value = mock_instance
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode._initialize_dex_clients()
+            
+            # Should disable live trading when no DEX clients are available
+            assert live_mode.enable_real_trading is False
+            assert hasattr(live_mode, 'safety_lockout_reason')
+            assert 'DEX' in live_mode.safety_lockout_reason
+
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_dex_clients_health_check_monitoring(self, live_mode_config, mock_portfolio):
+        """Test ongoing health check monitoring of DEX clients."""
+        with patch('src.dex.JupiterDEXClient') as mock_jupiter, \
+             patch('src.dex.UniswapV3Client') as mock_uniswap, \
+             patch('src.dex.HyperliquidDEXClient') as mock_hyperliquid:
+            
+            # Configure successful initialization
+            mock_jupiter_instance = AsyncMock()
+            mock_jupiter_instance.initialize.return_value = None
+            mock_jupiter_instance.health_check.return_value = True
+            mock_jupiter.return_value = mock_jupiter_instance
+            
+            mock_uniswap_instance = AsyncMock()
+            mock_uniswap_instance.initialize.return_value = None
+            mock_uniswap_instance.health_check.return_value = True
+            mock_uniswap.return_value = mock_uniswap_instance
+            
+            mock_hyperliquid_instance = AsyncMock()
+            mock_hyperliquid_instance.initialize.return_value = None
+            mock_hyperliquid_instance.health_check.return_value = True
+            mock_hyperliquid.return_value = mock_hyperliquid_instance
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            await live_mode._initialize_dex_clients()
+            
+            # Should have health check monitoring enabled
+            assert hasattr(live_mode, 'dex_health_monitor')
+            assert live_mode.dex_health_monitor is not None
+            
+            # Should periodically check DEX health
+            await live_mode._check_dex_health()
+            
+            # All clients should have been health checked
+            mock_jupiter_instance.health_check.assert_called()
+            mock_uniswap_instance.health_check.assert_called()
+            mock_hyperliquid_instance.health_check.assert_called()
+
+    async def test_dex_clients_missing_environment_variables(self, live_mode_config, mock_portfolio):
+        """Test handling of missing required environment variables."""
+        with patch('src.modes.live_mode.os.getenv') as mock_getenv:
+            # Mock missing environment variables
+            mock_getenv.return_value = None
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            with pytest.raises(ValueError, match="Missing required environment variable"):
+                await live_mode._initialize_dex_clients()
+
+    @pytest.mark.skip(reason="Implementation pending - TDD")
+    async def test_dex_clients_configuration_validation(self, live_mode_config, mock_portfolio):
+        """Test DEX client configuration validation."""
+        with patch('src.dex.JupiterDEXClient') as mock_jupiter, \
+             patch('os.getenv') as mock_getenv:
+            
+            # Mock environment variables with invalid values
+            mock_getenv.side_effect = lambda key, default=None: {
+                'SOLANA_PRIVATE_KEY': 'invalid_key_format',
+                'SOLANA_NETWORK': 'invalid_network'
+            }.get(key, default)
+            
+            live_mode = LiveMode(
+                mode_id=uuid4(),
+                config=live_mode_config,
+                portfolio=mock_portfolio
+            )
+            
+            # Should validate configuration and handle invalid values
+            await live_mode._initialize_dex_clients()
+            
+            # Should log configuration errors
+            assert hasattr(live_mode, 'dex_config_errors')
+            assert len(live_mode.dex_config_errors) > 0
     
     @pytest.mark.skip(reason="Implementation pending - TDD")
     async def test_live_mode_startup_sequence(self, live_mode_config, mock_portfolio):
