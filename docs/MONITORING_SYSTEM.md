@@ -4,32 +4,172 @@ This document provides a comprehensive overview of the monitoring and alerting s
 
 ## Overview
 
-The monitoring system provides real-time visibility into trading performance, risk management, and system health through:
+The monitoring system provides real-time visibility into trading performance, risk management, and system health through multiple integrated platforms:
 
+- **Google Cloud Monitoring**: Native GCP monitoring with custom metrics and alerting
 - **Prometheus Metrics Collection**: Comprehensive metrics exposed via `/metrics` endpoint
-- **Grafana Dashboards**: Visual monitoring with pre-built dashboards
-- **Telegram Alerting**: Real-time notifications for critical events
+- **Grafana Dashboards**: Visual monitoring with pre-built dashboards integrated with GCP
+- **Multi-Channel Alerting**: Slack, email, webhook, and Telegram notifications
 - **Safety Monitoring**: Risk level tracking and emergency detection
 - **Performance Tracking**: Trading success rates, P&L, and volume monitoring
+- **ML/RL Model Monitoring**: Machine learning and reinforcement learning performance tracking
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   Trading Bot   │───▶│  Prometheus  │───▶│    Grafana      │
-│                 │    │   Metrics    │    │   Dashboard     │
-└─────────────────┘    └──────────────┘    └─────────────────┘
-         │                                           │
-         ▼                                           ▼
-┌─────────────────┐                        ┌─────────────────┐
-│ Alerting System │                        │   Monitoring    │
-│  (Telegram Bot) │                        │   Operators     │
-└─────────────────┘                        └─────────────────┘
+┌─────────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
+│   Trading Bot       │───▶│ Google Cloud     │───▶│    Alert Policies   │
+│   - Trading Engine  │    │ Monitoring       │    │    - Critical       │
+│   - ML/RL Models    │    │ - Custom Metrics │    │    - Warnings       │
+│   - Risk Manager    │    │ - Time Series    │    │    - Thresholds     │
+└─────────────────────┘    └──────────────────┘    └─────────────────────┘
+         │                            │                        │
+         ▼                            ▼                        ▼
+┌─────────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
+│ Prometheus Metrics  │    │ Grafana          │    │ Notification        │
+│ - Local Collection  │───▶│ Dashboards       │    │ Channels            │
+│ - /metrics endpoint │    │ - GCP Integration│    │ - Slack             │
+│ - Health Checks     │    │ - Real-time      │    │ - Email             │
+└─────────────────────┘    └──────────────────┘    │ - Webhooks          │
+                                                    │ - Telegram          │
+                                                    └─────────────────────┘
 ```
 
 ## Components
 
-### 1. Metrics Collection System
+### 1. Google Cloud Monitoring Integration
+
+#### Cloud Monitoring Features
+The system integrates natively with Google Cloud Monitoring to provide:
+
+- **Custom Metrics**: Trading-specific metrics sent directly to Cloud Monitoring
+- **Automated Alerting**: GCP-native alert policies with sophisticated conditions
+- **Scalable Infrastructure**: Cloud-based monitoring that scales with trading volume
+- **Integration with GCP Services**: Native integration with other Google Cloud services
+
+#### Custom Metric Categories
+
+**Trading Performance Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/trading_total_pnl{currency, strategy}
+custom.googleapis.com/shyvr_rlte/trading_daily_pnl{currency, date}
+custom.googleapis.com/shyvr_rlte/trading_volume{symbol, side, dex}
+custom.googleapis.com/shyvr_rlte/trading_success_rate{symbol, timeframe}
+custom.googleapis.com/shyvr_rlte/trading_position_count{symbol, side}
+```
+
+**Risk Management Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/safety_risk_level{risk_type, timeframe}
+custom.googleapis.com/shyvr_rlte/safety_emergency_stops{reason, trigger}
+custom.googleapis.com/shyvr_rlte/safety_liquidations{symbol, side, reason}
+custom.googleapis.com/shyvr_rlte/safety_drawdown_percentage{timeframe}
+custom.googleapis.com/shyvr_rlte/safety_margin_ratio{account}
+```
+
+**System Health Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/system_uptime{component}
+custom.googleapis.com/shyvr_rlte/system_response_time{operation, endpoint}
+custom.googleapis.com/shyvr_rlte/system_error_rate{error_type, component}
+```
+
+**ML/RL Performance Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/ml_model_accuracy{model_type, timeframe}
+custom.googleapis.com/shyvr_rlte/ml_prediction_confidence{model_type, symbol}
+custom.googleapis.com/shyvr_rlte/rl_agent_reward{agent_id, episode}
+custom.googleapis.com/shyvr_rlte/rl_exploration_rate{agent_id}
+```
+
+**DEX and Wallet Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/dex_connection_status{dex, chain}
+custom.googleapis.com/shyvr_rlte/wallet_balance{token, chain, wallet_type}
+```
+
+#### Alert Policies
+
+**Critical Alerts (Immediate Response Required):**
+- Trading system down (uptime < 1 for >60s)
+- Critical risk level (risk_level > 0.9 for >120s)
+- Emergency stop triggered (any emergency stop event)
+- Large daily loss (daily_pnl < -$1000 immediately)
+- Low margin ratio (margin_ratio < 1.5 for >120s)
+
+**Warning Alerts (Attention Required):**
+- High risk level (risk_level > 0.8 for >300s)
+- High drawdown (drawdown > 15% for >300s)
+- Low trading success rate (success_rate < 40% for >600s)
+- ML model accuracy degradation (accuracy < 65% for >900s)
+- DEX connection issues (connection_status < 1 for >180s)
+- High system error rate (error_rate > 10/min for >300s)
+
+#### Cloud Monitoring Setup
+
+**Automated Setup:**
+```bash
+# Run the complete monitoring setup
+./deploy/setup_monitoring.sh -p YOUR_PROJECT_ID -a alerts@yourcompany.com
+
+# Validate the setup
+./scripts/validate_monitoring.py --project-id YOUR_PROJECT_ID
+```
+
+**Manual Configuration:**
+```bash
+# Set up GCP monitoring only
+uv run scripts/setup_gcp_monitoring.py --project-id YOUR_PROJECT_ID
+
+# Set up Grafana integration
+uv run scripts/setup_grafana_gcp.py --project-id YOUR_PROJECT_ID --grafana-url http://localhost:3000
+```
+
+### 2. Multi-Channel Notification System
+
+#### Supported Notification Channels
+
+**Slack Integration:**
+- Rich message formatting with colors and attachments
+- Channel-specific routing
+- Rate limiting to prevent spam
+- Emoji and formatting support
+
+**Email Notifications:**
+- HTML and plain text formats
+- Priority-based recipient lists
+- Template-based message formatting
+- SMTP configuration support
+
+**Webhook Integration:**
+- Custom webhook endpoints
+- Flexible payload formatting (JSON, form data)
+- Authentication support (Bearer token, API key)
+- Retry logic with exponential backoff
+
+**Telegram Bot (Legacy):**
+- Maintained for backward compatibility
+- HTML formatted messages
+- Chat-based notifications
+
+#### Notification Features
+
+**Deduplication:**
+- Prevents duplicate alerts within configurable time windows
+- Hash-based message identification
+- Per-channel deduplication tracking
+
+**Rate Limiting:**
+- Configurable limits per alert level
+- Hour-based rate limiting windows
+- Automatic backoff when limits exceeded
+
+**Delivery Status Tracking:**
+- Success/failure tracking per channel
+- Retry mechanisms for failed deliveries
+- Health monitoring of notification channels
+
+### 3. Prometheus Metrics Collection System
 
 #### Base Components
 - **MetricsRegistry**: Custom Prometheus registry for isolated metrics
@@ -156,16 +296,40 @@ monitoring:
 
 ### Environment Variables
 
-Required for full functionality:
+Required for comprehensive monitoring functionality:
 
 ```bash
-# Telegram Alerting
+# Google Cloud Platform
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+
+# Alert Email Addresses
+ALERT_EMAIL_CRITICAL=critical-alerts@yourcompany.com
+ALERT_EMAIL_WARNING=warning-alerts@yourcompany.com
+
+# Slack Integration
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+SLACK_CHANNEL=#trading-alerts
+
+# Email SMTP Configuration
+ALERT_SMTP_HOST=smtp.gmail.com
+ALERT_SMTP_PORT=587
+ALERT_SMTP_USER=alerts@yourcompany.com
+ALERT_SMTP_PASSWORD=your-app-password
+ALERT_FROM_EMAIL=shyvr-alerts@yourcompany.com
+
+# Webhook Integration
+ALERT_WEBHOOK_URL=https://your-webhook-endpoint.com/alerts
+WEBHOOK_AUTH_TOKEN=your-webhook-token
+
+# Grafana Integration
+GRAFANA_URL=http://localhost:3000
+GRAFANA_API_KEY=your_grafana_api_key
+GRAFANA_ORG=Main Org.
+
+# Telegram Alerting (Legacy)
 TELEGRAM_MONITORING_BOT_TOKEN=your_bot_token
 TELEGRAM_MONITORING_CHAT_ID=your_chat_id
-
-# Grafana Integration (optional)
-GRAFANA_DASHBOARD_URL=http://localhost:3000
-GRAFANA_API_KEY=your_api_key
 
 # Prometheus Push Gateway (optional)
 PROMETHEUS_PUSH_GATEWAY=http://localhost:9091

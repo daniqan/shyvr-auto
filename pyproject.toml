@@ -61,6 +61,10 @@ dependencies = [
     "scikit-image>=0.22.0",
     "lime>=0.2.0.1",
     "google-cloud-secret-manager>=2.24.0",
+    # Monitoring and Alerting
+    "google-cloud-monitoring>=2.24.0",
+    "google-cloud-logging>=3.14.0",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]

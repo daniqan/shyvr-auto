@@ -1,0 +1,441 @@
+{
+  "metrics": [
+    {
+      "name": "trading_total_pnl",
+      "display_name": "Trading Total P&L",
+      "description": "Total profit and loss from all trading activities",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "USD",
+      "labels": [
+        {"key": "currency", "description": "Currency pair"},
+        {"key": "strategy", "description": "Trading strategy used"}
+      ]
+    },
+    {
+      "name": "trading_daily_pnl",
+      "display_name": "Trading Daily P&L",
+      "description": "Daily profit and loss from trading activities",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "USD",
+      "labels": [
+        {"key": "currency", "description": "Currency pair"},
+        {"key": "date", "description": "Trading date"}
+      ]
+    },
+    {
+      "name": "trading_volume",
+      "display_name": "Trading Volume",
+      "description": "Volume of trades executed",
+      "metric_kind": "CUMULATIVE",
+      "value_type": "DOUBLE",
+      "unit": "USD",
+      "labels": [
+        {"key": "symbol", "description": "Trading symbol"},
+        {"key": "side", "description": "Buy or sell"},
+        {"key": "dex", "description": "DEX platform used"}
+      ]
+    },
+    {
+      "name": "trading_success_rate",
+      "display_name": "Trading Success Rate",
+      "description": "Percentage of successful trades",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "symbol", "description": "Trading symbol"},
+        {"key": "timeframe", "description": "Measurement timeframe"}
+      ]
+    },
+    {
+      "name": "trading_position_count",
+      "display_name": "Active Position Count",
+      "description": "Number of currently active trading positions",
+      "metric_kind": "GAUGE",
+      "value_type": "INT64",
+      "unit": "1",
+      "labels": [
+        {"key": "symbol", "description": "Trading symbol"},
+        {"key": "side", "description": "Long or short position"}
+      ]
+    },
+    {
+      "name": "safety_risk_level",
+      "display_name": "Risk Level",
+      "description": "Overall system risk level (0-1 scale)",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "risk_type", "description": "Type of risk being measured"},
+        {"key": "timeframe", "description": "Risk assessment timeframe"}
+      ]
+    },
+    {
+      "name": "safety_emergency_stops",
+      "display_name": "Emergency Stops",
+      "description": "Number of emergency stops triggered",
+      "metric_kind": "CUMULATIVE",
+      "value_type": "INT64",
+      "unit": "1",
+      "labels": [
+        {"key": "reason", "description": "Reason for emergency stop"},
+        {"key": "trigger", "description": "System that triggered the stop"}
+      ]
+    },
+    {
+      "name": "safety_liquidations",
+      "display_name": "Position Liquidations",
+      "description": "Number of positions liquidated",
+      "metric_kind": "CUMULATIVE",
+      "value_type": "INT64",
+      "unit": "1",
+      "labels": [
+        {"key": "symbol", "description": "Trading symbol"},
+        {"key": "side", "description": "Position side"},
+        {"key": "reason", "description": "Liquidation reason"}
+      ]
+    },
+    {
+      "name": "safety_drawdown_percentage",
+      "display_name": "Portfolio Drawdown",
+      "description": "Current portfolio drawdown percentage",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "%",
+      "labels": [
+        {"key": "timeframe", "description": "Drawdown measurement period"}
+      ]
+    },
+    {
+      "name": "safety_margin_ratio",
+      "display_name": "Margin Ratio",
+      "description": "Current margin ratio for leveraged positions",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "account", "description": "Trading account identifier"}
+      ]
+    },
+    {
+      "name": "system_uptime",
+      "display_name": "System Uptime",
+      "description": "System uptime indicator (1 = up, 0 = down)",
+      "metric_kind": "GAUGE",
+      "value_type": "INT64",
+      "unit": "1",
+      "labels": [
+        {"key": "component", "description": "System component"}
+      ]
+    },
+    {
+      "name": "system_response_time",
+      "display_name": "System Response Time",
+      "description": "Average response time for system operations",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "s",
+      "labels": [
+        {"key": "operation", "description": "Type of operation"},
+        {"key": "endpoint", "description": "API endpoint"}
+      ]
+    },
+    {
+      "name": "system_error_rate",
+      "display_name": "System Error Rate",
+      "description": "Rate of system errors per minute",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1/min",
+      "labels": [
+        {"key": "error_type", "description": "Type of error"},
+        {"key": "component", "description": "System component"}
+      ]
+    },
+    {
+      "name": "ml_model_accuracy",
+      "display_name": "ML Model Accuracy",
+      "description": "Machine learning model prediction accuracy",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "model_type", "description": "Type of ML model"},
+        {"key": "timeframe", "description": "Evaluation timeframe"}
+      ]
+    },
+    {
+      "name": "ml_prediction_confidence",
+      "display_name": "ML Prediction Confidence",
+      "description": "Confidence score of ML predictions",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "model_type", "description": "Type of ML model"},
+        {"key": "symbol", "description": "Trading symbol"}
+      ]
+    },
+    {
+      "name": "rl_agent_reward",
+      "display_name": "RL Agent Reward",
+      "description": "Reinforcement learning agent reward score",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "agent_id", "description": "RL agent identifier"},
+        {"key": "episode", "description": "Training episode"}
+      ]
+    },
+    {
+      "name": "rl_exploration_rate",
+      "display_name": "RL Exploration Rate",
+      "description": "Current exploration rate (epsilon) for RL agent",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "agent_id", "description": "RL agent identifier"}
+      ]
+    },
+    {
+      "name": "dex_connection_status",
+      "display_name": "DEX Connection Status",
+      "description": "Status of DEX connections (1 = connected, 0 = disconnected)",
+      "metric_kind": "GAUGE",
+      "value_type": "INT64",
+      "unit": "1",
+      "labels": [
+        {"key": "dex", "description": "DEX platform name"},
+        {"key": "chain", "description": "Blockchain network"}
+      ]
+    },
+    {
+      "name": "wallet_balance",
+      "display_name": "Wallet Balance",
+      "description": "Current wallet balance by token",
+      "metric_kind": "GAUGE",
+      "value_type": "DOUBLE",
+      "unit": "1",
+      "labels": [
+        {"key": "token", "description": "Token symbol"},
+        {"key": "chain", "description": "Blockchain network"},
+        {"key": "wallet_type", "description": "Type of wallet"}
+      ]
+    }
+  ],
+  "notification_channels": [
+    {
+      "type": "email",
+      "display_name": "Shyvr RLTE Critical Alerts",
+      "labels": {
+        "email_address": "${ALERT_EMAIL_CRITICAL}"
+      },
+      "enabled": true
+    },
+    {
+      "type": "email",
+      "display_name": "Shyvr RLTE Warning Alerts",
+      "labels": {
+        "email_address": "${ALERT_EMAIL_WARNING}"
+      },
+      "enabled": true
+    }
+  ],
+  "alert_policies": [
+    {
+      "display_name": "Shyvr RLTE - Trading System Down",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/system_uptime\" AND metric.label.component=\"trading_system\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": 1,
+          "duration": "60s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## Trading System Down\n\nThe Shyvr RLTE trading system is not responding or has gone offline.\n\n**Immediate Actions:**\n1. Check system logs for errors\n2. Verify GCP instance status\n3. Check network connectivity\n4. Restart services if necessary\n\n**Escalation:** Contact on-call engineer if system remains down for more than 5 minutes.",
+      "enabled": true,
+      "severity": "critical"
+    },
+    {
+      "display_name": "Shyvr RLTE - Critical Risk Level",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/safety_risk_level\" AND metric.label.risk_type=\"overall\"",
+          "comparison": "COMPARISON_GT",
+          "threshold_value": 0.9,
+          "duration": "120s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## Critical Risk Level Alert\n\nOverall system risk level has exceeded 90% for more than 2 minutes.\n\n**Immediate Actions:**\n1. Review open positions\n2. Consider emergency stop if conditions warrant\n3. Check for market volatility\n4. Verify risk management systems are functioning\n\n**Risk Level Interpretation:**\n- 0.9-1.0: Critical risk, immediate attention required\n- 0.8-0.9: High risk, monitor closely\n- Below 0.8: Normal operations",
+      "enabled": true,
+      "severity": "critical"
+    },
+    {
+      "display_name": "Shyvr RLTE - Emergency Stop Triggered",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/safety_emergency_stops\"",
+          "comparison": "COMPARISON_GT",
+          "threshold_value": 0,
+          "duration": "0s",
+          "aggregation_per_series_aligner": "ALIGN_RATE",
+          "aggregation_cross_series_reducer": "REDUCE_SUM"
+        }
+      ],
+      "documentation": "## Emergency Stop Triggered\n\nAn emergency stop has been triggered by the risk management system.\n\n**Immediate Actions:**\n1. Verify all positions have been closed\n2. Check the reason for the emergency stop\n3. Review system logs for triggering conditions\n4. Do not restart trading until issue is resolved\n\n**Common Triggers:**\n- Excessive drawdown\n- High risk levels\n- System errors\n- Manual intervention",
+      "enabled": true,
+      "severity": "critical"
+    },
+    {
+      "display_name": "Shyvr RLTE - Large Daily Loss",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/trading_daily_pnl\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": -1000.0,
+          "duration": "0s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## Large Daily Loss Alert\n\nDaily trading loss has exceeded $1,000.\n\n**Immediate Actions:**\n1. Review trading performance for the day\n2. Check if loss is within acceptable risk parameters\n3. Consider reducing position sizes\n4. Verify ML/RL models are performing correctly\n\n**Risk Management:**\n- Daily loss limit: $2,000 (hard stop)\n- Current loss: Check dashboard for real-time figures\n- Consider manual intervention if approaching limits",
+      "enabled": true,
+      "severity": "warning"
+    },
+    {
+      "display_name": "Shyvr RLTE - High Drawdown",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/safety_drawdown_percentage\" AND metric.label.timeframe=\"daily\"",
+          "comparison": "COMPARISON_GT",
+          "threshold_value": 15.0,
+          "duration": "300s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## High Drawdown Alert\n\nDaily drawdown has exceeded 15% for more than 5 minutes.\n\n**Actions Required:**\n1. Review current market conditions\n2. Check if drawdown is temporary or trending\n3. Consider reducing exposure\n4. Verify stop-loss mechanisms are working\n\n**Drawdown Thresholds:**\n- 15%: Warning (this alert)\n- 20%: Critical alert\n- 25%: Emergency stop trigger",
+      "enabled": true,
+      "severity": "warning"
+    },
+    {
+      "display_name": "Shyvr RLTE - Low Trading Success Rate",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/trading_success_rate\" AND metric.label.symbol=\"ALL\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": 0.4,
+          "duration": "600s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## Low Trading Success Rate\n\nOverall trading success rate has dropped below 40% for 10 minutes.\n\n**Investigation Steps:**\n1. Check ML model performance\n2. Review recent market conditions\n3. Verify trading signals quality\n4. Consider model retraining if needed\n\n**Success Rate Benchmarks:**\n- Good: >60%\n- Acceptable: 40-60%\n- Poor: <40%",
+      "enabled": true,
+      "severity": "warning"
+    },
+    {
+      "display_name": "Shyvr RLTE - Low Margin Ratio",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/safety_margin_ratio\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": 1.5,
+          "duration": "120s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## Low Margin Ratio Alert\n\nMargin ratio has dropped below 1.5 for more than 2 minutes.\n\n**Immediate Actions:**\n1. Review leveraged positions\n2. Consider closing some positions to free up margin\n3. Check for any impending liquidations\n4. Monitor margin requirements closely\n\n**Margin Ratio Guidelines:**\n- >2.0: Safe\n- 1.5-2.0: Monitor closely\n- <1.5: Risk of liquidation",
+      "enabled": true,
+      "severity": "critical"
+    },
+    {
+      "display_name": "Shyvr RLTE - ML Model Accuracy Degradation",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/ml_model_accuracy\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": 0.65,
+          "duration": "900s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## ML Model Accuracy Degradation\n\nML model accuracy has dropped below 65% for 15 minutes.\n\n**Investigation Required:**\n1. Check model performance metrics\n2. Review recent training data quality\n3. Consider model retraining\n4. Verify feature engineering pipeline\n\n**Model Performance Standards:**\n- Excellent: >80%\n- Good: 70-80%\n- Acceptable: 65-70%\n- Poor: <65%",
+      "enabled": true,
+      "severity": "warning"
+    },
+    {
+      "display_name": "Shyvr RLTE - DEX Connection Issues",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/dex_connection_status\"",
+          "comparison": "COMPARISON_LT",
+          "threshold_value": 1,
+          "duration": "180s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## DEX Connection Issues\n\nOne or more DEX connections are down for more than 3 minutes.\n\n**Troubleshooting Steps:**\n1. Check network connectivity\n2. Verify API keys and authentication\n3. Check DEX platform status\n4. Review connection logs for errors\n\n**Impact:**\n- Trading may be limited to connected DEXs\n- Arbitrage opportunities may be missed\n- Portfolio rebalancing may be affected",
+      "enabled": true,
+      "severity": "warning"
+    },
+    {
+      "display_name": "Shyvr RLTE - High System Error Rate",
+      "conditions": [
+        {
+          "filter": "resource.type=\"gce_instance\" AND metric.type=\"custom.googleapis.com/shyvr_rlte/system_error_rate\"",
+          "comparison": "COMPARISON_GT",
+          "threshold_value": 10.0,
+          "duration": "300s",
+          "aggregation_per_series_aligner": "ALIGN_MEAN"
+        }
+      ],
+      "documentation": "## High System Error Rate\n\nSystem error rate has exceeded 10 errors per minute for 5 minutes.\n\n**Investigation Steps:**\n1. Check system logs for error patterns\n2. Identify most common error types\n3. Verify system resources (CPU, memory)\n4. Check external API status\n\n**Error Rate Thresholds:**\n- Normal: <5 errors/minute\n- Elevated: 5-10 errors/minute\n- High: >10 errors/minute",
+      "enabled": true,
+      "severity": "warning"
+    }
+  ],
+  "dashboard_config": {
+    "name": "Shyvr RLTE Trading System Monitoring",
+    "description": "Comprehensive monitoring dashboard for the Shyvr RLTE trading system",
+    "time_range": "1h",
+    "refresh_interval": "30s",
+    "panels": [
+      {
+        "title": "System Health Overview",
+        "type": "singlestat",
+        "metrics": [
+          "custom.googleapis.com/shyvr_rlte/system_uptime"
+        ]
+      },
+      {
+        "title": "Trading Performance",
+        "type": "graph",
+        "metrics": [
+          "custom.googleapis.com/shyvr_rlte/trading_daily_pnl",
+          "custom.googleapis.com/shyvr_rlte/trading_success_rate"
+        ]
+      },
+      {
+        "title": "Risk Management",
+        "type": "graph",
+        "metrics": [
+          "custom.googleapis.com/shyvr_rlte/safety_risk_level",
+          "custom.googleapis.com/shyvr_rlte/safety_drawdown_percentage"
+        ]
+      },
+      {
+        "title": "ML/RL Performance",
+        "type": "graph",
+        "metrics": [
+          "custom.googleapis.com/shyvr_rlte/ml_model_accuracy",
+          "custom.googleapis.com/shyvr_rlte/rl_agent_reward"
+        ]
+      }
+    ]
+  }
+}
