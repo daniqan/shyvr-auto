@@ -7,11 +7,12 @@ import numpy as np
 from datetime import datetime
 from collections import deque
 from typing import Dict, List, Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.rl_agent.base import TradeAction, MarketState
 from src.rl_agent.experience_replay import (
     Experience, ExperienceReplayBuffer, PrioritizedExperienceReplayBuffer,
-    ReplayBufferConfig, ExperienceReplayError
+    ReplayBufferConfig, ExperienceReplayError, DatabaseExperienceReplayBuffer
 )
 from src.discovery.base import DiscoveredToken
 from src.utils.base import Chain
@@ -662,3 +663,346 @@ class TestExperienceReplayIntegration:
         assert buffer.can_sample()
         batch = buffer.sample()
         assert len(batch) == buffer.config.batch_size
+
+
+class TestDatabaseExperienceReplayBuffer:
+    """Test Database-backed Experience Replay Buffer"""
+    
+    @pytest.fixture
+    def database_config(self):
+        """Create database buffer configuration"""
+        return ReplayBufferConfig(
+            max_size=1000,
+            batch_size=16,
+            min_size=10,
+            prioritized=True,
+            alpha=0.6,
+            beta_start=0.4
+        )
+    
+    @pytest.fixture
+    def sample_experiences(self):
+        """Create sample experiences for database testing"""
+        experiences = []
+        
+        for i in range(30):
+            state = np.random.randn(MarketState.get_feature_size()).astype(np.float32)
+            next_state = state + np.random.randn(MarketState.get_feature_size()).astype(np.float32) * 0.1
+            
+            experience = Experience(
+                state=state,
+                action=i % 5,
+                reward=np.random.uniform(-1, 1),
+                next_state=next_state,
+                done=(i % 10 == 9),
+                timestamp=datetime.now()
+            )
+            experiences.append(experience)
+        
+        return experiences
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_initialization(self, database_config):
+        """Test database buffer initialization with connection setup"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer, \
+             patch('src.rl_agent.experience_database.DatabaseExperienceConfig') as MockConfig:
+            mock_buffer = AsyncMock()
+            mock_buffer.initialize = AsyncMock()
+            mock_buffer.size = AsyncMock(return_value=0)
+            mock_buffer.can_sample = AsyncMock(return_value=False)
+            MockBuffer.return_value = mock_buffer
+            MockConfig.return_value = MagicMock()
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            await buffer.initialize()
+            
+            assert buffer.config == database_config
+            assert await buffer.size_async() == 0
+            assert not await buffer.can_sample_async()
+            mock_buffer.initialize.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_add_experience(self, database_config, sample_experiences):
+        """Test adding experiences to database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer, \
+             patch('src.rl_agent.experience_database.DatabaseExperienceConfig'):
+            mock_buffer = AsyncMock()
+            mock_buffer.add = AsyncMock()
+            mock_buffer.size = AsyncMock(return_value=1)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            experience = sample_experiences[0]
+            
+            await buffer.add_async(experience)
+            
+            mock_buffer.add.assert_called_once_with(experience, None, None)
+            assert await buffer.size_async() == 1
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_add_batch(self, database_config, sample_experiences):
+        """Test adding batch of experiences to database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_buffer.add_batch = AsyncMock()
+            mock_buffer.size = AsyncMock(return_value=len(sample_experiences))
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            await buffer.add_batch(sample_experiences)
+            
+            mock_buffer.add_batch.assert_called_once_with(sample_experiences)
+            assert await buffer.size() == len(sample_experiences)
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_sample(self, database_config, sample_experiences):
+        """Test sampling from database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_batch = [
+                {
+                    'state': exp.state,
+                    'action': exp.action,
+                    'reward': exp.reward,
+                    'next_state': exp.next_state,
+                    'done': exp.done,
+                    'weight': 1.0,
+                    'database_id': i
+                }
+                for i, exp in enumerate(sample_experiences[:database_config.batch_size])
+            ]
+            mock_buffer.sample = AsyncMock(return_value=mock_batch)
+            mock_buffer.can_sample = AsyncMock(return_value=True)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            batch = await buffer.sample()
+            
+            assert len(batch) == database_config.batch_size
+            assert all('weight' in item for item in batch)
+            assert all('database_id' in item for item in batch)
+            mock_buffer.sample.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_update_priorities(self, database_config):
+        """Test updating priorities in database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_buffer.update_priorities = AsyncMock(return_value=5)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            priority_updates = [
+                {'database_id': 0, 'priority': 0.8, 'td_error': 0.5},
+                {'database_id': 1, 'priority': 0.6, 'td_error': 0.3}
+            ]
+            
+            updated_count = await buffer.update_priorities(priority_updates)
+            
+            assert updated_count == 5
+            mock_buffer.update_priorities.assert_called_once_with(priority_updates)
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_can_sample_insufficient_data(self, database_config):
+        """Test sampling when insufficient data in database"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_buffer.can_sample = AsyncMock(return_value=False)
+            mock_buffer.size = AsyncMock(return_value=5)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            assert not await buffer.can_sample()
+            assert await buffer.size() < database_config.min_size
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_performance_metrics(self, database_config):
+        """Test performance metrics collection for database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_metrics = {
+                'insertion_latency_ms': 25.5,
+                'query_latency_ms': 15.2,
+                'cache_hit_rate': 0.85,
+                'total_operations': 1000,
+                'insertion_count': 500,
+                'query_count': 500
+            }
+            mock_buffer.get_performance_metrics = AsyncMock(return_value=mock_metrics)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            metrics = await buffer.get_performance_metrics()
+            
+            assert 'insertion_latency_ms' in metrics
+            assert 'cache_hit_rate' in metrics
+            assert metrics['insertion_latency_ms'] < 50  # Performance requirement
+            mock_buffer.get_performance_metrics.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_statistics(self, database_config):
+        """Test comprehensive statistics for database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_stats = {
+                'session_id': 'test-session-123',
+                'total_experiences': 1000,
+                'cache_hit_rate': 0.75,
+                'insertion_rate': 20.5,
+                'query_time_avg': 12.3,
+                'beta_current': 0.6,
+                'training_step': 500
+            }
+            mock_buffer.get_statistics = AsyncMock(return_value=mock_stats)
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            stats = await buffer.get_statistics()
+            
+            assert 'total_experiences' in stats
+            assert 'cache_hit_rate' in stats
+            assert 'training_step' in stats
+            mock_buffer.get_statistics.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_cleanup(self, database_config):
+        """Test database buffer cleanup and resource management"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_buffer.cleanup = AsyncMock()
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            await buffer.cleanup()
+            
+            mock_buffer.cleanup.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_memory_caching(self, database_config, sample_experiences):
+        """Test memory caching functionality in database buffer"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            # First call misses cache, second hits cache
+            mock_buffer.get_recent = AsyncMock(side_effect=[
+                [exp.__dict__ for exp in sample_experiences[:10]],
+                [exp.__dict__ for exp in sample_experiences[:10]]  # Same data, cached
+            ])
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            # First call - cache miss
+            recent1 = await buffer.get_recent(limit=10)
+            # Second call - should use cache
+            recent2 = await buffer.get_recent(limit=10)
+            
+            assert len(recent1) == 10
+            assert len(recent2) == 10
+            assert mock_buffer.get_recent.call_count == 2
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_error_handling(self, database_config):
+        """Test error handling in database buffer operations"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            mock_buffer.sample = AsyncMock(side_effect=Exception("Database connection failed"))
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            with pytest.raises(Exception, match="Database connection failed"):
+                await buffer.sample()
+
+
+class TestDatabaseExperienceReplayBufferFactory:
+    """Test factory function for database experience replay buffer"""
+    
+    def test_create_database_replay_buffer(self):
+        """Test factory function creates database buffer correctly"""
+        config = ReplayBufferConfig(
+            max_size=5000,
+            batch_size=32,
+            min_size=100,
+            prioritized=True
+        )
+        
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer, \
+             patch('src.rl_agent.experience_database.DatabaseExperienceConfig') as MockConfig:
+            mock_buffer = AsyncMock()
+            mock_config = MagicMock()
+            MockBuffer.return_value = mock_buffer
+            MockConfig.return_value = mock_config
+            
+            from src.rl_agent.experience_replay import create_database_replay_buffer
+            
+            buffer = create_database_replay_buffer(config)
+            
+            assert buffer is not None
+            # Verify config conversion happened
+            MockConfig.assert_called_once()
+            MockBuffer.assert_called_once_with(mock_config)
+
+
+class TestDatabaseReplayBufferIntegration:
+    """Integration tests for database replay buffer with existing system"""
+    
+    @pytest.mark.asyncio
+    async def test_database_buffer_backward_compatibility(self, database_config, sample_experiences):
+        """Test that database buffer maintains backward compatibility with existing API"""
+        with patch('src.rl_agent.experience_database.DatabaseExperienceBuffer') as MockBuffer:
+            mock_buffer = AsyncMock()
+            
+            # Mock all expected methods to maintain API compatibility
+            mock_buffer.add = AsyncMock()
+            mock_buffer.sample = AsyncMock(return_value=[
+                {
+                    'state': exp.state,
+                    'action': exp.action,
+                    'reward': exp.reward,
+                    'next_state': exp.next_state,
+                    'done': exp.done
+                }
+                for exp in sample_experiences[:database_config.batch_size]
+            ])
+            mock_buffer.can_sample = AsyncMock(return_value=True)
+            mock_buffer.size = AsyncMock(return_value=len(sample_experiences))
+            mock_buffer.clear = AsyncMock()
+            mock_buffer.get_statistics = AsyncMock(return_value={
+                'size': len(sample_experiences),
+                'max_size': database_config.max_size,
+                'can_sample': True,
+                'utilization': 0.5,
+                'average_reward': 0.1,
+                'action_distribution': {0: 6, 1: 6, 2: 6, 3: 6, 4: 6}
+            })
+            
+            MockBuffer.return_value = mock_buffer
+            
+            buffer = DatabaseExperienceReplayBuffer(database_config)
+            
+            # Test all public API methods exist and work
+            for experience in sample_experiences[:10]:
+                await buffer.add(experience)
+            
+            assert await buffer.can_sample()
+            batch = await buffer.sample()
+            assert len(batch) == database_config.batch_size
+            
+            stats = await buffer.get_statistics()
+            assert 'size' in stats
+            assert 'utilization' in stats
+            
+            await buffer.clear()
+            
+            # Verify all expected calls were made
+            assert mock_buffer.add.call_count == 10
+            mock_buffer.sample.assert_called()
+            mock_buffer.get_statistics.assert_called()
+            mock_buffer.clear.assert_called()
