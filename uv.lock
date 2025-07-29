@@ -1025,6 +1025,21 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-monitoring-dashboards"
+version = "2.18.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/34/9e52c6fbc9178d296233766fe08519beb65c334078f67f4ffcd5ef7c5189/google_cloud_monitoring_dashboards-2.18.2.tar.gz", hash = "sha256:8163e22b017140dd16021cc985379c8df80c25af6c4d27d9e0b2e8006e059f44", size = 113112, upload-time = "2025-06-11T23:48:06.08Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/ad/936b9a15064f0d54b16f6c6653bcf84f57f64673a31f70f8b30e18f18644/google_cloud_monitoring_dashboards-2.18.2-py3-none-any.whl", hash = "sha256:9bab6ccb4c43cf469d8d0a6f49fb9a9fbd161198b4c3ecf624792e6ace332483", size = 140905, upload-time = "2025-06-11T23:48:04.64Z" },
+]
+
+[[package]]
 name = "google-cloud-secret-manager"
 version = "2.24.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3061,6 +3076,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "google-cloud-logging" },
     { name = "google-cloud-monitoring" },
+    { name = "google-cloud-monitoring-dashboards" },
     { name = "google-cloud-secret-manager" },
     { name = "gymnasium" },
     { name = "httpx" },
@@ -3140,6 +3156,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "google-cloud-logging", specifier = ">=3.10.0" },
     { name = "google-cloud-monitoring", specifier = ">=2.24.0" },
+    { name = "google-cloud-monitoring-dashboards", specifier = ">=2.18.2" },
     { name = "google-cloud-secret-manager", specifier = ">=2.24.0" },
     { name = "gymnasium", specifier = ">=1.1.1" },
     { name = "httpx", specifier = ">=0.28.1" },

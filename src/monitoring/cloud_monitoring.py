@@ -15,7 +15,7 @@ from decimal import Decimal
 from contextlib import asynccontextmanager
 
 from google.cloud import monitoring_v3
-from google.cloud.monitoring_dashboard import v1 as dashboard_v1
+from google.cloud import monitoring_dashboard
 from google.api_core import exceptions as gcp_exceptions
 
 from .base import MetricsCollector, MetricsRegistry
@@ -90,7 +90,7 @@ class CloudMonitoringClient:
             self.client = monitoring_v3.MetricServiceClient()
             self.alert_client = monitoring_v3.AlertPolicyServiceClient()
             self.notification_client = monitoring_v3.NotificationChannelServiceClient()
-            self.dashboard_client = dashboard_v1.DashboardsServiceClient()
+            self.dashboard_client = monitoring_dashboard.DashboardsServiceClient()
             
             logger.info(f"Initialized Cloud Monitoring client for project: {project_id}")
             
