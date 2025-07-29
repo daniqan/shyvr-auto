@@ -263,8 +263,9 @@ class TestLiveModeDatabaseIntegration:
     ):
         """Test that live mode properly initializes production database experience storage."""
         # This test will fail until we implement database configuration in live mode
-        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer):
-            from src.modes.live_mode import LiveMode
+        from src.modes.live_mode import LiveMode
+        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer), \
+             patch.object(LiveMode, '_initialize_dex_clients', new_callable=AsyncMock):
             
             mode = LiveMode(
                 mode_id=uuid4(),
@@ -288,8 +289,9 @@ class TestLiveModeDatabaseIntegration:
         self, live_config_with_db, portfolio, mock_database_buffer, market_state
     ):
         """Test that live mode enables real-time experience persistence."""
-        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer):
-            from src.modes.live_mode import LiveMode
+        from src.modes.live_mode import LiveMode
+        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer), \
+             patch.object(LiveMode, '_initialize_dex_clients', new_callable=AsyncMock):
             
             mode = LiveMode(
                 mode_id=uuid4(),
@@ -314,8 +316,9 @@ class TestLiveModeDatabaseIntegration:
         self, live_config_with_db, portfolio, mock_database_buffer, market_state
     ):
         """Test that live mode applies production safety validation to experiences."""
-        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer):
-            from src.modes.live_mode import LiveMode
+        from src.modes.live_mode import LiveMode
+        with patch('src.modes.live_mode.DatabaseExperienceBuffer', return_value=mock_database_buffer), \
+             patch.object(LiveMode, '_initialize_dex_clients', new_callable=AsyncMock):
             
             mode = LiveMode(
                 mode_id=uuid4(),
