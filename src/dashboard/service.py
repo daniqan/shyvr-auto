@@ -2171,10 +2171,10 @@ class DashboardService:
             )
             
             # Get database connection
-            from ..utils.database import DatabaseManager
+            from ..utils.database import get_database_pool
             
-            db_manager = DatabaseManager()
-            async with db_manager.get_connection() as conn:
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
                 # Build query with filters
                 query_conditions = []
                 query_params = []
@@ -2283,10 +2283,10 @@ class DashboardService:
             )
             
             # Get database connection
-            from ..utils.database import DatabaseManager
+            from ..utils.database import get_database_pool
             
-            db_manager = DatabaseManager()
-            async with db_manager.get_connection() as conn:
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
                 # Basic statistics query
                 stats_query = """
                     SELECT 
@@ -2421,10 +2421,10 @@ class DashboardService:
             )
             
             # Get database connection
-            from ..utils.database import DatabaseManager
+            from ..utils.database import get_database_pool
             
-            db_manager = DatabaseManager()
-            async with db_manager.get_connection() as conn:
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
                 # Overall performance metrics
                 overall_query = """
                     SELECT 
@@ -2608,10 +2608,10 @@ class DashboardService:
             )
             
             # Get database connection
-            from ..utils.database import DatabaseManager
+            from ..utils.database import get_database_pool
             
-            db_manager = DatabaseManager()
-            async with db_manager.get_connection() as conn:
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
                 # Build dynamic query with filters
                 query_conditions = []
                 query_params = []
@@ -2752,6 +2752,752 @@ class DashboardService:
                 severity=ActivitySeverity.ERROR
             )
             raise DashboardError(f"Failed to search experiences: {str(e)}")
+
+    # =============================================================================
+    # ENHANCED EXPERIENCE SERVICE METHODS (Phase 5.2)
+    # =============================================================================
+    
+    async def get_experience_aggregation_by_session(
+        self,
+        hours_back: int = 24,
+        min_experiences: int = 1
+    ) -> Dict[str, Any]:
+        """Get experience data aggregated by session"""
+        if hours_back <= 0:
+            raise ValueError("hours_back must be positive")
+        
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_session",
+                title="Experience aggregation by session requested",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "hours_back": hours_back,
+                    "min_experiences": min_experiences
+                }
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Session aggregation query
+                session_query = """
+                    SELECT 
+                        session_id,
+                        COUNT(*) as experience_count,
+                        SUM(reward) as total_reward,
+                        AVG(reward) as avg_reward,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as success_rate,
+                        EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) / 60 as duration_minutes,
+                        MIN(created_at) as session_start,
+                        MAX(created_at) as session_end,
+                        trading_mode,
+                        COUNT(DISTINCT token_address) as unique_tokens
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY session_id, trading_mode
+                    HAVING COUNT(*) >= %s
+                    ORDER BY session_start DESC
+                """
+                
+                rows = await conn.fetch(session_query, hours_back, min_experiences)
+                
+                # Convert rows to dictionaries
+                sessions = []
+                for row in rows:
+                    session = {
+                        "session_id": str(row['session_id']),
+                        "experience_count": row['experience_count'],
+                        "total_reward": float(row['total_reward']),
+                        "avg_reward": float(row['avg_reward']),
+                        "success_rate": float(row['success_rate']),
+                        "duration_minutes": float(row['duration_minutes']) if row['duration_minutes'] else 0,
+                        "session_start": row['session_start'].isoformat(),
+                        "session_end": row['session_end'].isoformat(),
+                        "trading_mode": row['trading_mode'],
+                        "unique_tokens": row['unique_tokens']
+                    }
+                    sessions.append(session)
+                
+                # Calculate summary statistics
+                total_sessions = len(sessions)
+                total_experiences = sum(s['experience_count'] for s in sessions)
+                avg_reward_per_session = sum(s['total_reward'] for s in sessions) / total_sessions if total_sessions > 0 else 0
+                
+                return {
+                    "sessions": sessions,
+                    "summary": {
+                        "total_sessions": total_sessions,
+                        "total_experiences": total_experiences,
+                        "avg_reward_per_session": avg_reward_per_session,
+                        "hours_analyzed": hours_back
+                    }
+                }
+                
+        except Exception as e:
+            logger.error("Failed to aggregate experiences by session", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_session_failed",
+                title="Failed to aggregate experiences by session",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to aggregate experiences by session: {str(e)}")
+    
+    async def get_experience_aggregation_by_action(
+        self,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Get experience data aggregated by action type"""
+        if hours_back <= 0:
+            raise ValueError("hours_back must be positive")
+            
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_action",
+                title="Experience aggregation by action requested",
+                severity=ActivitySeverity.INFO,
+                metadata={"hours_back": hours_back}
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Action aggregation query
+                action_query = """
+                    SELECT 
+                        action,
+                        COUNT(*) as count,
+                        AVG(reward) as avg_reward,
+                        SUM(reward) as total_reward,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as success_rate,
+                        STDDEV(reward) as reward_std,
+                        MIN(reward) as min_reward,
+                        MAX(reward) as max_reward
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY action
+                    ORDER BY action
+                """
+                
+                rows = await conn.fetch(action_query, hours_back)
+                
+                # Convert rows to dictionaries with action names
+                action_names = {0: "HOLD", 1: "BUY", 2: "SELL", 3: "WAIT"}
+                actions = []
+                for row in rows:
+                    action = {
+                        "action": row['action'],
+                        "action_name": action_names.get(row['action'], f"ACTION_{row['action']}"),
+                        "count": row['count'],
+                        "avg_reward": float(row['avg_reward']),
+                        "total_reward": float(row['total_reward']),
+                        "success_rate": float(row['success_rate']),
+                        "reward_std": float(row['reward_std']) if row['reward_std'] else 0,
+                        "min_reward": float(row['min_reward']),
+                        "max_reward": float(row['max_reward'])
+                    }
+                    actions.append(action)
+                
+                # Calculate total statistics
+                total_experiences = sum(a['count'] for a in actions)
+                best_action = max(actions, key=lambda x: x['avg_reward']) if actions else None
+                
+                return {
+                    "actions": actions,
+                    "summary": {
+                        "total_experiences": total_experiences,
+                        "best_action": best_action['action_name'] if best_action else None,
+                        "best_action_avg_reward": best_action['avg_reward'] if best_action else 0,
+                        "hours_analyzed": hours_back
+                    }
+                }
+                
+        except Exception as e:
+            logger.error("Failed to aggregate experiences by action", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_action_failed",
+                title="Failed to aggregate experiences by action",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to aggregate experiences by action: {str(e)}")
+    
+    async def get_experience_aggregation_by_time(
+        self,
+        hours_back: int = 24,
+        bucket_size: str = 'hour'
+    ) -> Dict[str, Any]:
+        """Get experience data aggregated by time periods"""
+        if hours_back <= 0:
+            raise ValueError("hours_back must be positive")
+        
+        if bucket_size not in ['minute', 'hour', 'day']:
+            raise ValueError("Invalid bucket_size. Must be 'minute', 'hour', or 'day'")
+            
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_time",
+                title="Experience aggregation by time requested",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "hours_back": hours_back,
+                    "bucket_size": bucket_size
+                }
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Time aggregation query
+                time_query = f"""
+                    SELECT 
+                        DATE_TRUNC('{bucket_size}', created_at) as time_bucket,
+                        COUNT(*) as count,
+                        AVG(reward) as avg_reward,
+                        SUM(reward) as total_reward,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as success_rate
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY DATE_TRUNC('{bucket_size}', created_at)
+                    ORDER BY time_bucket
+                """
+                
+                rows = await conn.fetch(time_query, hours_back)
+                
+                # Convert rows to dictionaries
+                time_buckets = []
+                for row in rows:
+                    bucket = {
+                        "time_bucket": row['time_bucket'].isoformat(),
+                        "count": row['count'],
+                        "avg_reward": float(row['avg_reward']),
+                        "total_reward": float(row['total_reward']),
+                        "success_rate": float(row['success_rate'])
+                    }
+                    time_buckets.append(bucket)
+                
+                # Calculate peak activity time
+                peak_bucket = max(time_buckets, key=lambda x: x['count']) if time_buckets else None
+                
+                return {
+                    "time_buckets": time_buckets,
+                    "summary": {
+                        "bucket_size": bucket_size,
+                        "total_buckets": len(time_buckets),
+                        "peak_activity_time": peak_bucket['time_bucket'] if peak_bucket else None,
+                        "peak_activity_count": peak_bucket['count'] if peak_bucket else 0,
+                        "hours_analyzed": hours_back
+                    }
+                }
+                
+        except Exception as e:
+            logger.error("Failed to aggregate experiences by time", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_experience_aggregation_by_time_failed",
+                title="Failed to aggregate experiences by time",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to aggregate experiences by time: {str(e)}")
+    
+    async def prepare_experience_visualization_data(
+        self,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Prepare comprehensive experience data for visualization"""
+        if hours_back <= 0:
+            raise ValueError("hours_back must be positive")
+            
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="prepare_experience_visualization_data",
+                title="Experience visualization data preparation requested",
+                severity=ActivitySeverity.INFO,
+                metadata={"hours_back": hours_back}
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Reward distribution histogram
+                reward_dist_query = """
+                    SELECT 
+                        FLOOR(reward / 5) * 5 as reward_bin,
+                        COUNT(*) as count
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY FLOOR(reward / 5) * 5
+                    ORDER BY reward_bin
+                """
+                
+                # Performance timeline (hourly)
+                timeline_query = """
+                    SELECT 
+                        DATE_TRUNC('hour', created_at) as time_bucket,
+                        SUM(SUM(reward)) OVER (ORDER BY DATE_TRUNC('hour', created_at)) as cumulative_reward
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY DATE_TRUNC('hour', created_at)
+                    ORDER BY time_bucket
+                """
+                
+                # Action heatmap (hour vs action)
+                heatmap_query = """
+                    SELECT 
+                        EXTRACT(HOUR FROM created_at) as hour,
+                        action,
+                        COUNT(*) as count
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY EXTRACT(HOUR FROM created_at), action
+                    ORDER BY hour, action
+                """
+                
+                # Execute queries
+                reward_dist_result = await conn.fetch(reward_dist_query, hours_back)
+                timeline_result = await conn.fetch(timeline_query, hours_back)
+                heatmap_result = await conn.fetch(heatmap_query, hours_back)
+                
+                # Process reward distribution
+                reward_distribution = {
+                    "bins": [float(row['reward_bin']) for row in reward_dist_result],
+                    "counts": [row['count'] for row in reward_dist_result]
+                }
+                
+                # Process performance timeline
+                performance_timeline = [
+                    {
+                        "timestamp": row['time_bucket'].isoformat(),
+                        "cumulative_reward": float(row['cumulative_reward'])
+                    }
+                    for row in timeline_result
+                ]
+                
+                # Process action heatmap
+                heatmap_data = {}
+                for row in heatmap_result:
+                    hour = int(row['hour'])
+                    action = row['action']
+                    count = row['count']
+                    
+                    if hour not in heatmap_data:
+                        heatmap_data[hour] = {}
+                    heatmap_data[hour][action] = count
+                
+                # Convert to matrix format
+                action_heatmap = {
+                    "hours": list(range(24)),
+                    "actions": [0, 1, 2, 3],
+                    "data": [
+                        [heatmap_data.get(hour, {}).get(action, 0) for action in range(4)]
+                        for hour in range(24)
+                    ]
+                }
+                
+                return {
+                    "reward_distribution": reward_distribution,
+                    "performance_timeline": performance_timeline,
+                    "action_heatmap": action_heatmap,
+                    "metadata": {
+                        "hours_analyzed": hours_back,
+                        "generated_at": datetime.utcnow().isoformat()
+                    }
+                }
+                
+        except Exception as e:
+            logger.error("Failed to prepare visualization data", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="prepare_visualization_data_failed",
+                title="Failed to prepare visualization data",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to prepare visualization data: {str(e)}")
+    
+    async def prepare_experience_correlation_matrix(
+        self,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Prepare correlation matrix for experience features"""
+        if hours_back <= 0:
+            raise ValueError("hours_back must be positive")
+            
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="prepare_experience_correlation_matrix",
+                title="Experience correlation matrix preparation requested",
+                severity=ActivitySeverity.INFO,
+                metadata={"hours_back": hours_back}
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Calculate correlations between different features
+                correlation_query = """
+                    WITH experience_features AS (
+                        SELECT 
+                            reward,
+                            priority,
+                            action,
+                            CASE WHEN done THEN 1 ELSE 0 END as is_done
+                        FROM rl_experiences 
+                        WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    ),
+                    correlations AS (
+                        SELECT 
+                            'reward' as feature_1, 'priority' as feature_2,
+                            CORR(reward, priority) as correlation
+                        FROM experience_features
+                        UNION ALL
+                        SELECT 
+                            'reward' as feature_1, 'action' as feature_2,
+                            CORR(reward, action::float) as correlation
+                        FROM experience_features
+                        UNION ALL
+                        SELECT 
+                            'priority' as feature_1, 'action' as feature_2,
+                            CORR(priority, action::float) as correlation
+                        FROM experience_features
+                        UNION ALL
+                        SELECT 
+                            'reward' as feature_1, 'is_done' as feature_2,
+                            CORR(reward, is_done) as correlation
+                        FROM experience_features
+                    )
+                    SELECT * FROM correlations WHERE correlation IS NOT NULL
+                """
+                
+                rows = await conn.fetch(correlation_query, hours_back)
+                
+                # Convert to correlation matrix format
+                correlations = [
+                    {
+                        "feature_1": row['feature_1'],
+                        "feature_2": row['feature_2'],
+                        "correlation": float(row['correlation'])
+                    }
+                    for row in rows
+                ]
+                
+                return {
+                    "correlations": correlations,
+                    "metadata": {
+                        "hours_analyzed": hours_back,
+                        "generated_at": datetime.utcnow().isoformat()
+                    }
+                }
+                
+        except Exception as e:
+            logger.error("Failed to prepare correlation matrix", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="prepare_correlation_matrix_failed",
+                title="Failed to prepare correlation matrix",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to prepare correlation matrix: {str(e)}")
+    
+    async def get_real_time_experience_metrics(self) -> Dict[str, Any]:
+        """Get real-time experience metrics for monitoring"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_real_time_experience_metrics",
+                title="Real-time experience metrics requested",
+                severity=ActivitySeverity.INFO
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Real-time metrics query
+                metrics_query = """
+                    SELECT 
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 minute' THEN 1 END) as experiences_last_minute,
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 hour' THEN 1 END) as experiences_last_hour,
+                        AVG(CASE WHEN created_at >= NOW() - INTERVAL '1 minute' THEN reward END) as avg_reward_last_minute,
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 minute' AND reward > 0 THEN 1 END)::float / 
+                            NULLIF(COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 minute' THEN 1 END), 0) as success_rate_last_minute,
+                        COUNT(DISTINCT CASE WHEN created_at >= NOW() - INTERVAL '1 hour' THEN session_id END) as current_session_count
+                    FROM rl_experiences
+                """
+                
+                # Active trading modes query
+                modes_query = """
+                    SELECT DISTINCT trading_mode 
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL '1 hour'
+                        AND trading_mode IS NOT NULL
+                """
+                
+                metrics_result = await conn.fetchrow(metrics_query)
+                modes_result = await conn.fetch(modes_query)
+                
+                return {
+                    "experiences_last_minute": metrics_result['experiences_last_minute'],
+                    "experiences_last_hour": metrics_result['experiences_last_hour'],
+                    "avg_reward_last_minute": float(metrics_result['avg_reward_last_minute']) if metrics_result['avg_reward_last_minute'] else 0.0,
+                    "success_rate_last_minute": float(metrics_result['success_rate_last_minute']) if metrics_result['success_rate_last_minute'] else 0.0,
+                    "current_session_count": metrics_result['current_session_count'],
+                    "active_trading_modes": [row['trading_mode'] for row in modes_result],
+                    "last_updated": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            logger.error("Failed to get real-time metrics", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_real_time_metrics_failed",
+                title="Failed to get real-time metrics",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to get real-time metrics: {str(e)}")
+    
+    async def get_experience_stream_status(self) -> Dict[str, Any]:
+        """Get status of experience data streams for monitoring"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_stream_status",
+                title="Experience stream status requested",
+                severity=ActivitySeverity.INFO
+            )
+            
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Stream status query
+                stream_query = """
+                    WITH session_stats AS (
+                        SELECT 
+                            session_id,
+                            MAX(created_at) as last_experience_at,
+                            COUNT(*) as total_experiences,
+                            COUNT(*)::float / EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) * 60 as experiences_per_minute,
+                            trading_mode,
+                            CASE 
+                                WHEN MAX(created_at) >= NOW() - INTERVAL '5 minutes' THEN true 
+                                ELSE false 
+                            END as is_active
+                        FROM rl_experiences 
+                        WHERE created_at >= NOW() - INTERVAL '24 hours'
+                        GROUP BY session_id, trading_mode
+                    )
+                    SELECT 
+                        session_id,
+                        last_experience_at,
+                        experiences_per_minute,
+                        is_active,
+                        trading_mode
+                    FROM session_stats
+                    WHERE total_experiences > 10
+                    ORDER BY last_experience_at DESC
+                """
+                
+                rows = await conn.fetch(stream_query)
+                
+                # Convert to response format
+                active_sessions = []
+                for row in rows:
+                    session = {
+                        "session_id": str(row['session_id']),
+                        "last_experience_at": row['last_experience_at'].isoformat(),
+                        "experiences_per_minute": float(row['experiences_per_minute']) if row['experiences_per_minute'] else 0.0,
+                        "is_active": row['is_active'],
+                        "trading_mode": row['trading_mode']
+                    }
+                    active_sessions.append(session)
+                
+                # Calculate summary stats
+                active_count = sum(1 for s in active_sessions if s['is_active'])
+                total_sessions = len(active_sessions)
+                
+                return {
+                    "active_sessions": active_sessions,
+                    "summary": {
+                        "total_sessions": total_sessions,
+                        "active_sessions": active_count,
+                        "inactive_sessions": total_sessions - active_count
+                    },
+                    "last_updated": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            logger.error("Failed to get stream status", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_stream_status_failed",
+                title="Failed to get stream status",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to get stream status: {str(e)}")
+    
+    async def get_cached_experience_summary(self) -> Dict[str, Any]:
+        """Get cached experience summary for improved performance"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_cached_experience_summary",
+                title="Cached experience summary requested",
+                severity=ActivitySeverity.INFO
+            )
+            
+            # Try to get from cache first
+            cached_data = await dashboard_cache.get_experience_summary()
+            if cached_data:
+                cached_data["cache_hit"] = True
+                return cached_data
+            
+            # If not cached, compute and cache
+            # Get database connection
+            from ..utils.database import get_database_pool
+            
+            pool = await get_database_pool()
+            async with pool.acquire() as conn:
+                # Summary query
+                summary_query = """
+                    SELECT 
+                        COUNT(*) as total_experiences,
+                        COUNT(DISTINCT session_id) as total_sessions,
+                        AVG(reward) as avg_reward,
+                        SUM(reward) as total_reward,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as success_rate,
+                        MAX(created_at) as last_experience_at
+                    FROM rl_experiences
+                """
+                
+                result = await conn.fetchrow(summary_query)
+                
+                summary = {
+                    "total_experiences": result['total_experiences'],
+                    "total_sessions": result['total_sessions'],
+                    "avg_reward": float(result['avg_reward']) if result['avg_reward'] else 0.0,
+                    "total_reward": float(result['total_reward']) if result['total_reward'] else 0.0,
+                    "success_rate": float(result['success_rate']) if result['success_rate'] else 0.0,
+                    "last_experience_at": result['last_experience_at'].isoformat() if result['last_experience_at'] else None,
+                    "last_updated": datetime.utcnow().isoformat(),
+                    "cache_hit": False
+                }
+                
+                # Cache the result
+                await dashboard_cache.set_experience_summary(summary)
+                
+                return summary
+                
+        except Exception as e:
+            logger.error("Failed to get cached experience summary", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_cached_experience_summary_failed",
+                title="Failed to get cached experience summary",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to get cached experience summary: {str(e)}")
+    
+    async def invalidate_experience_cache(self) -> bool:
+        """Invalidate experience-related cache entries"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.UPDATE,
+                source="dashboard_service",
+                event_type="invalidate_experience_cache",
+                title="Experience cache invalidation requested",
+                severity=ActivitySeverity.INFO
+            )
+            
+            # Invalidate experience cache
+            result = await dashboard_cache.invalidate_experience_data()
+            
+            if result:
+                logger.info("Experience cache invalidated successfully")
+            else:
+                logger.warning("Experience cache invalidation returned false")
+                
+            return result
+                
+        except Exception as e:
+            logger.error("Failed to invalidate experience cache", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="invalidate_experience_cache_failed",
+                title="Failed to invalidate experience cache",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            return False
 
     def record_request(self, response_time: float, error: bool = False) -> None:
         """Record API request metrics"""
