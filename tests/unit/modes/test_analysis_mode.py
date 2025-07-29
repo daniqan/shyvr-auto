@@ -1616,3 +1616,344 @@ class TestAnalysisValidatorIntegration:
         
         # But validation should have been called
         assert mode.validator.validate_data_quality.called or mode.validator.start_resource_monitoring.called
+
+
+class TestAnalysisModeExperienceDatabase:
+    """Test analysis mode database experience analytics capabilities."""
+    
+    @pytest.fixture
+    def analysis_config(self):
+        """Create analysis mode configuration."""
+        return ModeConfig(
+            mode_type=ModeType.ANALYSIS,
+            enabled=True,
+            parameters={
+                "analysis_depth": "comprehensive",
+                "include_backtesting": True,
+                "backtest_period_days": 30,
+                "include_risk_analysis": True,
+                "generate_reports": True,
+                "database_analytics_enabled": True,
+                "experience_analytics": {
+                    "enabled": True,
+                    "lookback_days": 30,
+                    "min_experiences": 100,
+                    "aggregate_by_session": True,
+                    "include_performance_metrics": True
+                }
+            }
+        )
+    
+    @pytest.fixture
+    def portfolio(self):
+        """Create mock portfolio for testing."""
+        portfolio = Mock(spec=Portfolio)
+        portfolio.portfolio_id = uuid4()
+        portfolio.cash_balance = Decimal("10000")
+        portfolio.total_value = Decimal("10000")
+        portfolio.open_positions = {}
+        return portfolio
+    
+    @pytest.fixture
+    def mock_experience_db(self):
+        """Create mock experience database connection."""
+        db_mock = Mock()
+        db_mock.fetchval = AsyncMock()
+        db_mock.fetch = AsyncMock()
+        db_mock.execute = AsyncMock()
+        return db_mock
+    
+    @pytest.mark.asyncio
+    async def test_initialize_database_analytics_components(self, analysis_config, portfolio):
+        """Test initialization of database analytics components."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Should fail initially as these components don't exist yet
+        with pytest.raises(AttributeError):
+            await mode.initialize_database_analytics()
+            
+            # Should have database analytics components
+            assert hasattr(mode, 'experience_db_client')
+            assert hasattr(mode, 'analytics_config')
+            assert mode.analytics_config['enabled'] is True
+    
+    @pytest.mark.asyncio
+    async def test_query_historical_experiences(self, analysis_config, portfolio, mock_experience_db):
+        """Test querying historical experiences from database."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock database responses
+        mock_experience_db.fetch.return_value = [
+            {
+                'id': 1,
+                'session_id': str(uuid4()),
+                'state': [1.0, 2.0, 3.0],
+                'action': 1,
+                'reward': 10.5,
+                'next_state': [1.1, 2.1, 3.1],
+                'done': False,
+                'priority': 0.8,
+                'created_at': datetime.now() - timedelta(days=1)
+            },
+            {
+                'id': 2,
+                'session_id': str(uuid4()), 
+                'state': [2.0, 3.0, 4.0],
+                'action': 2,
+                'reward': -5.2,
+                'next_state': [1.9, 2.9, 3.9],
+                'done': True,
+                'priority': 1.2,
+                'created_at': datetime.now() - timedelta(days=2)
+            }
+        ]
+        
+        # Should fail initially as this method doesn't exist yet
+        with pytest.raises(AttributeError):
+            experiences = await mode.query_historical_experiences(
+                lookback_days=7,
+                min_experiences=1,
+                filter_conditions={
+                    'reward_threshold': 0.0,
+                    'action_types': [1, 2]
+                }
+            )
+            
+            # Should return structured experience data
+            assert len(experiences) == 2
+            assert all('state' in exp for exp in experiences)
+            assert all('reward' in exp for exp in experiences)
+            assert all('created_at' in exp for exp in experiences)
+    
+    @pytest.mark.asyncio
+    async def test_analyze_experience_patterns(self, analysis_config, portfolio):
+        """Test analysis of experience patterns from database."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Mock experience data
+        mock_experiences = [
+            {
+                'action': 0, 'reward': 15.5, 'done': False,
+                'state': [45000, 0.6, 1000000], 
+                'created_at': datetime.now() - timedelta(hours=1)
+            },
+            {
+                'action': 1, 'reward': -8.2, 'done': False,
+                'state': [44800, 0.7, 950000],
+                'created_at': datetime.now() - timedelta(hours=2)
+            },
+            {
+                'action': 2, 'reward': 22.1, 'done': True,
+                'state': [45200, 0.5, 1100000],
+                'created_at': datetime.now() - timedelta(hours=3)
+            }
+        ]
+        
+        # Should fail initially as this method doesn't exist yet
+        with pytest.raises(AttributeError):
+            pattern_analysis = await mode.analyze_experience_patterns(mock_experiences)
+            
+            # Should analyze action distribution
+            assert 'action_distribution' in pattern_analysis
+            assert 'reward_statistics' in pattern_analysis
+            assert 'temporal_patterns' in pattern_analysis
+            
+            # Should provide insights
+            assert 'pattern_insights' in pattern_analysis
+            assert isinstance(pattern_analysis['reward_statistics']['mean'], float)
+            assert isinstance(pattern_analysis['action_distribution'], dict)
+    
+    @pytest.mark.asyncio
+    async def test_calculate_session_performance_metrics(self, analysis_config, portfolio):
+        """Test calculation of performance metrics by session."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        session_id = str(uuid4())
+        
+        # Should fail initially as this method doesn't exist yet
+        with pytest.raises(AttributeError):
+            session_metrics = await mode.calculate_session_performance_metrics(session_id)
+            
+            # Should calculate comprehensive metrics
+            assert 'total_experiences' in session_metrics
+            assert 'total_reward' in session_metrics
+            assert 'win_rate' in session_metrics
+            assert 'action_effectiveness' in session_metrics
+            assert 'average_reward_per_action' in session_metrics
+            assert 'episode_completion_rate' in session_metrics
+            
+            # Metrics should be numeric
+            assert isinstance(session_metrics['total_reward'], (int, float))
+            assert 0 <= session_metrics['win_rate'] <= 1
+    
+    @pytest.mark.asyncio
+    async def test_generate_experience_analytics_report(self, analysis_config, portfolio):
+        """Test generation of comprehensive experience analytics report."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        report_config = {
+            'lookback_days': 30,
+            'include_session_breakdown': True,
+            'include_action_analysis': True,
+            'include_reward_analysis': True,
+            'include_temporal_analysis': True,
+            'format': 'comprehensive'
+        }
+        
+        # Should fail initially as this method doesn't exist yet
+        with pytest.raises(AttributeError):
+            analytics_report = await mode.generate_experience_analytics_report(report_config)
+            
+            # Should have comprehensive report structure
+            assert 'executive_summary' in analytics_report
+            assert 'session_performance' in analytics_report
+            assert 'action_effectiveness' in analytics_report
+            assert 'reward_distribution' in analytics_report
+            assert 'temporal_insights' in analytics_report
+            assert 'recommendations' in analytics_report
+            
+            # Executive summary should have key metrics
+            summary = analytics_report['executive_summary']
+            assert 'total_experiences_analyzed' in summary
+            assert 'overall_performance_score' in summary
+            assert 'best_performing_actions' in summary
+    
+    @pytest.mark.asyncio
+    async def test_compare_session_performance(self, analysis_config, portfolio):
+        """Test comparison of performance across multiple sessions."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        session_ids = [str(uuid4()) for _ in range(3)]
+        
+        # Should fail initially as this method doesn't exist yet
+        with pytest.raises(AttributeError):
+            comparison_results = await mode.compare_session_performance(session_ids)
+            
+            # Should compare sessions comprehensively
+            assert 'session_rankings' in comparison_results
+            assert 'performance_metrics_comparison' in comparison_results
+            assert 'statistical_significance' in comparison_results
+            assert 'improvement_trends' in comparison_results
+            
+            # Should rank sessions by performance
+            rankings = comparison_results['session_rankings']
+            assert len(rankings) == 3
+            assert all('session_id' in ranking for ranking in rankings)
+            assert all('performance_score' in ranking for ranking in rankings)
+    
+    @pytest.mark.asyncio
+    async def test_experience_database_connection_handling(self, analysis_config, portfolio):
+        """Test proper database connection management for experience analytics."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Should fail initially as connection handling doesn't exist yet
+        with pytest.raises(AttributeError):
+            # Test connection acquisition
+            async with mode.get_experience_database_connection() as conn:
+                assert conn is not None
+                
+                # Should be able to execute queries
+                result = await conn.fetchval("SELECT 1")
+                assert result == 1
+    
+    @pytest.mark.asyncio
+    async def test_experience_analytics_caching(self, analysis_config, portfolio):
+        """Test caching of experience analytics results."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        cache_key = "session_metrics_test_123"
+        
+        # Should fail initially as caching methods don't exist yet
+        with pytest.raises(AttributeError):
+            # Test cache miss
+            cached_result = await mode.get_cached_analytics_result(cache_key)
+            assert cached_result is None
+            
+            # Test cache set
+            test_data = {'metric': 'value', 'timestamp': datetime.now().isoformat()}
+            await mode.cache_analytics_result(cache_key, test_data, ttl=300)
+            
+            # Test cache hit
+            cached_result = await mode.get_cached_analytics_result(cache_key)
+            assert cached_result is not None
+            assert cached_result['metric'] == 'value'
+    
+    @pytest.mark.asyncio
+    async def test_experience_analytics_error_handling(self, analysis_config, portfolio):
+        """Test error handling in experience analytics operations."""
+        from src.modes.analysis_mode import AnalysisMode as EnhancedAnalysisMode
+        
+        mode = EnhancedAnalysisMode(
+            mode_id=uuid4(),
+            config=analysis_config,
+            portfolio=portfolio
+        )
+        
+        # Should fail initially as error handling doesn't exist yet
+        with pytest.raises(AttributeError):
+            # Test handling of database connection errors
+            with patch('src.utils.database.get_database_connection', side_effect=Exception("DB Error")):
+                result = await mode.query_historical_experiences_safely(lookback_days=7)
+                
+                # Should return empty results on error, not crash
+                assert result == []
+            
+            # Test handling of malformed data
+            bad_experiences = [
+                {'action': 'invalid', 'reward': 'not_a_number'},
+                {'missing': 'required_fields'}
+            ]
+            
+            pattern_analysis = await mode.analyze_experience_patterns_safely(bad_experiences)
+            
+            # Should handle bad data gracefully
+            assert 'error_summary' in pattern_analysis
+            assert pattern_analysis['valid_experiences_count'] == 0

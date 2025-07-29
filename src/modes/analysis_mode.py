@@ -34,6 +34,7 @@ from src.modes.backtest_integration import (
     BacktestIntegrationConfig,
     ModelPerformanceComparison
 )
+from src.utils.database import get_database_connection
 
 
 logger = structlog.get_logger()
@@ -191,6 +192,11 @@ class AnalysisMode(BaseAnalysisMode):
         self._analysis_results_cache: Dict[str, Any] = {}
         self._performance_metrics: Dict[str, float] = {}
         
+        # Database analytics components
+        self.experience_db_client = None
+        self.analytics_config = self._parse_experience_analytics_config(config.parameters)
+        self._analytics_cache: Dict[str, Any] = {}
+        
         # Analysis state
         self._analysis_tasks: List[asyncio.Task] = []
         self._last_update: Optional[datetime] = None
@@ -289,6 +295,23 @@ class AnalysisMode(BaseAnalysisMode):
         
         return config
     
+    def _parse_experience_analytics_config(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse experience analytics configuration from mode parameters."""
+        analytics_params = parameters.get("experience_analytics", {})
+        
+        # Default analytics configuration
+        default_config = {
+            "enabled": analytics_params.get("enabled", False),
+            "lookback_days": analytics_params.get("lookback_days", 30),
+            "min_experiences": analytics_params.get("min_experiences", 100),
+            "aggregate_by_session": analytics_params.get("aggregate_by_session", True),
+            "include_performance_metrics": analytics_params.get("include_performance_metrics", True),
+            "cache_ttl_seconds": analytics_params.get("cache_ttl_seconds", 300),
+            "max_sessions_compare": analytics_params.get("max_sessions_compare", 10)
+        }
+        
+        return default_config
+    
     def _get_continuous_learning_engine(self) -> Optional[Any]:
         """Get continuous learning engine if available."""
         try:
@@ -328,10 +351,37 @@ class AnalysisMode(BaseAnalysisMode):
         
         self.logger.info("Analysis components initialized successfully")
     
+    async def initialize_database_analytics(self) -> None:
+        """Initialize database analytics components."""
+        if not self.analytics_config.get("enabled", False):
+            self.logger.info("Database analytics disabled")
+            return
+        
+        try:
+            self.logger.info("Initializing database analytics components")
+            # Test database connection
+            async with get_database_connection() as conn:
+                await conn.fetchval("SELECT 1")
+            
+            # Initialize analytics client (placeholder for now)
+            self.experience_db_client = True  # Mark as initialized
+            
+            self.logger.info("Database analytics components initialized successfully")
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize database analytics", error=str(e))
+            self.analytics_config["enabled"] = False
+            raise
+    
     async def initialize(self) -> None:
         """Initialize analysis mode with enhanced components."""
         await super().initialize()
         await self.initialize_analysis_components()
+        
+        # Initialize database analytics if enabled
+        if self.analytics_config.get("enabled", False):
+            await self.initialize_database_analytics()
+        
         self.logger.info("Enhanced analysis mode initialized")
     
     async def start(self) -> None:
@@ -376,6 +426,431 @@ class AnalysisMode(BaseAnalysisMode):
         
         # Analysis mode never trades - always return HOLD or None
         return TradeAction.HOLD
+    
+    async def query_historical_experiences(self, lookback_days: int = 30, 
+                                         min_experiences: int = 1,
+                                         filter_conditions: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Query historical experiences from database for analysis."""
+        if not self.analytics_config.get("enabled", False):
+            self.logger.warning("Database analytics not enabled")
+            return []
+        
+        try:
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=lookback_days)
+            
+            # Build query with filters
+            query = """
+                SELECT id, session_id, state, action, reward, next_state, done, 
+                       priority, created_at, metadata
+                FROM rl_experiences 
+                WHERE created_at >= $1 AND created_at <= $2
+            """
+            params = [start_date, end_date]
+            
+            # Add filter conditions
+            if filter_conditions:
+                if 'reward_threshold' in filter_conditions:
+                    query += " AND reward >= $3"
+                    params.append(filter_conditions['reward_threshold'])
+                
+                if 'action_types' in filter_conditions:
+                    action_placeholders = ",".join([f"${i+len(params)+1}" for i in range(len(filter_conditions['action_types']))])
+                    query += f" AND action IN ({action_placeholders})"
+                    params.extend(filter_conditions['action_types'])
+            
+            query += " ORDER BY created_at DESC"
+            
+            if min_experiences > 0:
+                query += f" LIMIT {min_experiences * 10}"  # Get more than minimum for filtering
+            
+            async with get_database_connection() as conn:
+                rows = await conn.fetch(query, *params)
+                
+                experiences = []
+                for row in rows:
+                    exp = dict(row)
+                    # Convert state arrays from list to proper format
+                    if exp['state'] and isinstance(exp['state'], list):
+                        exp['state'] = exp['state']
+                    if exp['next_state'] and isinstance(exp['next_state'], list):
+                        exp['next_state'] = exp['next_state']
+                    experiences.append(exp)
+                
+                # Check minimum threshold
+                if len(experiences) < min_experiences:
+                    self.logger.warning("Insufficient experiences found", 
+                                      found=len(experiences), 
+                                      required=min_experiences)
+                
+                self.logger.info("Retrieved historical experiences", 
+                               count=len(experiences),
+                               lookback_days=lookback_days)
+                
+                return experiences
+                
+        except Exception as e:
+            self.logger.error("Failed to query historical experiences", error=str(e))
+            return []
+    
+    async def analyze_experience_patterns(self, experiences: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze patterns in experience data."""
+        if not experiences:
+            return {
+                "action_distribution": {},
+                "reward_statistics": {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0},
+                "temporal_patterns": {},
+                "pattern_insights": [],
+                "valid_experiences_count": 0
+            }
+        
+        try:
+            # Extract data for analysis
+            actions = [exp.get('action', -1) for exp in experiences if 'action' in exp]
+            rewards = [float(exp.get('reward', 0.0)) for exp in experiences if 'reward' in exp and isinstance(exp.get('reward'), (int, float))]
+            timestamps = [exp.get('created_at') for exp in experiences if 'created_at' in exp]
+            
+            # Action distribution analysis
+            action_distribution = {}
+            for action in actions:
+                action_distribution[action] = action_distribution.get(action, 0) + 1
+            
+            # Reward statistics
+            reward_stats = {
+                "mean": float(np.mean(rewards)) if rewards else 0.0,
+                "std": float(np.std(rewards)) if rewards else 0.0,
+                "min": float(np.min(rewards)) if rewards else 0.0,
+                "max": float(np.max(rewards)) if rewards else 0.0,
+                "positive_ratio": len([r for r in rewards if r > 0]) / len(rewards) if rewards else 0.0
+            }
+            
+            # Temporal patterns (by hour of day)
+            temporal_patterns = {}
+            for ts in timestamps:
+                if ts:
+                    hour = ts.hour if hasattr(ts, 'hour') else 0
+                    temporal_patterns[hour] = temporal_patterns.get(hour, 0) + 1
+            
+            # Generate insights
+            insights = []
+            if action_distribution:
+                most_common_action = max(action_distribution.items(), key=lambda x: x[1])
+                insights.append(f"Most common action: {most_common_action[0]} ({most_common_action[1]} times)")
+            
+            if reward_stats["mean"] > 0:
+                insights.append(f"Positive average reward: {reward_stats['mean']:.3f}")
+            else:
+                insights.append(f"Negative average reward: {reward_stats['mean']:.3f}")
+            
+            if reward_stats["positive_ratio"] > 0.5:
+                insights.append(f"Majority positive outcomes ({reward_stats['positive_ratio']:.1%})")
+            
+            return {
+                "action_distribution": action_distribution,
+                "reward_statistics": reward_stats,
+                "temporal_patterns": temporal_patterns,
+                "pattern_insights": insights,
+                "valid_experiences_count": len(experiences)
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to analyze experience patterns", error=str(e))
+            return {
+                "action_distribution": {},
+                "reward_statistics": {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0},
+                "temporal_patterns": {},
+                "pattern_insights": [f"Analysis failed: {str(e)}"],
+                "valid_experiences_count": 0,
+                "error_summary": str(e)
+            }
+    
+    async def calculate_session_performance_metrics(self, session_id: str) -> Dict[str, Any]:
+        """Calculate performance metrics for a specific session."""
+        if not self.analytics_config.get("enabled", False):
+            return {}
+        
+        try:
+            query = """
+                SELECT COUNT(*) as total_experiences,
+                       SUM(reward) as total_reward,
+                       AVG(reward) as avg_reward,
+                       COUNT(CASE WHEN reward > 0 THEN 1 END) as positive_rewards,
+                       COUNT(CASE WHEN done = true THEN 1 END) as completed_episodes,
+                       COUNT(DISTINCT action) as unique_actions,
+                       MIN(created_at) as session_start,
+                       MAX(created_at) as session_end
+                FROM rl_experiences 
+                WHERE session_id = $1
+            """
+            
+            async with get_database_connection() as conn:
+                row = await conn.fetchrow(query, session_id)
+                
+                if not row or row['total_experiences'] == 0:
+                    return {
+                        'session_id': session_id,
+                        'total_experiences': 0,
+                        'total_reward': 0.0,
+                        'win_rate': 0.0,
+                        'action_effectiveness': {},
+                        'average_reward_per_action': {},
+                        'episode_completion_rate': 0.0
+                    }
+                
+                # Calculate basic metrics
+                total_experiences = row['total_experiences']
+                total_reward = float(row['total_reward'] or 0.0)
+                win_rate = float(row['positive_rewards'] or 0) / total_experiences
+                episode_completion_rate = float(row['completed_episodes'] or 0) / total_experiences
+                
+                # Get action-specific metrics
+                action_query = """
+                    SELECT action, 
+                           COUNT(*) as action_count,
+                           AVG(reward) as avg_reward,
+                           SUM(reward) as total_reward
+                    FROM rl_experiences 
+                    WHERE session_id = $1
+                    GROUP BY action
+                    ORDER BY action_count DESC
+                """
+                
+                action_rows = await conn.fetch(action_query, session_id)
+                
+                action_effectiveness = {}
+                average_reward_per_action = {}
+                
+                for action_row in action_rows:
+                    action = action_row['action']
+                    action_effectiveness[action] = {
+                        'count': action_row['action_count'],
+                        'success_rate': action_row['action_count'] / total_experiences,
+                        'total_reward': float(action_row['total_reward'] or 0.0)
+                    }
+                    average_reward_per_action[action] = float(action_row['avg_reward'] or 0.0)
+                
+                return {
+                    'session_id': session_id,
+                    'total_experiences': total_experiences,
+                    'total_reward': total_reward,
+                    'win_rate': win_rate,
+                    'action_effectiveness': action_effectiveness,
+                    'average_reward_per_action': average_reward_per_action,
+                    'episode_completion_rate': episode_completion_rate,
+                    'session_duration': (row['session_end'] - row['session_start']).total_seconds() if row['session_start'] and row['session_end'] else 0,
+                    'unique_actions': row['unique_actions']
+                }
+                
+        except Exception as e:
+            self.logger.error("Failed to calculate session performance metrics", 
+                            session_id=session_id, error=str(e))
+            return {}
+    
+    async def generate_experience_analytics_report(self, report_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate comprehensive experience analytics report."""
+        if not self.analytics_config.get("enabled", False):
+            return {"error": "Database analytics not enabled"}
+        
+        try:
+            lookback_days = report_config.get('lookback_days', 30)
+            
+            # Get experiences for analysis
+            experiences = await self.query_historical_experiences(
+                lookback_days=lookback_days,
+                min_experiences=1  # Allow small datasets for reporting
+            )
+            
+            if not experiences:
+                return {
+                    "executive_summary": {
+                        "total_experiences_analyzed": 0,
+                        "overall_performance_score": 0.0,
+                        "best_performing_actions": []
+                    },
+                    "session_performance": {},
+                    "action_effectiveness": {},
+                    "reward_distribution": {},
+                    "temporal_insights": {},
+                    "recommendations": ["No experience data available for analysis"]
+                }
+            
+            # Analyze patterns
+            pattern_analysis = await self.analyze_experience_patterns(experiences)
+            
+            # Get unique sessions
+            session_ids = list(set(exp.get('session_id') for exp in experiences if exp.get('session_id')))
+            
+            # Calculate session performance
+            session_performance = {}
+            for session_id in session_ids[:10]:  # Limit to avoid overload
+                session_metrics = await self.calculate_session_performance_metrics(session_id)
+                if session_metrics:
+                    session_performance[session_id] = session_metrics
+            
+            # Calculate overall performance score
+            total_reward = sum(float(exp.get('reward', 0)) for exp in experiences)
+            positive_ratio = pattern_analysis['reward_statistics']['positive_ratio']
+            performance_score = min(1.0, max(0.0, (positive_ratio * 0.7) + (min(total_reward / 1000, 1.0) * 0.3)))
+            
+            # Find best performing actions
+            action_dist = pattern_analysis['action_distribution']
+            best_actions = sorted(action_dist.items(), key=lambda x: x[1], reverse=True)[:3]
+            
+            # Generate recommendations
+            recommendations = []
+            if positive_ratio < 0.4:
+                recommendations.append("Consider reviewing reward engineering - low positive outcome ratio")
+            if len(action_dist) < 3:
+                recommendations.append("Limited action diversity - consider expanding action space")
+            if total_reward < 0:
+                recommendations.append("Negative cumulative reward - review trading strategy")
+            
+            return {
+                "executive_summary": {
+                    "total_experiences_analyzed": len(experiences),
+                    "overall_performance_score": performance_score,
+                    "best_performing_actions": [f"Action {action}: {count} times" for action, count in best_actions],
+                    "analysis_period_days": lookback_days,
+                    "unique_sessions": len(session_ids)
+                },
+                "session_performance": session_performance,
+                "action_effectiveness": pattern_analysis['action_distribution'],
+                "reward_distribution": pattern_analysis['reward_statistics'],
+                "temporal_insights": pattern_analysis['temporal_patterns'],
+                "recommendations": recommendations,
+                "pattern_insights": pattern_analysis['pattern_insights']
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to generate experience analytics report", error=str(e))
+            return {"error": f"Report generation failed: {str(e)}"}
+    
+    async def compare_session_performance(self, session_ids: List[str]) -> Dict[str, Any]:
+        """Compare performance across multiple sessions."""
+        if not self.analytics_config.get("enabled", False):
+            return {}
+        
+        try:
+            session_metrics = {}
+            
+            # Get metrics for each session
+            for session_id in session_ids:
+                metrics = await self.calculate_session_performance_metrics(session_id)
+                if metrics:
+                    session_metrics[session_id] = metrics
+            
+            if not session_metrics:
+                return {
+                    "session_rankings": [],
+                    "performance_metrics_comparison": {},
+                    "statistical_significance": {},
+                    "improvement_trends": {}
+                }
+            
+            # Rank sessions by total reward
+            session_rankings = []
+            for session_id, metrics in session_metrics.items():
+                performance_score = (
+                    metrics.get('win_rate', 0) * 0.4 +
+                    min(1.0, max(0.0, metrics.get('total_reward', 0) / 100)) * 0.6
+                )
+                session_rankings.append({
+                    'session_id': session_id,
+                    'performance_score': performance_score,
+                    'total_reward': metrics.get('total_reward', 0),
+                    'win_rate': metrics.get('win_rate', 0),
+                    'total_experiences': metrics.get('total_experiences', 0)
+                })
+            
+            session_rankings.sort(key=lambda x: x['performance_score'], reverse=True)
+            
+            # Compare metrics
+            all_rewards = [metrics.get('total_reward', 0) for metrics in session_metrics.values()]
+            all_win_rates = [metrics.get('win_rate', 0) for metrics in session_metrics.values()]
+            
+            comparison = {
+                'reward_stats': {
+                    'mean': float(np.mean(all_rewards)) if all_rewards else 0.0,
+                    'std': float(np.std(all_rewards)) if all_rewards else 0.0,
+                    'range': [float(np.min(all_rewards)), float(np.max(all_rewards))] if all_rewards else [0.0, 0.0]
+                },
+                'win_rate_stats': {
+                    'mean': float(np.mean(all_win_rates)) if all_win_rates else 0.0,
+                    'std': float(np.std(all_win_rates)) if all_win_rates else 0.0,
+                    'range': [float(np.min(all_win_rates)), float(np.max(all_win_rates))] if all_win_rates else [0.0, 0.0]
+                }
+            }
+            
+            return {
+                "session_rankings": session_rankings,
+                "performance_metrics_comparison": comparison,
+                "statistical_significance": {"note": "Statistical tests not implemented yet"},
+                "improvement_trends": {"note": "Trend analysis not implemented yet"}
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to compare session performance", error=str(e))
+            return {}
+    
+    async def get_experience_database_connection(self):
+        """Get database connection for experience analytics."""
+        return get_database_connection()
+    
+    async def get_cached_analytics_result(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Get cached analytics result."""
+        if cache_key in self._analytics_cache:
+            cached_item = self._analytics_cache[cache_key]
+            
+            # Check if cache is still valid
+            if (datetime.now() - cached_item['timestamp']).total_seconds() < self.analytics_config.get('cache_ttl_seconds', 300):
+                return cached_item['data']
+            else:
+                # Remove expired cache
+                del self._analytics_cache[cache_key]
+        
+        return None
+    
+    async def cache_analytics_result(self, cache_key: str, data: Dict[str, Any], ttl: int = 300) -> None:
+        """Cache analytics result."""
+        self._analytics_cache[cache_key] = {
+            'data': data,
+            'timestamp': datetime.now(),
+            'ttl': ttl
+        }
+        
+        # Clean up old cache entries
+        current_time = datetime.now()
+        expired_keys = []
+        for key, item in self._analytics_cache.items():
+            if (current_time - item['timestamp']).total_seconds() > item['ttl']:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            del self._analytics_cache[key]
+    
+    async def query_historical_experiences_safely(self, **kwargs) -> List[Dict[str, Any]]:
+        """Safely query historical experiences with error handling."""
+        try:
+            return await self.query_historical_experiences(**kwargs)
+        except Exception as e:
+            self.logger.error("Safe query for historical experiences failed", error=str(e))
+            return []
+    
+    async def analyze_experience_patterns_safely(self, experiences: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Safely analyze experience patterns with error handling."""
+        try:
+            return await self.analyze_experience_patterns(experiences)
+        except Exception as e:
+            self.logger.error("Safe pattern analysis failed", error=str(e))
+            return {
+                "error_summary": str(e),
+                "valid_experiences_count": 0,
+                "action_distribution": {},
+                "reward_statistics": {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0},
+                "temporal_patterns": {},
+                "pattern_insights": []
+            }
     
     async def _process_market_analysis(self, market_state: MarketState) -> None:
         """Process comprehensive market analysis."""
