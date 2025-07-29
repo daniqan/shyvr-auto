@@ -153,6 +153,51 @@
                                 <span class="metric-label">Decision Latency:</span>
                                 <span class="metric-value" id="mlRlLatency">0ms</span>
                             </div>
+                            <div class="metric-row experience-counter">
+                                <span class="metric-label">RL Experiences Today:</span>
+                                <span class="metric-value" id="overviewExperiencesToday">0</span>
+                            </div>
+                            <div class="metric-row experience-counter">
+                                <span class="metric-label">Avg Reward (24h):</span>
+                                <span class="metric-value" id="overviewAvgReward">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Experience Monitoring Card -->
+                    <div class="card experience-monitoring-card">
+                        <div class="card-header">
+                            <h3>Experience Monitoring</h3>
+                            <div class="experience-controls">
+                                <select id="experienceTimeframe" class="timeframe-selector">
+                                    <option value="1h">Last Hour</option>
+                                    <option value="4h">Last 4 Hours</option>
+                                    <option value="24h" selected>Last 24 Hours</option>
+                                    <option value="7d">Last 7 Days</option>
+                                </select>
+                                <button id="experienceRefresh" class="refresh-btn" title="Refresh Data">🔄</button>
+                                <button id="experienceAutoRefresh" class="auto-refresh-btn active" title="Auto Refresh">⏱️</button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="experience-metrics">
+                                <div class="metric-item">
+                                    <span class="metric-label">Total Experiences</span>
+                                    <span class="metric-value" id="totalExperiences">0</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Average Reward</span>
+                                    <span class="metric-value" id="averageReward">0.00</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Success Rate</span>
+                                    <span class="metric-value" id="successRate">0%</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Active Sessions</span>
+                                    <span class="metric-value" id="activeSessions">0</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -464,6 +509,108 @@
                         </div>
                     </div>
 
+                    <!-- Experience Analytics Card -->
+                    <div class="card experience-performance-card">
+                        <div class="card-header">
+                            <h3>Experience Analytics</h3>
+                            <div class="performance-controls">
+                                <button id="showPerformanceDetails" class="details-btn">Details</button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="performance-metrics">
+                                <div class="metric-row">
+                                    <span class="metric-label">Cumulative Reward:</span>
+                                    <span class="metric-value" id="cumulativeReward">0.00</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Win Rate:</span>
+                                    <span class="metric-value" id="winRate">0%</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Avg Episode Length:</span>
+                                    <span class="metric-value" id="avgEpisodeLength">0</span>
+                                </div>
+                                <div class="metric-row">
+                                    <span class="metric-label">Training Efficiency:</span>
+                                    <span class="metric-value" id="trainingEfficiency">0%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Experience Search and Filter Card -->
+                    <div class="card experience-search-card">
+                        <div class="card-header">
+                            <h3>Experience Search</h3>
+                            <div class="search-controls">
+                                <button id="showSearchFilters" class="filters-btn">Filters</button>
+                                <button id="clearFilters" class="clear-btn">Clear</button>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="search-form" id="experienceSearchForm">
+                                <div class="search-row">
+                                    <label for="rewardMinFilter">Reward Range:</label>
+                                    <input type="number" id="rewardMinFilter" placeholder="Min" step="0.01">
+                                    <span>to</span>
+                                    <input type="number" id="rewardMaxFilter" placeholder="Max" step="0.01">
+                                </div>
+                                <div class="search-row">
+                                    <label for="actionFilter">Action:</label>
+                                    <select id="actionFilter">
+                                        <option value="">All Actions</option>
+                                        <option value="0">Hold</option>
+                                        <option value="1">Buy</option>
+                                        <option value="2">Sell</option>
+                                    </select>
+                                </div>
+                                <div class="search-row">
+                                    <label for="tradingModeFilter">Mode:</label>
+                                    <select id="tradingModeFilter">
+                                        <option value="">All Modes</option>
+                                        <option value="simulation">Simulation</option>
+                                        <option value="live">Live</option>
+                                        <option value="analysis">Analysis</option>
+                                    </select>
+                                </div>
+                                <div class="search-row">
+                                    <label for="sessionFilter">Session:</label>
+                                    <select id="sessionFilter">
+                                        <option value="">All Sessions</option>
+                                    </select>
+                                </div>
+                                <div class="search-actions">
+                                    <button id="searchExperiences" class="btn-primary">Search</button>
+                                    <button id="exportResults" class="btn-secondary">Export</button>
+                                </div>
+                            </div>
+                            <div class="search-results" id="experienceSearchResults">
+                                <div class="results-header">
+                                    <span class="results-count" id="searchResultsCount">0 experiences found</span>
+                                </div>
+                                <div class="results-table">
+                                    <table class="experiences-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Action</th>
+                                                <th>Reward</th>
+                                                <th>Mode</th>
+                                                <th>Session</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="experienceSearchTableBody">
+                                            <tr>
+                                                <td colspan="5" class="no-data">No search performed</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Training Status -->
                     <div class="card training-status-card span-3">
                         <div class="card-header">
@@ -483,6 +630,31 @@
                                     <span class="metric-label">Continuous Learning:</span>
                                     <span class="metric-value" id="continuousLearning">Yes</span>
                                 </div>
+                            </div>
+                            <!-- Experience Reward Chart Container -->
+                            <div class="experience-chart-container">
+                                <canvas id="experienceRewardChart" width="800" height="300"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Experience Performance Chart -->
+                    <div class="card experience-chart-card span-3">
+                        <div class="card-header">
+                            <h3>Experience Performance</h3>
+                            <div class="chart-controls">
+                                <select id="performanceChartType">
+                                    <option value="performance">Performance Metrics</option>
+                                    <option value="session">Session Analysis</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-content">
+                            <div class="performance-chart-container">
+                                <canvas id="experiencePerformanceChart" width="800" height="300"></canvas>
+                            </div>
+                            <div class="session-chart-container" style="display: none;">
+                                <canvas id="sessionAnalysisChart" width="800" height="300"></canvas>
                             </div>
                         </div>
                     </div>
