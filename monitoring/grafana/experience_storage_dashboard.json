@@ -1,0 +1,355 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "RL Experience Storage Monitoring",
+    "tags": ["rl", "experience-storage", "database", "performance"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "30s",
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Experience Storage Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rl_active_sessions",
+            "legendFormat": "Active Sessions",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rl_total_experiences_stored)",
+            "legendFormat": "Total Experiences",
+            "refId": "B"
+          },
+          {
+            "expr": "rl_database_connections_active",
+            "legendFormat": "DB Connections",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "short",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 80},
+                {"color": "red", "value": 100}
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "value_and_name"
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Experience Insertion Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rl_experiences_inserted_total[5m])",
+            "legendFormat": "Insertions/sec - {{session_id}}",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Experiences/sec",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 3,
+        "title": "Experience Sampling Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rl_experiences_sampled_total[5m])",
+            "legendFormat": "Samples/sec - {{sampling_type}}",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Samples/sec",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Database Operation Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(rl_database_operation_duration_ms_bucket[5m]))",
+            "legendFormat": "95th percentile - {{operation_type}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(rl_database_operation_duration_ms_bucket[5m]))",
+            "legendFormat": "50th percentile - {{operation_type}}",
+            "refId": "B"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Latency (ms)",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "Buffer Utilization",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rl_buffer_utilization_ratio * 100",
+            "legendFormat": "Utilization % - {{session_id}}",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Utilization %",
+            "show": true,
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Cache Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rl_cache_hit_rate * 100",
+            "legendFormat": "Hit Rate % - {{session_id}} {{cache_type}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(rl_cache_operations_total{result=\"hit\"}[5m])",
+            "legendFormat": "Cache Hits/sec",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(rl_cache_operations_total{result=\"miss\"}[5m])",
+            "legendFormat": "Cache Misses/sec",
+            "refId": "C"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Hit Rate % / Ops/sec",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+      },
+      {
+        "id": 7,
+        "title": "Training Progress",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rl_training_steps_completed_total[5m])",
+            "legendFormat": "Training Steps/sec - {{session_id}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rl_beta_annealing_current",
+            "legendFormat": "Beta Value - {{session_id}}",
+            "refId": "B"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Steps/sec / Beta Value",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+      },
+      {
+        "id": 8,
+        "title": "Experience Batch Sizes",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(rl_experience_batch_size_bucket[5m])",
+            "legendFormat": "{{le}} - {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "heatmap": {
+          "xBucketSize": null,
+          "yBucketSize": null,
+          "xBucketNumber": null,
+          "yBucketNumber": null
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32}
+      },
+      {
+        "id": 9,
+        "title": "Error Rates",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rl_database_errors_total[5m])",
+            "legendFormat": "Errors/sec - {{error_type}} {{operation}}",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Errors/sec",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32}
+      },
+      {
+        "id": 10,
+        "title": "Database Performance Details",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(rl_experience_insertion_duration_ms_bucket[5m]))",
+            "legendFormat": "95th Insertion Latency (ms)",
+            "refId": "A",
+            "format": "table"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(rl_experience_sampling_duration_ms_bucket[5m]))",
+            "legendFormat": "95th Sampling Latency (ms)",
+            "refId": "B",
+            "format": "table"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(rl_priority_update_duration_ms_bucket[5m]))",
+            "legendFormat": "95th Priority Update Latency (ms)",
+            "refId": "C",
+            "format": "table"
+          }
+        ],
+        "options": {
+          "showHeader": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 100},
+                {"color": "red", "value": 500}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40}
+      },
+      {
+        "id": 11,
+        "title": "Experience Data Growth",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "increase(rl_experiences_inserted_total[1h])",
+            "legendFormat": "Experiences Added/hour - {{session_id}}",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(rl_experience_cleanup_total[1h])",
+            "legendFormat": "Experiences Cleaned/hour - {{session_id}}",
+            "refId": "B"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Experiences/hour",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48}
+      },
+      {
+        "id": 12,
+        "title": "Session Activity",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rl_total_experiences_stored",
+            "legendFormat": "Stored Experiences - {{session_id}}",
+            "refId": "A"
+          }
+        ],
+        "xAxis": {"show": true},
+        "yAxes": [
+          {
+            "label": "Experience Count",
+            "show": true,
+            "min": 0
+          }
+        ],
+        "legend": {"show": true, "values": false, "min": false, "max": false, "current": false, "total": false, "avg": false},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48}
+      }
+    ]
+  }
+}

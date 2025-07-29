@@ -1,0 +1,238 @@
+groups:
+  - name: experience_storage_alerts
+    rules:
+      # Database Performance Alerts
+      - alert: HighExperienceInsertionLatency
+        expr: histogram_quantile(0.95, rate(rl_experience_insertion_duration_ms_bucket[5m])) > 500
+        for: 2m
+        labels:
+          severity: warning
+          component: experience_storage
+        annotations:
+          summary: "High experience insertion latency detected"
+          description: "95th percentile insertion latency is {{ $value }}ms, above 500ms threshold for session {{ $labels.session_id }}"
+
+      - alert: CriticalExperienceInsertionLatency
+        expr: histogram_quantile(0.95, rate(rl_experience_insertion_duration_ms_bucket[5m])) > 1000
+        for: 1m
+        labels:
+          severity: critical
+          component: experience_storage
+        annotations:
+          summary: "Critical experience insertion latency detected"
+          description: "95th percentile insertion latency is {{ $value }}ms, above 1000ms critical threshold for session {{ $labels.session_id }}"
+
+      - alert: HighExperienceSamplingLatency
+        expr: histogram_quantile(0.95, rate(rl_experience_sampling_duration_ms_bucket[5m])) > 200
+        for: 2m
+        labels:
+          severity: warning
+          component: experience_storage
+        annotations:
+          summary: "High experience sampling latency detected"
+          description: "95th percentile sampling latency is {{ $value }}ms, above 200ms threshold for {{ $labels.sampling_type }} sampling"
+
+      - alert: DatabaseConnectionsHigh
+        expr: rl_database_connections_active > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High number of database connections"
+          description: "{{ $value }} active database connections detected, approaching connection pool limit"
+
+      # Buffer Utilization Alerts
+      - alert: ExperienceBufferNearFull
+        expr: rl_buffer_utilization_ratio > 0.85
+        for: 3m
+        labels:
+          severity: warning
+          component: experience_storage
+        annotations:
+          summary: "Experience buffer utilization high"
+          description: "Buffer utilization is {{ $value | humanizePercentage }} for session {{ $labels.session_id }}"
+
+      - alert: ExperienceBufferFull
+        expr: rl_buffer_utilization_ratio > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          component: experience_storage
+        annotations:
+          summary: "Experience buffer critically full"
+          description: "Buffer utilization is {{ $value | humanizePercentage }} for session {{ $labels.session_id }}, cleanup may be needed"
+
+      # Cache Performance Alerts
+      - alert: LowCacheHitRate
+        expr: rl_cache_hit_rate < 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: caching
+        annotations:
+          summary: "Low cache hit rate detected"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} for session {{ $labels.session_id }}, below 50% threshold"
+
+      - alert: CacheMissSpike
+        expr: rate(rl_cache_operations_total{result="miss"}[5m]) > rate(rl_cache_operations_total{result="hit"}[5m]) * 2
+        for: 3m
+        labels:
+          severity: warning
+          component: caching
+        annotations:
+          summary: "High cache miss rate detected"
+          description: "Cache misses are significantly higher than hits, indicating potential cache performance issues"
+
+      # Error Rate Alerts
+      - alert: DatabaseErrorRateHigh
+        expr: rate(rl_database_errors_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High database error rate"
+          description: "Database error rate is {{ $value }} errors/sec for {{ $labels.error_type }} in {{ $labels.operation }}"
+
+      - alert: CriticalDatabaseErrors
+        expr: rate(rl_database_errors_total[5m]) > 5
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Critical database error rate"
+          description: "Database error rate is {{ $value }} errors/sec for {{ $labels.error_type }} in {{ $labels.operation }}"
+
+      # Training Pipeline Alerts
+      - alert: TrainingPipelineStalled
+        expr: rate(rl_training_steps_completed_total[10m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: training
+        annotations:
+          summary: "Training pipeline appears stalled"
+          description: "No training steps completed in the last 10 minutes for session {{ $labels.session_id }}"
+
+      - alert: NoExperienceInsertion
+        expr: rate(rl_experiences_inserted_total[10m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: experience_collection
+        annotations:
+          summary: "No experiences being inserted"
+          description: "No experiences have been inserted in the last 10 minutes for session {{ $labels.session_id }}"
+
+      # Resource Usage Alerts
+      - alert: ExperienceStorageGrowthHigh
+        expr: increase(rl_experiences_inserted_total[1h]) > 50000
+        for: 0m
+        labels:
+          severity: info
+          component: resource_usage
+        annotations:
+          summary: "High experience storage growth rate"
+          description: "{{ $value }} experiences inserted in the last hour for session {{ $labels.session_id }}"
+
+      - alert: CleanupOperationsFrequent
+        expr: rate(rl_experience_cleanup_total[1h]) > 5
+        for: 0m
+        labels:
+          severity: info
+          component: lifecycle_management
+        annotations:
+          summary: "Frequent cleanup operations detected"
+          description: "{{ $value }} cleanup operations per hour for session {{ $labels.session_id }}, may indicate buffer sizing issues"
+
+      # System Health Alerts
+      - alert: ExperienceStorageDown
+        expr: up{job=~".*experience.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Experience storage system unavailable"
+          description: "Experience storage monitoring endpoint is down"
+
+      - alert: NoActiveTrainingSessions
+        expr: rl_active_sessions == 0
+        for: 10m
+        labels:
+          severity: info
+          component: training
+        annotations:
+          summary: "No active training sessions"
+          description: "No active RL training sessions detected for 10 minutes"
+
+      - alert: MultipleSessionsHighMemory
+        expr: count(rl_memory_cache_size > 1000) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: memory
+        annotations:
+          summary: "Multiple sessions using high memory"
+          description: "{{ $value }} sessions are using high memory cache sizes"
+
+  - name: experience_storage_performance
+    rules:
+      # Performance tracking rules
+      - record: rl:insertion_latency_95th
+        expr: histogram_quantile(0.95, rate(rl_experience_insertion_duration_ms_bucket[5m]))
+
+      - record: rl:sampling_latency_95th
+        expr: histogram_quantile(0.95, rate(rl_experience_sampling_duration_ms_bucket[5m]))
+
+      - record: rl:priority_update_latency_95th
+        expr: histogram_quantile(0.95, rate(rl_priority_update_duration_ms_bucket[5m]))
+
+      - record: rl:database_operation_latency_95th
+        expr: histogram_quantile(0.95, rate(rl_database_operation_duration_ms_bucket[5m]))
+
+      - record: rl:experience_insertion_rate
+        expr: rate(rl_experiences_inserted_total[5m])
+
+      - record: rl:experience_sampling_rate
+        expr: rate(rl_experiences_sampled_total[5m])
+
+      - record: rl:database_error_rate
+        expr: rate(rl_database_errors_total[5m])
+
+      - record: rl:cache_hit_rate_avg
+        expr: avg(rl_cache_hit_rate)
+
+      - record: rl:buffer_utilization_max
+        expr: max(rl_buffer_utilization_ratio)
+
+      - record: rl:training_throughput
+        expr: rate(rl_training_steps_completed_total[5m])
+
+  - name: experience_storage_sla
+    rules:
+      # SLA tracking rules
+      - record: rl:insertion_sla_compliance
+        expr: |
+          (
+            rate(rl_experience_insertion_duration_ms_bucket{le="100"}[5m]) /
+            rate(rl_experience_insertion_duration_ms_count[5m])
+          ) * 100
+
+      - record: rl:sampling_sla_compliance
+        expr: |
+          (
+            rate(rl_experience_sampling_duration_ms_bucket{le="50"}[5m]) /
+            rate(rl_experience_sampling_duration_ms_count[5m])
+          ) * 100
+
+      - record: rl:availability_score
+        expr: |
+          (
+            (up{job=~".*experience.*"} * 100) +
+            (rl:insertion_sla_compliance > 95) * 100 +
+            (rl:sampling_sla_compliance > 95) * 100 +
+            (rl:cache_hit_rate_avg > 0.7) * 100
+          ) / 4

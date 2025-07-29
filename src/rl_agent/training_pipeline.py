@@ -24,6 +24,18 @@ from ..utils.database import get_database_connection
 
 logger = structlog.get_logger()
 
+# Global training metrics collector (set by monitoring system)
+_training_metrics_collector = None
+
+def set_training_metrics_collector(collector):
+    """Set the global training metrics collector."""
+    global _training_metrics_collector
+    _training_metrics_collector = collector
+
+def get_training_metrics_collector():
+    """Get the global training metrics collector."""
+    return _training_metrics_collector
+
 
 @dataclass
 class TrainingConfig:
@@ -614,6 +626,15 @@ class DQNTrainingPipeline:
         """Run a single training episode with complete RL training loop"""
         episode_start_time = time.time()
         
+        # Record episode start metrics
+        session_id = str(getattr(self, 'training_session_id', 'default'))
+        if _training_metrics_collector:
+            _training_metrics_collector.record_episode_start(
+                session_id=session_id,
+                episode=episode_num,
+                epsilon=self.agent.epsilon
+            )
+        
         # Reset environment and get initial state
         state = self.environment.reset()
         current_state = state.to_vector()
@@ -682,9 +703,33 @@ class DQNTrainingPipeline:
                     step % 4 == 0):  # Train every 4 steps
                     
                     try:
+                        step_start_time = time.time()
                         batch_experiences = self.replay_buffer.sample()
+                        
+                        # Record experience consumption
+                        if _training_metrics_collector:
+                            _training_metrics_collector.record_experience_consumption(
+                                session_id=session_id,
+                                count=len(batch_experiences),
+                                source="database" if hasattr(self, 'experience_db_loader') else "memory"
+                            )
+                        
                         loss_info = asyncio.run(self.agent.train_step(batch_experiences))
                         episode_loss += loss_info.get('loss', 0.0)
+                        
+                        # Record training step metrics
+                        if _training_metrics_collector:
+                            step_duration = (time.time() - step_start_time) * 1000
+                            _training_metrics_collector.record_training_step(
+                                session_id=session_id,
+                                step_type="model_update",
+                                duration_ms=step_duration
+                            )
+                            _training_metrics_collector.record_model_update(
+                                session_id=session_id,
+                                update_type="dqn_training",
+                                loss_value=loss_info.get('loss')
+                            )
                         
                         # Update priorities in prioritized replay buffer based on TD errors
                         if ('td_errors' in loss_info and 'indices' in loss_info and 
@@ -741,6 +786,17 @@ class DQNTrainingPipeline:
         
         episode_time = time.time() - episode_start_time
         
+        # Record episode completion metrics
+        if _training_metrics_collector:
+            _training_metrics_collector.record_episode_complete(
+                session_id=session_id,
+                episode=episode_num,
+                total_reward=total_reward,
+                steps=num_steps,
+                duration_seconds=episode_time,
+                agent_type="DQN"
+            )
+        
         self.logger.info("Episode completed",
                         episode=episode_num,
                         steps=num_steps,
@@ -767,6 +823,15 @@ class DQNTrainingPipeline:
                         episodes=self.config.num_episodes)
         
         for episode in range(self.config.num_episodes):
+            # Record training progress
+            session_id = str(getattr(self, 'training_session_id', 'default'))
+            if _training_metrics_collector:
+                _training_metrics_collector.record_training_progress(
+                    session_id=session_id,
+                    current_episode=episode,
+                    total_episodes=self.config.num_episodes
+                )
+            
             # Run episode
             episode_result = self.run_episode(episode)
             

@@ -30,6 +30,18 @@ from .experience_replay import Experience
 
 logger = structlog.get_logger()
 
+# Global metrics collector instance (set by metrics system)
+_metrics_collector = None
+
+def set_experience_metrics_collector(collector):
+    """Set the global metrics collector for experience operations."""
+    global _metrics_collector
+    _metrics_collector = collector
+
+def get_experience_metrics_collector():
+    """Get the global metrics collector instance."""
+    return _metrics_collector
+
 
 @dataclass
 class DatabaseExperienceConfig:
@@ -165,6 +177,11 @@ class DatabaseExperienceBuffer:
                 )
             
             self._initialized = True
+            
+            # Register with metrics collector if available
+            if _metrics_collector:
+                _metrics_collector.register_buffer(self)
+            
             self.logger.info("Database experience buffer initialized")
             
         except Exception as e:
@@ -184,6 +201,11 @@ class DatabaseExperienceBuffer:
                     """, self.session_id)
                 
                 self._initialized = False
+                
+                # Unregister from metrics collector if available
+                if _metrics_collector:
+                    _metrics_collector.unregister_buffer(str(self.session_id))
+                
                 self.logger.info("Database experience buffer cleaned up")
                 
         except Exception as e:
@@ -252,11 +274,30 @@ class DatabaseExperienceBuffer:
             operation_time = time.time() - start_time
             self._operation_times.append(operation_time)
             
+            # Record metrics
+            if _metrics_collector:
+                _metrics_collector.record_experience_insertion(
+                    session_id=str(self.session_id),
+                    batch_size=inserted_count,
+                    duration_ms=operation_time * 1000,
+                    success=True
+                )
+            
             self.logger.debug("Added experience batch",
                             count=inserted_count,
                             operation_time_ms=operation_time*1000)
             
         except Exception as e:
+            # Record error metrics
+            if _metrics_collector:
+                _metrics_collector.record_experience_insertion(
+                    session_id=str(self.session_id),
+                    batch_size=len(experiences),
+                    duration_ms=(time.time() - start_time) * 1000,
+                    success=False
+                )
+                _metrics_collector.record_database_error("insertion_error", "add_batch")
+            
             self.logger.error("Failed to add experience batch", error=str(e))
             raise DatabaseExperienceError(f"Batch addition failed: {e}")
     
@@ -309,6 +350,16 @@ class DatabaseExperienceBuffer:
                 for exp in experiences:
                     exp['weight'] /= max_weight
             
+            # Record metrics
+            if _metrics_collector:
+                sampling_type = "prioritized" if self.config.prioritized else "uniform"
+                _metrics_collector.record_experience_sampling(
+                    session_id=str(self.session_id),
+                    sample_size=len(experiences),
+                    duration_ms=operation_time * 1000,
+                    sampling_type=sampling_type
+                )
+            
             self.logger.debug("Sampled experiences",
                             count=len(experiences),
                             operation_time_ms=operation_time*1000)
@@ -316,6 +367,10 @@ class DatabaseExperienceBuffer:
             return experiences
             
         except Exception as e:
+            # Record error metrics
+            if _metrics_collector:
+                _metrics_collector.record_database_error("sampling_error", "sample")
+            
             self.logger.error("Failed to sample experiences", error=str(e))
             raise DatabaseExperienceError(f"Sampling failed: {e}")
     
@@ -345,6 +400,8 @@ class DatabaseExperienceBuffer:
         if not priority_updates:
             return 0
         
+        start_time = time.time()
+        
         try:
             # Convert to database format
             db_updates = []
@@ -361,10 +418,23 @@ class DatabaseExperienceBuffer:
             self._training_step += 1
             self.anneal_beta()
             
+            # Record metrics
+            operation_time = time.time() - start_time
+            if _metrics_collector:
+                _metrics_collector.record_priority_update(
+                    session_id=str(self.session_id),
+                    update_count=updated_count,
+                    duration_ms=operation_time * 1000
+                )
+            
             self.logger.debug("Updated experience priorities", count=updated_count)
             return updated_count
             
         except Exception as e:
+            # Record error metrics
+            if _metrics_collector:
+                _metrics_collector.record_database_error("priority_update_error", "update_priorities")
+            
             self.logger.error("Failed to update priorities", error=str(e))
             raise DatabaseExperienceError(f"Priority update failed: {e}")
     
@@ -507,6 +577,14 @@ class DatabaseExperienceBuffer:
             # Invalidate cache
             if self._cache_enabled:
                 self._experience_cache.clear()
+            
+            # Record metrics
+            if _metrics_collector:
+                _metrics_collector.record_cleanup_operation(
+                    session_id=str(self.session_id),
+                    reason="buffer_full",
+                    experiences_removed=experiences_to_remove
+                )
             
             self.logger.info("Cleaned up old experiences", 
                            removed=experiences_to_remove,
