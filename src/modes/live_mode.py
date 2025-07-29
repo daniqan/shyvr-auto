@@ -34,6 +34,7 @@ from src.portfolio.base import (
 )
 from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
+from src.rl_agent.experience_database import DatabaseExperienceBuffer, DatabaseExperienceConfig
 from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
 from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLearningConfig
 from src.modes.continuous_learning_loop import (
@@ -1566,11 +1567,8 @@ class LiveMode(ModeBase):
                            cache_size=params.get("xai_cache_size", 1000),
                            explanation_timeout=params.get("xai_explanation_timeout", 3.0))
         
-        self.logger.info("Live mode initialized",
-                        enable_real_trading=self.enable_real_trading,
-                        emergency_stop_enabled=self.live_config.enable_emergency_stop,
-                        dex_count=len(self.live_config.dex_preference_order),
-                        xai_enabled=self.enable_xai_explanations)
+        # Set up database experience storage
+        self._setup_database_experience_storage(params)
     
     async def initialize(self) -> None:
         """Initialize live mode components and safety systems."""
@@ -1579,6 +1577,16 @@ class LiveMode(ModeBase):
         try:
             # Initialize DEX clients (would be injected in real implementation)
             await self._initialize_dex_clients()
+            
+            # Initialize database experience buffer if enabled
+            if self.enable_database_experience_storage and self.database_experience_buffer:
+                try:
+                    await self.database_experience_buffer.initialize()
+                    self.logger.info("Production database experience buffer initialized successfully")
+                except Exception as e:
+                    self.logger.error("Failed to initialize production database experience buffer", error=str(e))
+                    self.enable_database_experience_storage = False
+                    self.database_connection_failed = True
             
             # Initialize core components
             self.risk_manager = LiveRiskManager(
@@ -1670,8 +1678,74 @@ class LiveMode(ModeBase):
                 
                 self.experience_collector = TradingExperienceCollector(experience_config, replay_buffer)
             
-            # Initialize continuous learning integration if enabled
-            if self.live_config.enable_continuous_learning:
+            self._set_status(ModeStatus.INACTIVE)
+            self.logger.info("Live mode components initialization completed")
+            
+        except Exception as e:
+            self.logger.error("Live mode initialization failed", error=str(e))
+            self._set_status(ModeStatus.ERROR, str(e))
+            raise
+    
+    def _setup_database_experience_storage(self, params: Dict[str, Any]) -> None:
+        """Set up database experience storage for production (called from __init__)."""
+        # Database experience storage setup for production
+        self.enable_database_experience_storage = params.get("enable_database_experience_storage", True)  # Default enabled in live mode
+        self.database_experience_buffer = None
+        self.database_connection_failed = False
+        self.production_experience_settings = params.get("production_experience_settings", {})
+        self.live_experience_tags = params.get("live_experience_tags", {})
+        self.enable_real_time_experience_persistence = self.production_experience_settings.get("enable_real_time_persistence", True)
+        
+        if self.enable_database_experience_storage:
+            try:
+                # Create database experience configuration for production
+                db_config_params = params.get("database_experience_config", {})
+                db_experience_config = DatabaseExperienceConfig(
+                    max_size=db_config_params.get("max_size", 50000),  # Larger buffer for production
+                    batch_size=db_config_params.get("batch_size", 64),  # Larger batches for efficiency
+                    min_size=db_config_params.get("min_size", 200),
+                    prioritized=db_config_params.get("prioritized", True),
+                    alpha=db_config_params.get("alpha", 0.7),  # Higher priority bias for live trading
+                    beta_start=db_config_params.get("beta_start", 0.5),
+                    beta_end=db_config_params.get("beta_end", 1.0),
+                    cache_size=db_config_params.get("cache_size", 2000),  # Larger cache for production
+                    connection_pool_size=db_config_params.get("connection_pool_size", 20),  # More connections
+                    query_timeout=db_config_params.get("query_timeout", 15.0)  # Shorter timeout for live trading
+                )
+                
+                # Initialize database experience buffer
+                self.database_experience_buffer = DatabaseExperienceBuffer(db_experience_config)
+                
+                # Set up production-specific experience tags
+                self.live_experience_tags.update({
+                    'trading_mode': 'live',
+                    'environment': self.live_experience_tags.get('environment', 'production'),
+                    'risk_level': self.live_experience_tags.get('risk_level', 'high'),
+                    'live_session_id': str(uuid4()),
+                    'initial_balance': float(self.live_config.initial_balance),
+                    'real_trading_enabled': self.enable_real_trading,
+                    'safety_validation_required': self.production_experience_settings.get("safety_validation_required", True),
+                    'max_position_size_pct': float(self.live_config.max_position_size_pct),
+                    'max_drawdown_pct': float(self.live_config.max_drawdown_pct),
+                    'emergency_stops_enabled': self.live_config.enable_emergency_stop,
+                    'backup_frequency_minutes': self.production_experience_settings.get("backup_frequency_minutes", 5),
+                    'critical_experience_priority': self.production_experience_settings.get("critical_experience_priority", 10.0)
+                })
+                
+                self.logger.info("Production database experience storage enabled for live mode",
+                               max_size=db_experience_config.max_size,
+                               prioritized=db_experience_config.prioritized,
+                               cache_size=db_experience_config.cache_size,
+                               real_time_persistence=self.enable_real_time_experience_persistence)
+                
+            except Exception as e:
+                self.logger.error("Failed to initialize production database experience storage", error=str(e))
+                self.enable_database_experience_storage = False
+                self.database_connection_failed = True
+                # Continue with fallback to regular experience collection
+        
+        # Initialize continuous learning integration if enabled (outside database setup)
+        if self.live_config.enable_continuous_learning:
                 # Initialize continuous learning engine
                 cl_config = ContinuousLearningConfig(
                     training_trigger_threshold=self.live_config.learning_trigger_threshold,
@@ -1688,7 +1762,16 @@ class LiveMode(ModeBase):
                 mock_dqn_agent = DQNTradingAgent(config=agent_config)
                 
                 # Initialize continuous learning engine with experience buffer
-                replay_buffer = self.experience_collector.replay_buffer if self.experience_collector else ExperienceReplayBuffer(replay_config)
+                # Create replay config if not available from experience collector
+                if not self.experience_collector:
+                    replay_config = ReplayBufferConfig(
+                        max_size=self.live_config.experience_buffer_size,
+                        batch_size=32,
+                        min_size=100
+                    )
+                    replay_buffer = ExperienceReplayBuffer(replay_config)
+                else:
+                    replay_buffer = self.experience_collector.replay_buffer
                 
                 self.continuous_learning_engine = ContinuousLearningEngine(
                     config=cl_config,
@@ -1725,15 +1808,11 @@ class LiveMode(ModeBase):
                 self.model_deployment_automation = self.continuous_learning_loop.deployment_automation
                 self.learning_loop_orchestrator = self.continuous_learning_loop.orchestrator
                 self.autonomous_learning_system = self.continuous_learning_loop.autonomous_system
-            
-            self._set_status(ModeStatus.INACTIVE)
-            self.logger.info("Live mode initialization completed",
-                           continuous_learning_enabled=self.live_config.enable_continuous_learning)
-            
-        except Exception as e:
-            self.logger.error("Live mode initialization failed", error=str(e))
-            self._set_status(ModeStatus.ERROR, str(e))
-            raise
+        
+        self.logger.info("Live mode __init__ completed",
+                       enable_real_trading=self.enable_real_trading,
+                       continuous_learning_enabled=self.live_config.enable_continuous_learning,
+                       database_experience_storage=self.enable_database_experience_storage)
     
     async def start(self) -> None:
         """Start live trading mode with all safety systems."""
@@ -1912,6 +1991,14 @@ class LiveMode(ModeBase):
         self.logger.info("Cleaning up live mode")
         
         try:
+            # Cleanup database experience buffer if enabled
+            if self.enable_database_experience_storage and self.database_experience_buffer:
+                try:
+                    await self.database_experience_buffer.cleanup()
+                    self.logger.info("Production database experience buffer cleaned up successfully")
+                except Exception as e:
+                    self.logger.error("Failed to cleanup production database experience buffer", error=str(e))
+            
             # Final portfolio reconciliation
             if self.portfolio_sync:
                 await self.portfolio_sync.reconcile_positions()
@@ -2359,6 +2446,195 @@ class LiveMode(ModeBase):
             await self.experience_collector.capture_post_trade_result(
                 experience_id, trading_result, market_state
             )
+        
+        # Also capture to database if enabled (production real-time persistence)
+        if self.enable_database_experience_storage and self.database_experience_buffer:
+            try:
+                await self._capture_experience_to_database_with_safety_validation(trading_result, market_state, explanation)
+            except Exception as e:
+                self.logger.warning("Failed to capture experience to production database", error=str(e))
+    
+    async def _capture_experience_to_database_with_safety_validation(self, trading_result: TradingResult, 
+                                                                   market_state: MarketState, explanation: Optional[Any] = None) -> None:
+        """Capture experience to database with production safety validation."""
+        from src.rl_agent.experience_replay import Experience
+        import numpy as np
+        
+        try:
+            # Production safety validation before capturing experience
+            if self.production_experience_settings.get("safety_validation_required", True):
+                # Validate that the trading result is meaningful and safe to learn from
+                if not self._validate_experience_for_learning(trading_result, market_state):
+                    self.logger.debug("Experience failed production safety validation, skipping database capture")
+                    return
+            
+            # Create enhanced feature vector for production
+            state_features = np.array([
+                market_state.price_usd or 0.0,
+                market_state.rsi or 50.0,
+                market_state.volume_24h or 0.0,
+                market_state.price_change_24h or 0.0,
+                float(self.portfolio.total_value),  # Actual portfolio value
+                float(getattr(self.portfolio, 'unrealized_pnl', 0)),  # Current P&L
+                len([p for p in self.portfolio.positions.values() if p.status.value == "OPEN"]),  # Active positions
+                float(self.live_metrics.current_drawdown),  # Current drawdown
+                float(self.live_metrics.win_rate),  # Current win rate
+                float(self.live_metrics.total_trades),  # Total trades this session
+                len(self.dex_clients),  # Number of available DEX clients
+                1.0 if self.enable_real_trading else 0.0  # Real trading flag
+            ], dtype=np.float32)
+            
+            # Map trade action to numeric value
+            action_mapping = {
+                TradeAction.STRONG_BUY: 0,
+                TradeAction.BUY: 1,
+                TradeAction.HOLD: 2,
+                TradeAction.SELL: 3,
+                TradeAction.STRONG_SELL: 4
+            }
+            action_value = action_mapping.get(trading_result.action, 2)  # Default to HOLD
+            
+            # Calculate production-optimized reward
+            reward = 0.0
+            if trading_result.success and trading_result.realized_pnl is not None:
+                # Scale reward based on portfolio size and risk
+                portfolio_size = float(self.portfolio.total_value)
+                risk_adjusted_reward = float(trading_result.realized_pnl) / max(portfolio_size * 0.01, 100.0)
+                reward = risk_adjusted_reward
+            elif not trading_result.success:
+                # Penalty for failed trades in production
+                reward = -0.05  # Higher penalty than simulation
+            
+            # Create next state (enhanced for production)
+            next_state = state_features.copy()
+            
+            # Create experience object
+            experience = Experience(
+                state=state_features,
+                action=action_value,
+                reward=reward,
+                next_state=next_state,
+                done=False,  # Live trading doesn't have terminal states
+                timestamp=trading_result.executed_at or datetime.now()
+            )
+            
+            # Prepare comprehensive metadata with production tags and safety data
+            metadata = self.live_experience_tags.copy()
+            metadata.update({
+                'trade_successful': trading_result.success,
+                'trade_value_usd': float(trading_result.value_usd) if trading_result.value_usd else 0.0,
+                'trade_quantity': float(trading_result.quantity) if trading_result.quantity else 0.0,
+                'portfolio_value_before': float(trading_result.portfolio_value_before) if trading_result.portfolio_value_before else 0.0,
+                'portfolio_value_after': float(trading_result.portfolio_value_after) if trading_result.portfolio_value_after else 0.0,
+                'realized_pnl': float(trading_result.realized_pnl) if trading_result.realized_pnl else 0.0,
+                'token_symbol': market_state.token.symbol,
+                'token_address': market_state.token.address,
+                'market_rsi': market_state.rsi,
+                'market_price': market_state.price_usd,
+                'current_drawdown': float(self.live_metrics.current_drawdown),
+                'session_win_rate': float(self.live_metrics.win_rate),
+                'total_session_trades': self.live_metrics.total_trades,
+                'emergency_stops_triggered': self.live_metrics.emergency_stops_triggered,
+                'dex_failures': self.live_metrics.dex_failures,
+                'safety_validated': True,
+                'production_timestamp': datetime.now().isoformat()
+            })
+            
+            # Add explanation data if available
+            if explanation:
+                metadata.update({
+                    'xai_explanation_available': True,
+                    'explanation_decision_id': explanation.decision_id,
+                    'explanation_confidence': explanation.confidence,
+                    'explanation_type': explanation.explanation_data.explanation_type,
+                })
+            else:
+                metadata['xai_explanation_available'] = False
+            
+            # Calculate priority for production (higher for significant trades and failures)
+            priority = self.production_experience_settings.get("critical_experience_priority", 10.0)
+            if trading_result.success and trading_result.realized_pnl is not None:
+                # Higher priority for profitable trades
+                pnl_magnitude = abs(float(trading_result.realized_pnl))
+                priority = min(20.0, priority + (pnl_magnitude / 1000.0))
+            elif not trading_result.success:
+                # Very high priority for failed trades to learn from mistakes
+                priority = 15.0
+            
+            # Real-time persistence for production
+            if self.enable_real_time_experience_persistence:
+                await self.database_experience_buffer.add(experience, priority=priority, metadata=metadata)
+            else:
+                # Batch persistence (less common in production)
+                await self.database_experience_buffer.add_batch([experience], priorities=[priority], metadatas=[metadata])
+            
+            self.logger.debug("Production experience captured to database",
+                            action=trading_result.action.value,
+                            reward=reward,
+                            priority=priority,
+                            real_time_persistence=self.enable_real_time_experience_persistence,
+                            metadata_keys=list(metadata.keys()))
+            
+        except Exception as e:
+            self.logger.error("Failed to capture production experience to database", error=str(e))
+            raise
+    
+    def _validate_experience_for_learning(self, trading_result: TradingResult, market_state: MarketState) -> bool:
+        """Validate that an experience is safe and meaningful for learning in production."""
+        try:
+            # Basic data validation
+            if not market_state.token or not market_state.price_usd:
+                return False
+            
+            # Reject experiences during emergency stops
+            if self.live_metrics.emergency_stops_triggered > 0:
+                recent_emergency = datetime.now() - timedelta(minutes=10)
+                if hasattr(self, 'last_emergency_stop') and self.last_emergency_stop > recent_emergency:
+                    return False
+            
+            # Reject experiences with extreme values that might corrupt learning
+            if trading_result.value_usd and abs(float(trading_result.value_usd)) > float(self.live_config.initial_balance) * 2:
+                return False
+            
+            # Reject experiences when portfolio is in extreme drawdown
+            if self.live_metrics.current_drawdown > float(self.live_config.emergency_drawdown_pct) * 0.8:
+                return False
+            
+            # Require minimum market data quality
+            if market_state.rsi is None or market_state.volume_24h is None:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.warning("Experience validation failed", error=str(e))
+            return False
+    
+    async def get_database_experience_statistics(self) -> Dict[str, Any]:
+        """Get production database experience storage statistics for monitoring."""
+        if not self.enable_database_experience_storage or not self.database_experience_buffer:
+            return {
+                'database_experience_storage_enabled': False,
+                'database_connection_failed': self.database_connection_failed
+            }
+        
+        try:
+            stats = await self.database_experience_buffer.get_statistics()
+            stats.update({
+                'database_experience_storage_enabled': True,
+                'database_connection_failed': self.database_connection_failed,
+                'production_experience_settings': self.production_experience_settings,
+                'live_experience_tags': self.live_experience_tags,
+                'real_time_persistence_enabled': self.enable_real_time_experience_persistence
+            })
+            return stats
+        except Exception as e:
+            self.logger.error("Failed to get production database experience statistics", error=str(e))
+            return {
+                'database_experience_storage_enabled': True,
+                'database_connection_failed': True,
+                'error': str(e)
+            }
     
     async def _execute_live_trade(self, action: TradeAction, market_state: MarketState, 
                                  experience_id: Optional[str] = None, explanation: Optional[Any] = None) -> Optional[TradingResult]:
