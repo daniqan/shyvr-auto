@@ -11,15 +11,23 @@ Following TDD methodology - implementation after comprehensive tests.
 import asyncio
 import json
 import uuid
+import hashlib
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, AsyncGenerator
 import numpy as np
 import structlog
 
 from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import Experience, ExperienceReplayBuffer
 from src.ml_analysis.base import PredictionResult
+from src.utils.database import (
+    insert_experience_batch, query_experiences_by_session, 
+    sample_prioritized_experiences, update_experience_priorities,
+    get_session_statistics, check_rl_database_health, 
+    stream_experiences_with_memory_optimization, execute_concurrent_batch_operations,
+    atomic_experience_batch_operation, get_database_connection
+)
 
 
 logger = structlog.get_logger()
@@ -37,6 +45,13 @@ class ExperienceCollectorConfig:
     # Persistence
     enable_persistence: bool = True
     persistence_path: str = "experiences.json"
+    
+    # Database storage options
+    enable_database_storage: bool = False  # Enable database storage instead of file
+    database_batch_size: int = 50  # Batch size for database operations
+    database_connection_timeout: int = 30  # Connection timeout in seconds
+    database_retry_attempts: int = 3  # Number of retry attempts for database operations
+    database_retry_delay: float = 1.0  # Initial retry delay in seconds
     
     # Session limits
     max_experiences_per_session: int = 1000
@@ -93,6 +108,12 @@ class TradingExperienceData:
     total_fees: float = 0.0
     slippage_penalty: float = 0.0
     
+    # Database-specific fields
+    database_session_id: Optional[str] = None  # Database session ID
+    checksum: Optional[str] = None  # Data integrity checksum
+    version: int = 1  # Experience data version
+    storage_metadata: Optional[Dict[str, Any]] = None  # Database storage metadata
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert experience data to dictionary for serialization"""
         return {
@@ -120,7 +141,11 @@ class TradingExperienceData:
             'market_direction': self.market_direction,
             'confidence': self.confidence,
             'total_fees': self.total_fees,
-            'slippage_penalty': self.slippage_penalty
+            'slippage_penalty': self.slippage_penalty,
+            'database_session_id': self.database_session_id,
+            'checksum': self.checksum,
+            'version': self.version,
+            'storage_metadata': self.storage_metadata or {}
         }
     
     @classmethod
@@ -151,7 +176,11 @@ class TradingExperienceData:
             market_direction=data.get('market_direction', 0.0),
             confidence=data.get('confidence', 0.0),
             total_fees=data.get('total_fees', 0.0),
-            slippage_penalty=data.get('slippage_penalty', 0.0)
+            slippage_penalty=data.get('slippage_penalty', 0.0),
+            database_session_id=data.get('database_session_id'),
+            checksum=data.get('checksum'),
+            version=data.get('version', 1),
+            storage_metadata=data.get('storage_metadata')
         )
 
 
@@ -184,9 +213,15 @@ class TradingExperienceCollector:
         self.total_experiences_added_to_buffer = 0
         self.session_statistics = {}
         
+        # Database-specific attributes
+        self.database_session_id = str(uuid.uuid4()) if config.enable_database_storage else None
+        self.database_connection = None
+        self.pending_database_operations = []
+        
         self.logger.info("Trading Experience Collector initialized",
                         buffer_size=config.buffer_size,
                         enable_persistence=config.enable_persistence,
+                        enable_database_storage=config.enable_database_storage,
                         max_per_session=config.max_experiences_per_session)
     
     async def start_collection(self) -> None:
@@ -200,10 +235,26 @@ class TradingExperienceCollector:
         self.experiences_this_session = 0
         self.last_experience_time = None
         
+        # Initialize database connection if enabled
+        if self.config.enable_database_storage:
+            try:
+                # Test database connectivity
+                async with get_database_connection() as conn:
+                    await conn.fetchval("SELECT 1")
+                self.logger.info("Database connection initialized for experience storage")
+            except Exception as e:
+                self.logger.error("Failed to initialize database connection", error=str(e))
+                raise ExperienceCollectionError(f"Database connection failed: {e}")
+        
         # Load previous experiences if persistence enabled
         if self.config.enable_persistence:
             try:
-                loaded_count = await self.load_experiences()
+                if self.config.enable_database_storage:
+                    # Load from database if available
+                    loaded_count = await self.load_experiences_from_database(self.database_session_id)
+                else:
+                    # Load from file
+                    loaded_count = await self.load_experiences()
                 self.logger.info("Loaded previous experiences", count=loaded_count)
             except Exception as e:
                 self.logger.warning("Could not load previous experiences", error=str(e))
@@ -225,8 +276,12 @@ class TradingExperienceCollector:
         # Persist experiences if enabled
         if self.config.enable_persistence:
             try:
-                await self.persist_experiences()
-                self.logger.info("Experiences persisted to file")
+                if self.config.enable_database_storage:
+                    await self.persist_experiences_to_database()
+                    self.logger.info("Experiences persisted to database")
+                else:
+                    await self.persist_experiences()
+                    self.logger.info("Experiences persisted to file")
             except Exception as e:
                 self.logger.error("Failed to persist experiences", error=str(e))
         
@@ -591,6 +646,357 @@ class TradingExperienceCollector:
             exp_data.market_timing_reward = price_change * 50 * self.config.market_timing_weight
         elif action in [TradeAction.SELL, TradeAction.STRONG_SELL] and price_change < 0:
             exp_data.market_timing_reward = abs(price_change) * 50 * self.config.market_timing_weight
+
+    # ========================================
+    # DATABASE INTEGRATION METHODS
+    # ========================================
+
+    async def persist_experiences_to_database(self) -> int:
+        """Persist completed experiences to database"""
+        if not self.config.enable_database_storage or not self.completed_experiences:
+            return 0
+        
+        try:
+            # Prepare experiences for database insertion
+            db_experiences = []
+            for exp_data in self.completed_experiences:
+                # Enrich experience with database-specific metadata
+                enriched_exp = self._enrich_experience_for_database(exp_data)
+                
+                # Convert to database format
+                db_exp = {
+                    'session_id': self.database_session_id,
+                    'step_number': len(db_experiences) + 1,
+                    'state': enriched_exp.pre_trade_state.tolist(),
+                    'action': self._encode_action_for_rl(enriched_exp.action),
+                    'reward': enriched_exp.reward,
+                    'next_state': enriched_exp.post_trade_state.tolist(),
+                    'done': enriched_exp.done,
+                    'priority': 0.5,  # Default priority
+                    'metadata': {
+                        'experience_id': enriched_exp.experience_id,
+                        'timestamp': enriched_exp.timestamp.isoformat(),
+                        'success': enriched_exp.success,
+                        'realized_pnl': enriched_exp.realized_pnl,
+                        'fees': enriched_exp.fees,
+                        'slippage': enriched_exp.slippage,
+                        'checksum': enriched_exp.checksum,
+                        'version': enriched_exp.version,
+                        'storage_metadata': enriched_exp.storage_metadata
+                    }
+                }
+                db_experiences.append(db_exp)
+            
+            # Insert batch to database
+            inserted_count = await insert_experience_batch(db_experiences)
+            
+            # Clear completed experiences after successful insertion
+            self.completed_experiences.clear()
+            
+            self.logger.info("Experiences persisted to database", count=inserted_count)
+            return inserted_count
+            
+        except Exception as e:
+            self.logger.error("Failed to persist experiences to database", error=str(e))
+            # Fallback to file persistence if available
+            if self.config.persistence_path:
+                await self._fallback_to_file_persistence()
+            raise ExperienceCollectionError(f"Database persistence failed: {e}")
+
+    async def load_experiences_from_database(self, session_id: str, limit: int = 1000, offset: int = 0) -> int:
+        """Load experiences from database by session ID"""
+        if not self.config.enable_database_storage:
+            return 0
+        
+        try:
+            experiences = await query_experiences_by_session(session_id, limit, offset)
+            
+            loaded_count = 0
+            for exp_dict in experiences:
+                try:
+                    # Convert database format to RL experience
+                    rl_experience = self._convert_database_experience_to_rl(exp_dict)
+                    self.replay_buffer.add(rl_experience)
+                    loaded_count += 1
+                    
+                except Exception as e:
+                    self.logger.warning("Failed to load experience from database",
+                                      experience_id=exp_dict.get('id'),
+                                      error=str(e))
+            
+            self.logger.info("Experiences loaded from database",
+                           count=loaded_count,
+                           session_id=session_id)
+            return loaded_count
+            
+        except Exception as e:
+            self.logger.error("Failed to load experiences from database", 
+                            session_id=session_id, error=str(e))
+            return 0
+
+    async def sample_prioritized_experiences_from_database(self, batch_size: int = 32, 
+                                                         alpha: float = 0.6,
+                                                         session_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Sample prioritized experiences from database"""
+        if not self.config.enable_database_storage:
+            return []
+        
+        try:
+            return await sample_prioritized_experiences(batch_size, alpha, session_ids)
+        except Exception as e:
+            self.logger.error("Failed to sample prioritized experiences from database", error=str(e))
+            return []
+
+    async def update_experience_priorities_in_database(self, priority_updates: List[Dict[str, Any]]) -> int:
+        """Update experience priorities in database after training"""
+        if not self.config.enable_database_storage or not priority_updates:
+            return 0
+        
+        try:
+            return await update_experience_priorities(priority_updates)
+        except Exception as e:
+            self.logger.error("Failed to update experience priorities in database", error=str(e))
+            return 0
+
+    async def get_session_statistics_from_database(self, session_id: str) -> Dict[str, Any]:
+        """Get session statistics from database"""
+        if not self.config.enable_database_storage:
+            return {}
+        
+        try:
+            return await get_session_statistics(session_id)
+        except Exception as e:
+            self.logger.error("Failed to get session statistics from database", 
+                            session_id=session_id, error=str(e))
+            return {}
+
+    async def check_database_health(self) -> Dict[str, Any]:
+        """Check database health for experience storage"""
+        if not self.config.enable_database_storage:
+            return {'status': 'disabled'}
+        
+        try:
+            return await check_rl_database_health()
+        except Exception as e:
+            self.logger.error("Database health check failed", error=str(e))
+            return {'status': 'unhealthy', 'error': str(e)}
+
+    async def stream_experiences_from_database(self, session_id: str, 
+                                             batch_size: int = 1000) -> AsyncGenerator[List[Dict[str, Any]], None]:
+        """Stream experiences from database with memory optimization"""
+        if not self.config.enable_database_storage:
+            return
+        
+        try:
+            async for batch in stream_experiences_with_memory_optimization(session_id, batch_size):
+                yield batch
+        except Exception as e:
+            self.logger.error("Failed to stream experiences from database", 
+                            session_id=session_id, error=str(e))
+
+    async def process_experiences_in_batches(self) -> int:
+        """Process experiences in batches for database efficiency"""
+        if not self.config.enable_database_storage or not self.completed_experiences:
+            return 0
+        
+        batch_size = self.config.database_batch_size
+        total_processed = 0
+        
+        try:
+            # Process experiences in batches
+            for i in range(0, len(self.completed_experiences), batch_size):
+                batch = self.completed_experiences[i:i + batch_size]
+                
+                # Prepare batch for database
+                db_experiences = []
+                for exp_data in batch:
+                    enriched_exp = self._enrich_experience_for_database(exp_data)
+                    db_exp = self._convert_experience_to_database_format(enriched_exp)
+                    db_experiences.append(db_exp)
+                
+                # Insert batch
+                inserted_count = await insert_experience_batch(db_experiences)
+                total_processed += inserted_count
+                
+                self.logger.debug("Processed experience batch", 
+                                batch_size=len(batch), 
+                                inserted=inserted_count)
+            
+            # Clear processed experiences
+            self.completed_experiences.clear()
+            
+            self.logger.info("Batch processing completed", total_processed=total_processed)
+            return total_processed
+            
+        except Exception as e:
+            self.logger.error("Failed to process experiences in batches", error=str(e))
+            return total_processed
+
+    async def persist_experiences_to_database_with_retry(self) -> int:
+        """Persist experiences to database with exponential backoff retry"""
+        if not self.config.enable_database_storage:
+            return 0
+        
+        retry_attempts = self.config.database_retry_attempts
+        retry_delay = self.config.database_retry_delay
+        
+        for attempt in range(retry_attempts):
+            try:
+                return await self.persist_experiences_to_database()
+                
+            except Exception as e:
+                if attempt == retry_attempts - 1:
+                    # Last attempt failed
+                    self.logger.error("All retry attempts failed for database persistence", 
+                                    attempts=retry_attempts, error=str(e))
+                    raise
+                
+                # Wait before retry with exponential backoff
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+                
+                self.logger.warning("Database persistence attempt failed, retrying",
+                                  attempt=attempt + 1,
+                                  retry_delay=retry_delay)
+        
+        return 0
+
+    async def execute_concurrent_database_operations(self, operations: List[List[tuple]]) -> List[Dict[str, Any]]:
+        """Execute concurrent database operations"""
+        if not self.config.enable_database_storage:
+            return []
+        
+        try:
+            return await execute_concurrent_batch_operations(operations)
+        except Exception as e:
+            self.logger.error("Failed to execute concurrent database operations", error=str(e))
+            return []
+
+    async def persist_experiences_atomically(self) -> Dict[str, Any]:
+        """Persist experiences atomically with session metrics"""
+        if not self.config.enable_database_storage or not self.completed_experiences:
+            return {'experiences_inserted': 0, 'session_updated': False}
+        
+        try:
+            # Prepare experiences for atomic operation
+            db_experiences = []
+            for exp_data in self.completed_experiences:
+                enriched_exp = self._enrich_experience_for_database(exp_data)
+                db_exp = self._convert_experience_to_database_format(enriched_exp)
+                db_experiences.append(db_exp)
+            
+            # Calculate session metrics
+            session_metrics = {
+                'session_id': self.database_session_id,
+                'total_reward': sum(exp.reward for exp in self.completed_experiences),
+                'episode_length': len(self.completed_experiences),
+                'avg_reward': sum(exp.reward for exp in self.completed_experiences) / len(self.completed_experiences),
+                'max_reward': max(exp.reward for exp in self.completed_experiences),
+                'min_reward': min(exp.reward for exp in self.completed_experiences)
+            }
+            
+            # Execute atomic operation
+            result = await atomic_experience_batch_operation(db_experiences, session_metrics)
+            
+            # Clear experiences on success
+            if result.get('experiences_inserted', 0) > 0:
+                self.completed_experiences.clear()
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error("Atomic database operation failed", error=str(e))
+            raise ExperienceCollectionError(f"Database transaction failed: {e}")
+
+    def _enrich_experience_for_database(self, exp_data: TradingExperienceData) -> TradingExperienceData:
+        """Enrich experience with database-specific metadata"""
+        # Generate checksum for data integrity
+        checksum = self._generate_experience_checksum(exp_data)
+        
+        # Create enriched copy
+        enriched_exp = TradingExperienceData(
+            experience_id=exp_data.experience_id,
+            timestamp=exp_data.timestamp,
+            action=exp_data.action,
+            pre_trade_state=exp_data.pre_trade_state,
+            post_trade_state=exp_data.post_trade_state,
+            reward=exp_data.reward,
+            done=exp_data.done,
+            success=exp_data.success,
+            realized_pnl=exp_data.realized_pnl,
+            unrealized_pnl=exp_data.unrealized_pnl,
+            fees=exp_data.fees,
+            slippage=exp_data.slippage,
+            execution_time_ms=exp_data.execution_time_ms,
+            pnl_reward=exp_data.pnl_reward,
+            execution_quality_penalty=exp_data.execution_quality_penalty,
+            risk_penalty=exp_data.risk_penalty,
+            market_timing_reward=exp_data.market_timing_reward,
+            portfolio_value_before=exp_data.portfolio_value_before,
+            portfolio_value_after=exp_data.portfolio_value_after,
+            position_size_change=exp_data.position_size_change,
+            market_volatility=exp_data.market_volatility,
+            market_direction=exp_data.market_direction,
+            confidence=exp_data.confidence,
+            total_fees=exp_data.total_fees,
+            slippage_penalty=exp_data.slippage_penalty,
+            database_session_id=self.database_session_id,
+            checksum=checksum,
+            version=1,
+            storage_metadata={
+                'collector_id': id(self),
+                'enriched_at': datetime.now().isoformat(),
+                'batch_size': self.config.database_batch_size
+            }
+        )
+        
+        return enriched_exp
+
+    def _generate_experience_checksum(self, exp_data: TradingExperienceData) -> str:
+        """Generate SHA-256 checksum for experience data integrity"""
+        # Create string representation of core experience data
+        checksum_data = f"{exp_data.experience_id}|{exp_data.timestamp.isoformat()}|{exp_data.action.value}|{exp_data.reward}|{exp_data.success}"
+        
+        # Generate SHA-256 hash
+        return hashlib.sha256(checksum_data.encode('utf-8')).hexdigest()
+
+    def _validate_experience_checksum(self, exp_data: TradingExperienceData, checksum: str) -> bool:
+        """Validate experience checksum for data integrity"""
+        expected_checksum = self._generate_experience_checksum(exp_data)
+        return expected_checksum == checksum
+
+    def _convert_experience_to_database_format(self, exp_data: TradingExperienceData) -> Dict[str, Any]:
+        """Convert experience data to database format"""
+        return {
+            'session_id': self.database_session_id,
+            'step_number': self.total_experiences_captured + 1,
+            'state': exp_data.pre_trade_state.tolist(),
+            'action': self._encode_action_for_rl(exp_data.action),
+            'reward': exp_data.reward,
+            'next_state': exp_data.post_trade_state.tolist(),
+            'done': exp_data.done,
+            'priority': 0.5,
+            'metadata': exp_data.to_dict()
+        }
+
+    def _convert_database_experience_to_rl(self, db_exp: Dict[str, Any]) -> Experience:
+        """Convert database experience to RL experience format"""
+        return Experience(
+            state=np.array(db_exp['state'], dtype=np.float32),
+            action=db_exp['action'],
+            reward=db_exp['reward'],
+            next_state=np.array(db_exp['next_state'], dtype=np.float32) if db_exp['next_state'] else None,
+            done=db_exp['done'],
+            timestamp=db_exp['created_at']
+        )
+
+    async def _fallback_to_file_persistence(self) -> None:
+        """Fallback to file persistence when database fails"""
+        try:
+            await self.persist_experiences()
+            self.logger.info("Fallback to file persistence successful")
+        except Exception as e:
+            self.logger.error("Fallback file persistence also failed", error=str(e))
 
 
 class ExperienceCollectionError(Exception):
