@@ -33,6 +33,7 @@ from src.rl_agent.dqn_agent import DQNTradingAgent
 from src.rl_agent.base import AgentConfig, ModelType
 from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
+from src.dex import JupiterDEXClient, UniswapV3Client, HyperliquidDEXClient
 from src.xai.trading_integration import TradingExplanationManager
 
 
@@ -1429,10 +1430,199 @@ class SimulationMode(ModeBase):
         self._record_metric("simulated_action", "processed")
     
     async def _initialize_dex_clients(self) -> None:
-        """Initialize DEX clients for market data."""
-        # This would initialize real DEX clients in production
-        # For now, create mock clients
-        self.logger.info("DEX clients would be initialized here")
+        """Initialize DEX clients for real market data and trading simulation."""
+        import os
+        import asyncio
+        
+        self.logger.info("Initializing DEX clients for simulation mode")
+        
+        # Get DEX preferences from config
+        dex_preferences = self.config.parameters.get("dex_preferences", ["jupiter", "uniswap_v3", "hyperliquid"])
+        
+        # Track initialization results
+        initialized_clients = {}
+        
+        for dex_name in dex_preferences:
+            try:
+                # Skip if explicitly disabled
+                if not self.config.parameters.get(f"enable_{dex_name}", True):
+                    self.logger.info(f"Skipping {dex_name} - disabled in configuration")
+                    continue
+                
+                # Initialize based on DEX type
+                if dex_name == "jupiter":
+                    client = await self._initialize_jupiter_client()
+                elif dex_name == "uniswap_v3":
+                    client = await self._initialize_uniswap_v3_client()
+                elif dex_name == "hyperliquid":
+                    client = await self._initialize_hyperliquid_client()
+                else:
+                    self.logger.warning(f"Unknown DEX type: {dex_name}")
+                    continue
+                
+                if client:
+                    initialized_clients[dex_name] = client
+                    self.logger.info(f"Successfully initialized {dex_name} DEX client")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to initialize {dex_name} DEX client", error=str(e))
+                continue
+        
+        # Update simulation components with initialized clients
+        self.dex_clients = initialized_clients
+        self.market_data_feed.dex_clients = initialized_clients
+        self.simulation_executor.dex_clients = initialized_clients
+        
+        if not initialized_clients:
+            self.logger.warning("No DEX clients were successfully initialized - simulation will run without real market data")
+        else:
+            self.logger.info(f"Initialized {len(initialized_clients)} DEX clients", clients=list(initialized_clients.keys()))
+    
+    async def _initialize_jupiter_client(self) -> Optional[JupiterDEXClient]:
+        """Initialize Jupiter DEX client for Solana."""
+        import os
+        import asyncio
+        
+        try:
+            # Create Jupiter configuration
+            jupiter_config = self._create_jupiter_config()
+            
+            # Create and test Jupiter client
+            client = JupiterDEXClient(jupiter_config)
+            
+            # Test connection with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=30.0)
+                    return client
+                except (asyncio.TimeoutError, Exception) as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.logger.warning(f"Jupiter connection attempt {attempt + 1} failed, retrying", error=str(e))
+                    await asyncio.sleep(1.0)
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize Jupiter client", error=str(e))
+            return None
+    
+    async def _initialize_uniswap_v3_client(self) -> Optional[UniswapV3Client]:
+        """Initialize Uniswap V3 DEX client for Ethereum."""
+        import os
+        import asyncio
+        
+        try:
+            # Check for required environment variables
+            infura_project_id = os.getenv("INFURA_PROJECT_ID")
+            if not infura_project_id:
+                raise ValueError("Missing INFURA_PROJECT_ID environment variable")
+            
+            # Create Uniswap V3 configuration
+            uniswap_config = self._create_uniswap_v3_config()
+            
+            # Create and test Uniswap V3 client
+            client = UniswapV3Client(uniswap_config)
+            
+            # Test connection with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=30.0)
+                    return client
+                except (asyncio.TimeoutError, Exception) as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.logger.warning(f"Uniswap V3 connection attempt {attempt + 1} failed, retrying", error=str(e))
+                    await asyncio.sleep(1.0)
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize Uniswap V3 client", error=str(e))
+            return None
+    
+    async def _initialize_hyperliquid_client(self) -> Optional[HyperliquidDEXClient]:
+        """Initialize Hyperliquid DEX client."""
+        import os
+        import asyncio
+        
+        try:
+            # Check for required environment variables
+            private_key = os.getenv("HYPERLIQUID_PRIVATE_KEY")
+            if not private_key:
+                raise ValueError("Missing HYPERLIQUID_PRIVATE_KEY environment variable")
+            
+            # Create Hyperliquid configuration
+            hyperliquid_config = self._create_hyperliquid_config()
+            
+            # Create and test Hyperliquid client
+            client = HyperliquidDEXClient(hyperliquid_config)
+            
+            # Test connection with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await asyncio.wait_for(client.connect(), timeout=30.0)
+                    return client
+                except (asyncio.TimeoutError, Exception) as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.logger.warning(f"Hyperliquid connection attempt {attempt + 1} failed, retrying", error=str(e))
+                    await asyncio.sleep(1.0)
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize Hyperliquid client", error=str(e))
+            return None
+    
+    def _create_jupiter_config(self):
+        """Create Jupiter DEX configuration from simulation parameters."""
+        from src.dex.base import DEXConfig
+        
+        jupiter_params = self.config.parameters.get("jupiter_config", {})
+        
+        return DEXConfig(
+            chain=Chain.SOLANA,
+            name="jupiter",
+            max_slippage_bps=jupiter_params.get("max_slippage_bps", 50),
+            timeout_seconds=jupiter_params.get("timeout_seconds", 30),
+            rate_limit_per_second=jupiter_params.get("rate_limit_per_second", 10),
+            enable_price_impact_warnings=jupiter_params.get("enable_price_impact_warnings", True),
+            max_price_impact_bps=jupiter_params.get("max_price_impact_bps", 1000)
+        )
+    
+    def _create_uniswap_v3_config(self):
+        """Create Uniswap V3 DEX configuration from simulation parameters."""
+        import os
+        from src.dex.base import DEXConfig
+        
+        uniswap_params = self.config.parameters.get("uniswap_v3_config", {})
+        
+        return DEXConfig(
+            chain=Chain.ETHEREUM,
+            name="uniswap_v3",
+            api_key=os.getenv("INFURA_PROJECT_ID"),  # Infura project ID
+            max_slippage_bps=uniswap_params.get("max_slippage_bps", 50),
+            timeout_seconds=uniswap_params.get("timeout_seconds", 30),
+            rate_limit_per_second=uniswap_params.get("rate_limit_per_second", 10),
+            enable_price_impact_warnings=uniswap_params.get("enable_price_impact_warnings", True),
+            max_price_impact_bps=uniswap_params.get("max_price_impact_bps", 1000)
+        )
+    
+    def _create_hyperliquid_config(self):
+        """Create Hyperliquid DEX configuration from simulation parameters."""
+        import os
+        from src.dex.base import DEXConfig
+        
+        hyperliquid_params = self.config.parameters.get("hyperliquid_config", {})
+        
+        return DEXConfig(
+            chain=Chain.HYPERLIQUID,
+            name="hyperliquid",
+            api_key=os.getenv("HYPERLIQUID_PRIVATE_KEY"),  # Private key for authentication
+            max_slippage_bps=hyperliquid_params.get("max_slippage_bps", 50),
+            timeout_seconds=hyperliquid_params.get("timeout_seconds", 30),
+            rate_limit_per_second=hyperliquid_params.get("rate_limit_per_second", 10),
+            enable_price_impact_warnings=hyperliquid_params.get("enable_price_impact_warnings", True),
+            max_price_impact_bps=hyperliquid_params.get("max_price_impact_bps", 1000)
+        )
     
     def _calculate_current_drawdown(self) -> float:
         """Calculate current portfolio drawdown percentage."""
