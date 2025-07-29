@@ -316,6 +316,35 @@ class DashboardAPI:
             dependencies=[Depends(require_read)]
         )
         
+        # Experience API endpoints
+        self.router.add_api_route(
+            "/api/v1/experiences/recent",
+            self.get_recent_experiences,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/api/v1/experiences/stats",
+            self.get_experience_stats,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/api/v1/experiences/performance",
+            self.get_experience_performance,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+        
+        self.router.add_api_route(
+            "/api/v1/experiences/search",
+            self.search_experiences,
+            methods=["GET"],
+            dependencies=[Depends(require_read)]
+        )
+
         # WebSocket endpoint
         self.router.add_websocket_route(
             "/ws/{connection_id}",
@@ -1543,6 +1572,491 @@ class DashboardAPI:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve live positions"
+            )
+    
+    # =============================================================================
+    # EXPERIENCE API ENDPOINTS
+    # =============================================================================
+    
+    async def get_recent_experiences(
+        self,
+        limit: int = Query(100, ge=1, le=1000, description="Number of experiences to return"),
+        offset: int = Query(0, ge=0, description="Offset for pagination"),
+        session_id: Optional[str] = Query(None, description="Filter by session ID"),
+        trading_mode: Optional[str] = Query(None, description="Filter by trading mode"),
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to look back"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get recent RL experiences with pagination and filtering"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # Log API call
+            await activity_logger.log_api_call(
+                api_name="dashboard_api",
+                endpoint="/api/v1/experiences/recent",
+                method="GET",
+                status_code=200,
+                response_time_ms=0,
+                success=True,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "username": user.username,
+                    "limit": limit,
+                    "offset": offset,
+                    "session_id": session_id,
+                    "trading_mode": trading_mode,
+                    "hours_back": hours_back
+                }
+            )
+            
+            # Get experiences from service
+            async with performance_tracker(
+                source="dashboard_api",
+                operation="get_recent_experiences",
+                category=ActivityCategory.API,
+                metadata={"user": user.username, "endpoint": "/api/v1/experiences/recent"}
+            ) as tracker:
+                
+                result = await dashboard_service.get_recent_experiences(
+                    limit=limit,
+                    offset=offset,
+                    session_id=session_id,
+                    trading_mode=trading_mode,
+                    hours_back=hours_back
+                )
+                
+                # Calculate response time
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="recent_experiences_success",
+                    title=f"Recent experiences retrieved by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/api/v1/experiences/recent",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "experiences_returned": len(result["experiences"]),
+                        "total_available": result["total_count"],
+                        "has_more": result["has_more"]
+                    }
+                )
+                
+                return {
+                    "experiences": result["experiences"],
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": result["total_count"],
+                        "has_more": result["has_more"]
+                    },
+                    "filters": {
+                        "session_id": session_id,
+                        "trading_mode": trading_mode,
+                        "hours_back": hours_back
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            # Record error
+            response_time = asyncio.get_event_loop().time() - start_time
+            dashboard_service.record_request(response_time, error=True)
+            
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="recent_experiences_failed",
+                title=f"Failed to retrieve recent experiences for {user.username}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/api/v1/experiences/recent",
+                http_method="GET",
+                http_status=500,
+                response_time_ms=int(response_time * 1000),
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to get recent experiences", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve recent experiences"
+            )
+    
+    async def get_experience_stats(
+        self,
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get comprehensive experience statistics"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # Log API call
+            await activity_logger.log_api_call(
+                api_name="dashboard_api",
+                endpoint="/api/v1/experiences/stats",
+                method="GET",
+                status_code=200,
+                response_time_ms=0,
+                success=True,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "username": user.username,
+                    "hours_back": hours_back
+                }
+            )
+            
+            # Get statistics from service
+            async with performance_tracker(
+                source="dashboard_api",
+                operation="get_experience_stats",
+                category=ActivityCategory.API,
+                metadata={"user": user.username, "endpoint": "/api/v1/experiences/stats"}
+            ) as tracker:
+                
+                stats = await dashboard_service.get_experience_stats(hours_back=hours_back)
+                
+                # Calculate response time
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="experience_stats_success",
+                    title=f"Experience statistics retrieved by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/api/v1/experiences/stats",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "total_experiences": stats.get("total_experiences", 0),
+                        "average_reward": stats.get("average_reward", 0.0),
+                        "success_rate": stats.get("success_rate", 0.0)
+                    }
+                )
+                
+                return {
+                    **stats,
+                    "time_range": {
+                        "hours_back": hours_back,
+                        "start_time": (datetime.utcnow() - timedelta(hours=hours_back)).isoformat(),
+                        "end_time": datetime.utcnow().isoformat()
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            # Record error
+            response_time = asyncio.get_event_loop().time() - start_time
+            dashboard_service.record_request(response_time, error=True)
+            
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="experience_stats_failed",
+                title=f"Failed to retrieve experience statistics for {user.username}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/api/v1/experiences/stats",
+                http_method="GET",
+                http_status=500,
+                response_time_ms=int(response_time * 1000),
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to get experience stats", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve experience statistics"
+            )
+    
+    async def get_experience_performance(
+        self,
+        hours_back: int = Query(24, ge=1, le=168, description="Hours to analyze"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Get experience performance metrics and analysis"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # Log API call
+            await activity_logger.log_api_call(
+                api_name="dashboard_api",
+                endpoint="/api/v1/experiences/performance",
+                method="GET",
+                status_code=200,
+                response_time_ms=0,
+                success=True,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "username": user.username,
+                    "hours_back": hours_back
+                }
+            )
+            
+            # Get performance metrics from service
+            async with performance_tracker(
+                source="dashboard_api",
+                operation="get_experience_performance",
+                category=ActivityCategory.API,
+                metadata={"user": user.username, "endpoint": "/api/v1/experiences/performance"}
+            ) as tracker:
+                
+                performance = await dashboard_service.get_experience_performance(hours_back=hours_back)
+                
+                # Calculate response time
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="experience_performance_success",
+                    title=f"Experience performance metrics retrieved by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/api/v1/experiences/performance",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "total_reward": performance["overall_performance"].get("total_reward", 0.0),
+                        "win_rate": performance["overall_performance"].get("win_rate", 0.0),
+                        "sharpe_ratio": performance["overall_performance"].get("sharpe_ratio", 0.0)
+                    }
+                )
+                
+                return {
+                    **performance,
+                    "time_range": {
+                        "hours_back": hours_back,
+                        "start_time": (datetime.utcnow() - timedelta(hours=hours_back)).isoformat(),
+                        "end_time": datetime.utcnow().isoformat()
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+        except Exception as e:
+            # Record error
+            response_time = asyncio.get_event_loop().time() - start_time
+            dashboard_service.record_request(response_time, error=True)
+            
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="experience_performance_failed",
+                title=f"Failed to retrieve experience performance for {user.username}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/api/v1/experiences/performance",
+                http_method="GET",
+                http_status=500,
+                response_time_ms=int(response_time * 1000),
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to get experience performance", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve experience performance"
+            )
+    
+    async def search_experiences(
+        self,
+        reward_min: Optional[float] = Query(None, description="Minimum reward value"),
+        reward_max: Optional[float] = Query(None, description="Maximum reward value"),
+        action: Optional[int] = Query(None, ge=0, description="Filter by action"),
+        trading_mode: Optional[str] = Query(None, description="Filter by trading mode"),
+        token_address: Optional[str] = Query(None, description="Filter by token address"),
+        chain: Optional[str] = Query(None, description="Filter by blockchain"),
+        session_id: Optional[str] = Query(None, description="Filter by session ID"),
+        done: Optional[bool] = Query(None, description="Filter by done status"),
+        priority_min: Optional[float] = Query(None, ge=0, le=1, description="Minimum priority"),
+        priority_max: Optional[float] = Query(None, ge=0, le=1, description="Maximum priority"),
+        limit: int = Query(100, ge=1, le=1000, description="Number of experiences to return"),
+        offset: int = Query(0, ge=0, description="Offset for pagination"),
+        user: User = Depends(require_read)
+    ) -> Dict[str, Any]:
+        """Search experiences with advanced filtering"""
+        start_time = asyncio.get_event_loop().time()
+        
+        # Validate parameter combinations
+        if reward_min is not None and reward_max is not None and reward_min > reward_max:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="reward_min cannot be greater than reward_max"
+            )
+        
+        if priority_min is not None and priority_max is not None and priority_min > priority_max:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="priority_min cannot be greater than priority_max"
+            )
+        
+        try:
+            # Log API call
+            await activity_logger.log_api_call(
+                api_name="dashboard_api",
+                endpoint="/api/v1/experiences/search",
+                method="GET",
+                status_code=200,
+                response_time_ms=0,
+                success=True,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                metadata={
+                    "username": user.username,
+                    "reward_min": reward_min,
+                    "reward_max": reward_max,
+                    "action": action,
+                    "trading_mode": trading_mode,
+                    "token_address": token_address,
+                    "chain": chain,
+                    "session_id": session_id,
+                    "done": done,
+                    "priority_min": priority_min,
+                    "priority_max": priority_max,
+                    "limit": limit,
+                    "offset": offset
+                }
+            )
+            
+            # Search experiences via service
+            async with performance_tracker(
+                source="dashboard_api",
+                operation="search_experiences",
+                category=ActivityCategory.API,
+                metadata={"user": user.username, "endpoint": "/api/v1/experiences/search"}
+            ) as tracker:
+                
+                result = await dashboard_service.search_experiences(
+                    reward_min=reward_min,
+                    reward_max=reward_max,
+                    action=action,
+                    trading_mode=trading_mode,
+                    token_address=token_address,
+                    chain=chain,
+                    session_id=session_id,
+                    done=done,
+                    priority_min=priority_min,
+                    priority_max=priority_max,
+                    limit=limit,
+                    offset=offset
+                )
+                
+                # Calculate response time
+                response_time = asyncio.get_event_loop().time() - start_time
+                dashboard_service.record_request(response_time)
+                
+                # Log successful response
+                await activity_logger.log_activity(
+                    category=ActivityCategory.API,
+                    action=ActivityAction.SUCCESS,
+                    source="dashboard_api",
+                    event_type="experience_search_success",
+                    title=f"Experience search completed by {user.username}",
+                    severity=ActivitySeverity.INFO,
+                    user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                    api_endpoint="/api/v1/experiences/search",
+                    http_method="GET",
+                    http_status=200,
+                    response_time_ms=int(response_time * 1000),
+                    metadata={
+                        "username": user.username,
+                        "experiences_found": len(result["experiences"]),
+                        "total_matching": result["total_count"],
+                        "has_more": result["has_more"],
+                        "filters_applied": {
+                            "reward_range": reward_min is not None or reward_max is not None,
+                            "action": action is not None,
+                            "trading_mode": trading_mode is not None,
+                            "token_address": token_address is not None,
+                            "chain": chain is not None,
+                            "session_id": session_id is not None,
+                            "done": done is not None,
+                            "priority_range": priority_min is not None or priority_max is not None
+                        }
+                    }
+                )
+                
+                return {
+                    "experiences": result["experiences"],
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": result["total_count"],
+                        "has_more": result["has_more"]
+                    },
+                    "filters": {
+                        "reward_min": reward_min,
+                        "reward_max": reward_max,
+                        "action": action,
+                        "trading_mode": trading_mode,
+                        "token_address": token_address,
+                        "chain": chain,
+                        "session_id": session_id,
+                        "done": done,
+                        "priority_min": priority_min,
+                        "priority_max": priority_max
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Record error
+            response_time = asyncio.get_event_loop().time() - start_time
+            dashboard_service.record_request(response_time, error=True)
+            
+            # Log API error
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_api",
+                event_type="experience_search_failed",
+                title=f"Failed to search experiences for {user.username}",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR,
+                user_id=int(user.user_id.split('-')[-1], 16) % 10000,
+                api_endpoint="/api/v1/experiences/search",
+                http_method="GET",
+                http_status=500,
+                response_time_ms=int(response_time * 1000),
+                metadata={"username": user.username}
+            )
+            
+            logger.error("Failed to search experiences", error=str(e), user=user.username)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to search experiences"
             )
     
     def _serialize_dashboard_data(self, data: DashboardData) -> Dict[str, Any]:

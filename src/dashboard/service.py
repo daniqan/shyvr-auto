@@ -2139,6 +2139,620 @@ class DashboardService:
             logger.error("Failed to get live positions", error=str(e))
             return []
 
+    # =============================================================================
+    # EXPERIENCE API SERVICE METHODS
+    # =============================================================================
+    
+    async def get_recent_experiences(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        session_id: Optional[str] = None,
+        trading_mode: Optional[str] = None,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Get recent RL experiences with pagination and filtering"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_recent_experiences",
+                title="Recent experiences requested",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "limit": limit,
+                    "offset": offset,
+                    "session_id": session_id,
+                    "trading_mode": trading_mode,
+                    "hours_back": hours_back
+                }
+            )
+            
+            # Get database connection
+            from ..utils.database import DatabaseManager
+            
+            db_manager = DatabaseManager()
+            async with db_manager.get_connection() as conn:
+                # Build query with filters
+                query_conditions = []
+                query_params = []
+                param_count = 1
+                
+                # Time filter
+                query_conditions.append(f"created_at >= NOW() - INTERVAL '{hours_back} hours'")
+                
+                # Session filter
+                if session_id:
+                    query_conditions.append(f"session_id = ${param_count}")
+                    query_params.append(session_id)
+                    param_count += 1
+                
+                # Trading mode filter
+                if trading_mode:
+                    query_conditions.append(f"trading_mode = ${param_count}")
+                    query_params.append(trading_mode)
+                    param_count += 1
+                
+                # Count total records
+                count_query = f"""
+                    SELECT COUNT(*) 
+                    FROM rl_experiences 
+                    WHERE {' AND '.join(query_conditions)}
+                """
+                
+                count_result = await conn.fetchrow(count_query, *query_params)
+                total_count = count_result['count']
+                
+                # Main query with pagination
+                main_query = f"""
+                    SELECT 
+                        id, experience_id, session_id, user_id,
+                        state_data, action, reward, next_state_data, done, priority,
+                        trading_mode, token_address, chain,
+                        market_conditions, performance_metrics, error_data, metadata,
+                        created_at, updated_at
+                    FROM rl_experiences 
+                    WHERE {' AND '.join(query_conditions)}
+                    ORDER BY created_at DESC
+                    LIMIT ${param_count} OFFSET ${param_count + 1}
+                """
+                
+                query_params.extend([limit, offset])
+                
+                rows = await conn.fetch(main_query, *query_params)
+                
+                # Convert rows to dictionaries
+                experiences = []
+                for row in rows:
+                    experience = {
+                        "id": row['id'],
+                        "experience_id": str(row['experience_id']),
+                        "session_id": str(row['session_id']),
+                        "user_id": row['user_id'],
+                        "state_data": row['state_data'],
+                        "action": row['action'],
+                        "reward": float(row['reward']),
+                        "next_state_data": row['next_state_data'],
+                        "done": row['done'],
+                        "priority": float(row['priority']),
+                        "trading_mode": row['trading_mode'],
+                        "token_address": row['token_address'],
+                        "chain": row['chain'],
+                        "market_conditions": row['market_conditions'],
+                        "performance_metrics": row['performance_metrics'],
+                        "error_data": row['error_data'],
+                        "metadata": row['metadata'],
+                        "created_at": row['created_at'].isoformat(),
+                        "updated_at": row['updated_at'].isoformat()
+                    }
+                    experiences.append(experience)
+                
+                return {
+                    "experiences": experiences,
+                    "total_count": total_count,
+                    "has_more": offset + limit < total_count
+                }
+                
+        except Exception as e:
+            logger.error("Failed to get recent experiences", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_recent_experiences_failed",
+                title="Failed to get recent experiences",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to retrieve recent experiences: {str(e)}")
+    
+    async def get_experience_stats(self, hours_back: int = 24) -> Dict[str, Any]:
+        """Get comprehensive experience statistics"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_stats",
+                title="Experience statistics requested",
+                severity=ActivitySeverity.INFO,
+                metadata={"hours_back": hours_back}
+            )
+            
+            # Get database connection
+            from ..utils.database import DatabaseManager
+            
+            db_manager = DatabaseManager()
+            async with db_manager.get_connection() as conn:
+                # Basic statistics query
+                stats_query = """
+                    SELECT 
+                        COUNT(*) as total_experiences,
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL %s HOUR THEN 1 END) as recent_experiences_24h,
+                        AVG(reward) as average_reward,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as success_rate,
+                        MIN(reward) as min_reward,
+                        MAX(reward) as max_reward,
+                        STDDEV(reward) as reward_std
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                """
+                
+                stats_result = await conn.fetchrow(stats_query, hours_back, hours_back)
+                
+                # Top performing actions query
+                actions_query = """
+                    SELECT 
+                        action,
+                        AVG(reward) as avg_reward,
+                        COUNT(*) as count
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY action
+                    ORDER BY avg_reward DESC
+                    LIMIT 10
+                """
+                
+                actions_result = await conn.fetch(actions_query, hours_back)
+                
+                # Trading mode breakdown query
+                modes_query = """
+                    SELECT 
+                        trading_mode,
+                        COUNT(*) as count
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                        AND trading_mode IS NOT NULL
+                    GROUP BY trading_mode
+                """
+                
+                modes_result = await conn.fetch(modes_query, hours_back)
+                
+                # Chain distribution query
+                chains_query = """
+                    SELECT 
+                        chain,
+                        COUNT(*) as count
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                        AND chain IS NOT NULL
+                    GROUP BY chain
+                """
+                
+                chains_result = await conn.fetch(chains_query, hours_back)
+                
+                # Calculate quartiles
+                quartiles_query = """
+                    SELECT 
+                        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY reward) as q1,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY reward) as q2,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY reward) as q3
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                """
+                
+                quartiles_result = await conn.fetchrow(quartiles_query, hours_back)
+                
+                # Build response
+                stats = {
+                    "total_experiences": stats_result['total_experiences'],
+                    "recent_experiences_24h": stats_result['recent_experiences_24h'],
+                    "average_reward": float(stats_result['average_reward']) if stats_result['average_reward'] else 0.0,
+                    "success_rate": float(stats_result['success_rate']) if stats_result['success_rate'] else 0.0,
+                    "top_performing_actions": [
+                        {
+                            "action": row['action'],
+                            "avg_reward": float(row['avg_reward']),
+                            "count": row['count']
+                        }
+                        for row in actions_result
+                    ],
+                    "reward_distribution": {
+                        "min": float(stats_result['min_reward']) if stats_result['min_reward'] else 0.0,
+                        "max": float(stats_result['max_reward']) if stats_result['max_reward'] else 0.0,
+                        "mean": float(stats_result['average_reward']) if stats_result['average_reward'] else 0.0,
+                        "std": float(stats_result['reward_std']) if stats_result['reward_std'] else 0.0,
+                        "quartiles": [
+                            float(quartiles_result['q1']) if quartiles_result['q1'] else 0.0,
+                            float(quartiles_result['q2']) if quartiles_result['q2'] else 0.0,
+                            float(quartiles_result['q3']) if quartiles_result['q3'] else 0.0
+                        ]
+                    },
+                    "trading_mode_breakdown": {
+                        row['trading_mode']: row['count'] 
+                        for row in modes_result
+                    },
+                    "chain_distribution": {
+                        row['chain']: row['count'] 
+                        for row in chains_result
+                    }
+                }
+                
+                return stats
+                
+        except Exception as e:
+            logger.error("Failed to get experience stats", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_experience_stats_failed",
+                title="Failed to get experience stats",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to retrieve experience statistics: {str(e)}")
+    
+    async def get_experience_performance(self, hours_back: int = 24) -> Dict[str, Any]:
+        """Get experience performance metrics and analysis"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="get_experience_performance",
+                title="Experience performance requested",
+                severity=ActivitySeverity.INFO,
+                metadata={"hours_back": hours_back}
+            )
+            
+            # Get database connection
+            from ..utils.database import DatabaseManager
+            
+            db_manager = DatabaseManager()
+            async with db_manager.get_connection() as conn:
+                # Overall performance metrics
+                overall_query = """
+                    SELECT 
+                        SUM(reward) as total_reward,
+                        AVG(reward) as average_reward_per_experience,
+                        STDDEV(reward) as reward_volatility,
+                        COUNT(CASE WHEN reward > 0 THEN 1 END)::float / COUNT(*) as win_rate,
+                        COUNT(*) as total_experiences
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                """
+                
+                overall_result = await conn.fetchrow(overall_query, hours_back)
+                
+                # Calculate Sharpe ratio (simplified)
+                mean_reward = float(overall_result['average_reward_per_experience']) if overall_result['average_reward_per_experience'] else 0
+                reward_volatility = float(overall_result['reward_volatility']) if overall_result['reward_volatility'] else 1
+                sharpe_ratio = mean_reward / reward_volatility if reward_volatility > 0 else 0
+                
+                # Time series performance (hourly buckets)
+                time_series_query = """
+                    SELECT 
+                        DATE_TRUNC('hour', created_at) as hour_bucket,
+                        SUM(reward) as cumulative_reward,
+                        COUNT(*) as experiences_count,
+                        AVG(reward) as average_reward
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY DATE_TRUNC('hour', created_at)
+                    ORDER BY hour_bucket
+                """
+                
+                time_series_result = await conn.fetch(time_series_query, hours_back)
+                
+                # Action performance analysis
+                action_performance_query = """
+                    SELECT 
+                        action,
+                        SUM(reward) as total_reward,
+                        COUNT(*) as count,
+                        AVG(reward) as avg_reward
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                    GROUP BY action
+                    ORDER BY avg_reward DESC
+                """
+                
+                action_performance_result = await conn.fetch(action_performance_query, hours_back)
+                
+                # Mode performance analysis
+                mode_performance_query = """
+                    SELECT 
+                        trading_mode,
+                        SUM(reward) as total_reward,
+                        COUNT(*) as count,
+                        AVG(reward) as avg_reward
+                    FROM rl_experiences 
+                    WHERE created_at >= NOW() - INTERVAL %s HOUR
+                        AND trading_mode IS NOT NULL
+                    GROUP BY trading_mode
+                """
+                
+                mode_performance_result = await conn.fetch(mode_performance_query, hours_back)
+                
+                # Calculate max drawdown (simplified)  
+                drawdown_query = """
+                    WITH running_rewards AS (
+                        SELECT 
+                            created_at,
+                            reward,
+                            SUM(reward) OVER (ORDER BY created_at) as cumulative_reward
+                        FROM rl_experiences 
+                        WHERE created_at >= NOW() - INTERVAL %s HOUR
+                        ORDER BY created_at
+                    ),
+                    drawdowns AS (
+                        SELECT 
+                            cumulative_reward,
+                            cumulative_reward - MAX(cumulative_reward) OVER (ORDER BY created_at ROWS UNBOUNDED PRECEDING) as drawdown
+                        FROM running_rewards
+                    )
+                    SELECT MIN(drawdown) as max_drawdown
+                    FROM drawdowns
+                """
+                
+                drawdown_result = await conn.fetchrow(drawdown_query, hours_back)
+                max_drawdown = float(drawdown_result['max_drawdown']) if drawdown_result['max_drawdown'] else 0
+                
+                # Build response
+                performance = {
+                    "overall_performance": {
+                        "total_reward": float(overall_result['total_reward']) if overall_result['total_reward'] else 0.0,
+                        "average_reward_per_experience": mean_reward,
+                        "reward_volatility": reward_volatility,
+                        "sharpe_ratio": sharpe_ratio,
+                        "max_drawdown": max_drawdown,
+                        "win_rate": float(overall_result['win_rate']) if overall_result['win_rate'] else 0.0
+                    },
+                    "time_series_performance": [
+                        {
+                            "timestamp": row['hour_bucket'].isoformat(),
+                            "cumulative_reward": float(row['cumulative_reward']),
+                            "experiences_count": row['experiences_count'],
+                            "average_reward": float(row['average_reward'])
+                        }
+                        for row in time_series_result
+                    ],
+                    "action_performance": [
+                        {
+                            "action": row['action'],
+                            "total_reward": float(row['total_reward']),
+                            "count": row['count'],
+                            "avg_reward": float(row['avg_reward'])
+                        }
+                        for row in action_performance_result
+                    ],
+                    "mode_performance": {
+                        row['trading_mode']: {
+                            "total_reward": float(row['total_reward']),
+                            "count": row['count'],
+                            "avg_reward": float(row['avg_reward'])
+                        }
+                        for row in mode_performance_result
+                    }
+                }
+                
+                return performance
+                
+        except Exception as e:
+            logger.error("Failed to get experience performance", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="get_experience_performance_failed",
+                title="Failed to get experience performance",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to retrieve experience performance: {str(e)}")
+    
+    async def search_experiences(
+        self,
+        reward_min: Optional[float] = None,
+        reward_max: Optional[float] = None,
+        action: Optional[int] = None,
+        trading_mode: Optional[str] = None,
+        token_address: Optional[str] = None,
+        chain: Optional[str] = None,
+        session_id: Optional[str] = None,
+        done: Optional[bool] = None,
+        priority_min: Optional[float] = None,
+        priority_max: Optional[float] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """Search experiences with advanced filtering"""
+        try:
+            # Log service call
+            await activity_logger.log_activity(
+                category=ActivityCategory.API,
+                action=ActivityAction.READ,
+                source="dashboard_service",
+                event_type="search_experiences",
+                title="Experience search requested",
+                severity=ActivitySeverity.INFO,
+                metadata={
+                    "reward_min": reward_min,
+                    "reward_max": reward_max,
+                    "action": action,
+                    "trading_mode": trading_mode,
+                    "token_address": token_address,
+                    "chain": chain,
+                    "session_id": session_id,
+                    "done": done,
+                    "priority_min": priority_min,
+                    "priority_max": priority_max,
+                    "limit": limit,
+                    "offset": offset
+                }
+            )
+            
+            # Get database connection
+            from ..utils.database import DatabaseManager
+            
+            db_manager = DatabaseManager()
+            async with db_manager.get_connection() as conn:
+                # Build dynamic query with filters
+                query_conditions = []
+                query_params = []
+                param_count = 1
+                
+                # Reward range filter
+                if reward_min is not None:
+                    query_conditions.append(f"reward >= ${param_count}")
+                    query_params.append(reward_min)
+                    param_count += 1
+                
+                if reward_max is not None:
+                    query_conditions.append(f"reward <= ${param_count}")
+                    query_params.append(reward_max)
+                    param_count += 1
+                
+                # Action filter
+                if action is not None:
+                    query_conditions.append(f"action = ${param_count}")
+                    query_params.append(action)
+                    param_count += 1
+                
+                # Trading mode filter
+                if trading_mode:
+                    query_conditions.append(f"trading_mode = ${param_count}")
+                    query_params.append(trading_mode)
+                    param_count += 1
+                
+                # Token address filter
+                if token_address:
+                    query_conditions.append(f"token_address = ${param_count}")
+                    query_params.append(token_address)
+                    param_count += 1
+                
+                # Chain filter
+                if chain:
+                    query_conditions.append(f"chain = ${param_count}")
+                    query_params.append(chain)
+                    param_count += 1
+                
+                # Session filter
+                if session_id:
+                    query_conditions.append(f"session_id = ${param_count}")
+                    query_params.append(session_id)
+                    param_count += 1
+                
+                # Done filter
+                if done is not None:
+                    query_conditions.append(f"done = ${param_count}")
+                    query_params.append(done)
+                    param_count += 1
+                
+                # Priority range filter
+                if priority_min is not None:
+                    query_conditions.append(f"priority >= ${param_count}")
+                    query_params.append(priority_min)
+                    param_count += 1
+                
+                if priority_max is not None:
+                    query_conditions.append(f"priority <= ${param_count}")
+                    query_params.append(priority_max)
+                    param_count += 1
+                
+                # Build WHERE clause
+                where_clause = ""
+                if query_conditions:
+                    where_clause = "WHERE " + " AND ".join(query_conditions)
+                
+                # Count total records
+                count_query = f"""
+                    SELECT COUNT(*) 
+                    FROM rl_experiences 
+                    {where_clause}
+                """
+                
+                count_result = await conn.fetchrow(count_query, *query_params)
+                total_count = count_result['count']
+                
+                # Main query with pagination
+                main_query = f"""
+                    SELECT 
+                        id, experience_id, session_id, user_id,
+                        state_data, action, reward, next_state_data, done, priority,
+                        trading_mode, token_address, chain,
+                        market_conditions, performance_metrics, error_data, metadata,
+                        created_at, updated_at
+                    FROM rl_experiences 
+                    {where_clause}
+                    ORDER BY created_at DESC
+                    LIMIT ${param_count} OFFSET ${param_count + 1}
+                """
+                
+                query_params.extend([limit, offset])
+                
+                rows = await conn.fetch(main_query, *query_params)
+                
+                # Convert rows to dictionaries
+                experiences = []
+                for row in rows:
+                    experience = {
+                        "id": row['id'],
+                        "experience_id": str(row['experience_id']),
+                        "session_id": str(row['session_id']),
+                        "user_id": row['user_id'],
+                        "state_data": row['state_data'],
+                        "action": row['action'],
+                        "reward": float(row['reward']),
+                        "next_state_data": row['next_state_data'],
+                        "done": row['done'],
+                        "priority": float(row['priority']),
+                        "trading_mode": row['trading_mode'],
+                        "token_address": row['token_address'],
+                        "chain": row['chain'],
+                        "market_conditions": row['market_conditions'],
+                        "performance_metrics": row['performance_metrics'],
+                        "error_data": row['error_data'],
+                        "metadata": row['metadata'],
+                        "created_at": row['created_at'].isoformat(),
+                        "updated_at": row['updated_at'].isoformat()
+                    }
+                    experiences.append(experience)
+                
+                return {
+                    "experiences": experiences,
+                    "total_count": total_count,
+                    "has_more": offset + limit < total_count
+                }
+                
+        except Exception as e:
+            logger.error("Failed to search experiences", error=str(e))
+            await activity_logger.log_error(
+                category=ActivityCategory.API,
+                source="dashboard_service",
+                event_type="search_experiences_failed",
+                title="Failed to search experiences",
+                error_message=str(e),
+                exception=e,
+                severity=ActivitySeverity.ERROR
+            )
+            raise DashboardError(f"Failed to search experiences: {str(e)}")
+
     def record_request(self, response_time: float, error: bool = False) -> None:
         """Record API request metrics"""
         self._request_count += 1
