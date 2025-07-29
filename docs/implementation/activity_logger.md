@@ -125,7 +125,7 @@ Successfully implemented the core ActivityLogger service with database integrati
 
 ## File Structure
 ```
-src/logging/
+src/activity_logging/
 ├── activity_logger.py          # Core implementation
 database/schema/
 ├── activity_logs.sql           # Database schema

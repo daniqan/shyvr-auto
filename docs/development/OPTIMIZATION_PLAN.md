@@ -35,7 +35,7 @@ This document outlines a detailed, phased plan to implement all suggested improv
 
 3.  **Activate Database Integration:**
     *   **Objective:** Persist all application activities and logs to the configured PostgreSQL database.
-    *   **Key Files:** `src/utils/database.py`, `src/logging/activity_logger.py`.
+    *   **Key Files:** `src/utils/database.py`, `src/activity_logging/activity_logger.py`.
     *   **Steps:**
         1.  Implement the database connection logic in `database.py`, using the credentials from the configuration.
         2.  Modify `activity_logger.log_activity` to write log entries to the `activity_logs` table in the database.

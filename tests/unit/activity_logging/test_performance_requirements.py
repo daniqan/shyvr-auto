@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import psutil
 import concurrent.futures
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     ActivityLogger, ActivityLogEntry, ActivityCategory, ActivityAction, 
     ActivitySeverity, TradingMode, ChainType
 )

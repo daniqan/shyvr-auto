@@ -10,7 +10,7 @@ Main components:
 - Enums for standardized logging categories, actions, and severity levels
 
 Usage:
-    from src.logging.activity_logger import ActivityLogger, ActivityCategory, ActivityAction
+    from src.activity_logging.activity_logger import ActivityLogger, ActivityCategory, ActivityAction
     
     # Create logger instance
     logger = ActivityLogger()

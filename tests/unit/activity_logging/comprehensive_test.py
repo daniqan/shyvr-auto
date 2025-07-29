@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     ActivityLogger, ActivityLogEntry, ActivityCategory, ActivityAction,
     ActivitySeverity, TradingMode, ChainType, activity_logger,
     log_system_event, log_dashboard_action, log_trade_execution, log_ml_prediction,

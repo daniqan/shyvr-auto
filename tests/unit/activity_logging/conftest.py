@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncpg
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     ActivityCategory, ActivityAction, ActivitySeverity, 
     TradingMode, ChainType, ActivityLogEntry, ActivityLogger
 )

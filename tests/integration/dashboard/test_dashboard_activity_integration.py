@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src to path - adjust for new location in tests/integration/dashboard/
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     activity_logger,
     ActivityCategory,
     ActivityAction,

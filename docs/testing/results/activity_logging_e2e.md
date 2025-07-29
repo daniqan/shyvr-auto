@@ -216,7 +216,7 @@ Minor timing issue in the mock test where recently generated activities weren't 
 
 ### Components Tested and Validated:
 
-1. **Activity Logger Core** (`src/logging/activity_logger.py`)
+1. **Activity Logger Core** (`src/activity_logging/activity_logger.py`)
    - ✅ Comprehensive activity categorization
    - ✅ Async batch processing with buffering
    - ✅ Automatic retry and error handling

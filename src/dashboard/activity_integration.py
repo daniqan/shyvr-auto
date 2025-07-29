@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 
-from ..logging.activity_logger import (
+from ..activity_logging.activity_logger import (
     activity_logger,
     ActivityCategory,
     ActivityAction,

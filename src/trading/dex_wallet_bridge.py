@@ -36,7 +36,7 @@ from src.wallet.base import (
     WalletTransactionError
 )
 from src.utils.base import Chain
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     ChainType, performance_tracker
 )

@@ -19,7 +19,7 @@ from .service import dashboard_service
 from .websocket_manager import websocket_manager
 from .base import DashboardData, DashboardError
 from .activity_integration import dashboard_activity
-from ..logging.activity_logger import (
+from ..activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
 )

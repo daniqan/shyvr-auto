@@ -426,7 +426,7 @@ class AnalysisMetricsCollector(MetricsCollector):
             Dictionary with backtest statistics
         """
         try:
-            from src.logging.activity_logger import ActivityLogger
+            from src.activity_logging.activity_logger import ActivityLogger
             
             activity_logger = ActivityLogger()
             
@@ -479,7 +479,7 @@ class AnalysisMetricsCollector(MetricsCollector):
             Dictionary with analysis quality metrics
         """
         try:
-            from src.logging.activity_logger import ActivityLogger
+            from src.activity_logging.activity_logger import ActivityLogger
             
             activity_logger = ActivityLogger()
             
@@ -526,7 +526,7 @@ class AnalysisMetricsCollector(MetricsCollector):
             Dictionary with report statistics
         """
         try:
-            from src.logging.activity_logger import ActivityLogger
+            from src.activity_logging.activity_logger import ActivityLogger
             
             activity_logger = ActivityLogger()
             

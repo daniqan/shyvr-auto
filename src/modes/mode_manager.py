@@ -24,7 +24,7 @@ from src.modes.base import (
 )
 from src.portfolio.base import Portfolio
 from src.rl_agent.base import TradeAction, MarketState
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     TradingMode as LoggingTradingMode, performance_tracker
 )

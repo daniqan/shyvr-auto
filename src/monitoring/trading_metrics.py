@@ -266,7 +266,7 @@ class TradingMetricsCollector(MetricsCollector):
             Dictionary with trade statistics
         """
         try:
-            from src.logging.activity_logger import ActivityLogger
+            from src.activity_logging.activity_logger import ActivityLogger
             
             activity_logger = ActivityLogger()
             

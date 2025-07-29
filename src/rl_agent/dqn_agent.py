@@ -20,7 +20,7 @@ from .base import (
     RLAgentBase, TradeAction, MarketState, AgentConfig, ModelType,
     RLTrainingError, RLPredictionError, RLModelError
 )
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
 )

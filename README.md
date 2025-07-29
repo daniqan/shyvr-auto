@@ -552,7 +552,7 @@ graph TD
     subgraph "Shared Services"
         direction LR
         Config["📄 Configuration <br> (src/utils/config.py)"]
-        ActivityLogger["📝 Activity Logger <br> (src/logging/activity_logger.py)"]
+        ActivityLogger["📝 Activity Logger <br> (src/activity_logging/activity_logger.py)"]
         Database["🗄️ PostgreSQL DB <br> (database/)"]
     end
 

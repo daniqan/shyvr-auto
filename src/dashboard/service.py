@@ -18,7 +18,7 @@ from ..portfolio.portfolio_manager import PortfolioManager
 from ..ml_analysis.model_manager import ModelManager
 from ..rl_agent.dqn_agent import DQNTradingAgent
 from ..integration.ml_rl_bridge import MLRLBridge
-from ..logging.activity_logger import (
+from ..activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     TradingMode as LoggingTradingMode, performance_tracker
 )

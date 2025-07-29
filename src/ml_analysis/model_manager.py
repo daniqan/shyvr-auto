@@ -17,7 +17,7 @@ from .base import (
 )
 from .lstm_model import LSTMPricePredictor
 from .feature_engineer import FeatureEngineer
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
 )

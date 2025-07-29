@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import asyncpg
 
 from src.utils.database import get_database_pool, close_database_pool, test_database_connection
-from src.logging.activity_logger import ActivityCategory, ActivityAction, ActivitySeverity
+from src.activity_logging.activity_logger import ActivityCategory, ActivityAction, ActivitySeverity
 
 
 class TestDatabaseConnection:

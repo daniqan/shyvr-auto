@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     ActivityLogger, ActivityLogEntry, ActivityCategory, ActivityAction,
     ActivitySeverity, TradingMode, ChainType
 )
@@ -162,7 +162,7 @@ async def test_convenience_functions():
     """Test convenience functions"""
     print("Testing convenience functions...")
     
-    from src.logging.activity_logger import (
+    from src.activity_logging.activity_logger import (
         log_system_event, log_dashboard_action, log_trade_execution, log_ml_prediction
     )
     
@@ -194,7 +194,7 @@ async def test_convenience_functions():
     with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
          patch('src.logging.activity_logger.get_config', return_value=mock_config):
         
-        from src.logging.activity_logger import activity_logger
+        from src.activity_logging.activity_logger import activity_logger
         await activity_logger.start()
         
         # Test system event logging
@@ -244,7 +244,7 @@ async def test_performance_tracker():
     """Test performance tracking context manager"""
     print("Testing performance tracker...")
     
-    from src.logging.activity_logger import performance_tracker
+    from src.activity_logging.activity_logger import performance_tracker
     
     # Create proper async context manager mocks
     mock_conn = AsyncMock()
@@ -274,7 +274,7 @@ async def test_performance_tracker():
     with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
          patch('src.logging.activity_logger.get_config', return_value=mock_config):
         
-        from src.logging.activity_logger import activity_logger
+        from src.activity_logging.activity_logger import activity_logger
         await activity_logger.start()
         
         # Test successful operation tracking

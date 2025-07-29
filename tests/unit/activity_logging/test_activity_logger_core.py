@@ -11,7 +11,7 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch, call
 import json
 
-from src.logging.activity_logger import (
+from src.activity_logging.activity_logger import (
     ActivityLogger, ActivityLogEntry, ActivityCategory, ActivityAction, 
     ActivitySeverity, TradingMode, ChainType, activity_logger
 )
@@ -714,7 +714,7 @@ class TestGlobalConvenienceFunctions:
     @pytest.mark.asyncio
     async def test_log_system_event(self):
         """Test log_system_event convenience function"""
-        from src.logging.activity_logger import log_system_event
+        from src.activity_logging.activity_logger import log_system_event
         
         with patch.object(activity_logger, 'log_activity', new_callable=AsyncMock) as mock_log:
             mock_log.return_value = "test-activity-id"
@@ -740,7 +740,7 @@ class TestGlobalConvenienceFunctions:
     @pytest.mark.asyncio
     async def test_log_dashboard_action(self):
         """Test log_dashboard_action convenience function"""
-        from src.logging.activity_logger import log_dashboard_action
+        from src.activity_logging.activity_logger import log_dashboard_action
         
         with patch.object(activity_logger, 'log_user_action', new_callable=AsyncMock) as mock_log:
             mock_log.return_value = "test-activity-id"
@@ -764,7 +764,7 @@ class TestGlobalConvenienceFunctions:
     @pytest.mark.asyncio
     async def test_log_trade_execution(self):
         """Test log_trade_execution convenience function"""
-        from src.logging.activity_logger import log_trade_execution
+        from src.activity_logging.activity_logger import log_trade_execution
         
         with patch.object(activity_logger, 'log_trading_activity', new_callable=AsyncMock) as mock_log:
             mock_log.return_value = "test-activity-id"
@@ -788,7 +788,7 @@ class TestGlobalConvenienceFunctions:
     @pytest.mark.asyncio
     async def test_log_ml_prediction(self):
         """Test log_ml_prediction convenience function"""
-        from src.logging.activity_logger import log_ml_prediction
+        from src.activity_logging.activity_logger import log_ml_prediction
         
         with patch.object(activity_logger, 'log_activity', new_callable=AsyncMock) as mock_log:
             mock_log.return_value = "test-activity-id"
@@ -818,7 +818,7 @@ class TestPerformanceTracker:
     @pytest.mark.asyncio
     async def test_performance_tracker_success(self):
         """Test performance tracker for successful operation"""
-        from src.logging.activity_logger import performance_tracker
+        from src.activity_logging.activity_logger import performance_tracker
         
         with patch.object(activity_logger, 'log_performance', new_callable=AsyncMock) as mock_log_perf:
             mock_log_perf.return_value = "test-activity-id"
@@ -843,7 +843,7 @@ class TestPerformanceTracker:
     @pytest.mark.asyncio
     async def test_performance_tracker_failure(self):
         """Test performance tracker for failed operation"""
-        from src.logging.activity_logger import performance_tracker
+        from src.activity_logging.activity_logger import performance_tracker
         
         with patch.object(activity_logger, 'log_performance', new_callable=AsyncMock) as mock_log_perf, \
              patch.object(activity_logger, 'log_error', new_callable=AsyncMock) as mock_log_error:

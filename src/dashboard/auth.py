@@ -17,7 +17,7 @@ import structlog
 
 from ..utils.config import get_config
 from .base import DashboardError
-from ..logging.activity_logger import (
+from ..activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity
 )
 

@@ -271,7 +271,7 @@ class SafetyMetricsCollector(MetricsCollector):
             Dictionary with safety event counts
         """
         try:
-            from src.logging.activity_logger import ActivityLogger
+            from src.activity_logging.activity_logger import ActivityLogger
             
             activity_logger = ActivityLogger()
             
