@@ -22,6 +22,7 @@ from src.portfolio.base import (
 from src.portfolio.virtual_portfolio import VirtualPortfolio
 from src.rl_agent.base import MarketState, TradeAction, TradingResult
 from src.rl_agent.experience_replay import ExperienceReplayBuffer, ReplayBufferConfig
+from src.rl_agent.experience_database import DatabaseExperienceBuffer, DatabaseExperienceConfig
 from src.modes.experience_collector import TradingExperienceCollector, ExperienceCollectorConfig
 from src.modes.continuous_learning import ContinuousLearningEngine, ContinuousLearningConfig
 from src.modes.simulation_safety import (
@@ -605,6 +606,54 @@ class SimulationMode(ModeBase):
                            buffer_size=experience_config.buffer_size,
                            persistence=experience_config.enable_persistence)
         
+        # Database experience storage setup
+        self.enable_database_experience_storage = params.get("enable_database_experience_storage", False)
+        self.database_experience_buffer = None
+        self.database_connection_failed = False
+        self.simulation_experience_tags = params.get("simulation_experience_tags", {})
+        
+        if self.enable_database_experience_storage:
+            try:
+                # Create database experience configuration
+                db_config_params = params.get("database_experience_config", {})
+                db_experience_config = DatabaseExperienceConfig(
+                    max_size=db_config_params.get("max_size", 10000),
+                    batch_size=db_config_params.get("batch_size", 32),
+                    min_size=db_config_params.get("min_size", 100),
+                    prioritized=db_config_params.get("prioritized", True),
+                    alpha=db_config_params.get("alpha", 0.6),
+                    beta_start=db_config_params.get("beta_start", 0.4),
+                    beta_end=db_config_params.get("beta_end", 1.0),
+                    cache_size=db_config_params.get("cache_size", 1000),
+                    connection_pool_size=db_config_params.get("connection_pool_size", 10),
+                    query_timeout=db_config_params.get("query_timeout", 30.0)
+                )
+                
+                # Initialize database experience buffer
+                self.database_experience_buffer = DatabaseExperienceBuffer(db_experience_config)
+                
+                # Set up simulation-specific experience tags
+                self.simulation_experience_tags.update({
+                    'trading_mode': 'simulation',
+                    'environment': self.simulation_experience_tags.get('environment', 'paper_trading'),
+                    'risk_level': self.simulation_experience_tags.get('risk_level', 'medium'),
+                    'simulation_session_id': str(uuid4()),
+                    'initial_balance': float(self.virtual_balance),
+                    'fees_enabled': self.enable_fees,
+                    'slippage_bps': self.slippage_bps
+                })
+                
+                self.logger.info("Database experience storage enabled for simulation mode",
+                               max_size=db_experience_config.max_size,
+                               prioritized=db_experience_config.prioritized,
+                               cache_size=db_experience_config.cache_size)
+                
+            except Exception as e:
+                self.logger.error("Failed to initialize database experience storage", error=str(e))
+                self.enable_database_experience_storage = False
+                self.database_connection_failed = True
+                # Continue with fallback to regular experience collection
+        
         # Continuous learning setup
         self.enable_continuous_learning = params.get("enable_continuous_learning", False)
         self.continuous_learning_engine = None
@@ -814,6 +863,16 @@ class SimulationMode(ModeBase):
         # Initialize DEX clients (would be injected in real implementation)
         await self._initialize_dex_clients()
         
+        # Initialize database experience buffer if enabled
+        if self.enable_database_experience_storage and self.database_experience_buffer:
+            try:
+                await self.database_experience_buffer.initialize()
+                self.logger.info("Database experience buffer initialized successfully")
+            except Exception as e:
+                self.logger.error("Failed to initialize database experience buffer", error=str(e))
+                self.enable_database_experience_storage = False
+                self.database_connection_failed = True
+        
         # Subscribe to market data updates
         self.market_data_feed.subscribe(self.process_market_update)
         
@@ -956,6 +1015,14 @@ class SimulationMode(ModeBase):
     async def cleanup(self) -> None:
         """Clean up simulation mode resources."""
         self.logger.info("Cleaning up simulation mode")
+        
+        # Cleanup database experience buffer if enabled
+        if self.enable_database_experience_storage and self.database_experience_buffer:
+            try:
+                await self.database_experience_buffer.cleanup()
+                self.logger.info("Database experience buffer cleaned up successfully")
+            except Exception as e:
+                self.logger.error("Failed to cleanup database experience buffer", error=str(e))
         
         # Stop market data feed
         if self.market_data_feed.is_active:
@@ -1238,6 +1305,7 @@ class SimulationMode(ModeBase):
     async def _capture_trade_experience(self, experience_id: str, trading_result: TradingResult, 
                                        market_state: MarketState, explanation: Optional[Any] = None) -> None:
         """Capture trading experience for RL training with XAI explanation."""
+        # Capture to regular experience collector first
         if self.experience_collector:
             # Add explanation data to trading result metadata if available
             if explanation and hasattr(trading_result, 'metadata'):
@@ -1260,6 +1328,108 @@ class SimulationMode(ModeBase):
             await self.experience_collector.capture_post_trade_result(
                 experience_id, trading_result, market_state
             )
+        
+        # Also capture to database if enabled
+        if self.enable_database_experience_storage and self.database_experience_buffer:
+            try:
+                await self._capture_experience_to_database(trading_result, market_state, explanation)
+            except Exception as e:
+                self.logger.warning("Failed to capture experience to database", error=str(e))
+    
+    async def _capture_experience_to_database(self, trading_result: TradingResult, 
+                                            market_state: MarketState, explanation: Optional[Any] = None) -> None:
+        """Capture experience directly to database with simulation-specific tagging."""
+        from src.rl_agent.experience_replay import Experience
+        import numpy as np
+        
+        try:
+            # Create feature vector from market state
+            state_features = np.array([
+                market_state.price_usd or 0.0,
+                market_state.rsi or 50.0,
+                market_state.volume_24h or 0.0,
+                market_state.price_change_24h or 0.0,
+                float(self.virtual_portfolio.equity),  # Portfolio value
+                float(self.virtual_portfolio.total_unrealized_pnl),  # Current P&L
+                len([p for p in self.virtual_portfolio.positions.values() if p.status.value == "OPEN"])  # Active positions
+            ], dtype=np.float32)
+            
+            # Map trade action to numeric value
+            action_mapping = {
+                TradeAction.STRONG_BUY: 0,
+                TradeAction.BUY: 1,
+                TradeAction.HOLD: 2,
+                TradeAction.SELL: 3,
+                TradeAction.STRONG_SELL: 4
+            }
+            action_value = action_mapping.get(trading_result.action, 2)  # Default to HOLD
+            
+            # Calculate reward from trading result
+            reward = 0.0
+            if trading_result.success and trading_result.realized_pnl is not None:
+                # Normalize reward based on position size
+                reward = float(trading_result.realized_pnl) / 1000.0  # Scale down for training
+            elif not trading_result.success:
+                reward = -0.01  # Small penalty for failed trades
+            
+            # Create next state (same as current state for now, would be updated in next tick)
+            next_state = state_features.copy()
+            
+            # Create experience object
+            experience = Experience(
+                state=state_features,
+                action=action_value,
+                reward=reward,
+                next_state=next_state,
+                done=False,  # Simulation doesn't have terminal states
+                timestamp=trading_result.executed_at or datetime.now()
+            )
+            
+            # Prepare metadata with simulation tags and explanation data
+            metadata = self.simulation_experience_tags.copy()
+            metadata.update({
+                'trade_successful': trading_result.success,
+                'trade_value_usd': float(trading_result.value_usd) if trading_result.value_usd else 0.0,
+                'trade_quantity': float(trading_result.quantity) if trading_result.quantity else 0.0,
+                'portfolio_value_before': float(trading_result.portfolio_value_before) if trading_result.portfolio_value_before else 0.0,
+                'portfolio_value_after': float(trading_result.portfolio_value_after) if trading_result.portfolio_value_after else 0.0,
+                'token_symbol': market_state.token.symbol,
+                'token_address': market_state.token.address,
+                'market_rsi': market_state.rsi,
+                'market_price': market_state.price_usd,
+                'simulation_timestamp': datetime.now().isoformat()
+            })
+            
+            # Add explanation data if available
+            if explanation:
+                metadata.update({
+                    'xai_explanation_available': True,
+                    'explanation_decision_id': explanation.decision_id,
+                    'explanation_confidence': explanation.confidence,
+                    'explanation_type': explanation.explanation_data.explanation_type,
+                })
+            else:
+                metadata['xai_explanation_available'] = False
+            
+            # Calculate priority for prioritized replay (higher for more significant trades)
+            priority = 1.0
+            if trading_result.success and trading_result.realized_pnl is not None:
+                priority = min(10.0, 1.0 + abs(float(trading_result.realized_pnl)) / 100.0)
+            elif not trading_result.success:
+                priority = 2.0  # Failed trades have higher priority for learning
+            
+            # Add experience to database buffer
+            await self.database_experience_buffer.add(experience, priority=priority, metadata=metadata)
+            
+            self.logger.debug("Experience captured to database",
+                            action=trading_result.action.value,
+                            reward=reward,
+                            priority=priority,
+                            metadata_keys=list(metadata.keys()))
+            
+        except Exception as e:
+            self.logger.error("Failed to capture experience to database", error=str(e))
+            raise
     
     async def _flush_experiences_to_buffer(self) -> int:
         """Flush completed experiences to replay buffer"""
@@ -1295,6 +1465,30 @@ class SimulationMode(ModeBase):
                 self.logger.warning("Failed to get learning statistics", error=str(e))
         
         return stats
+    
+    async def get_database_experience_statistics(self) -> Dict[str, Any]:
+        """Get database experience storage statistics for monitoring."""
+        if not self.enable_database_experience_storage or not self.database_experience_buffer:
+            return {
+                'database_experience_storage_enabled': False,
+                'database_connection_failed': self.database_connection_failed
+            }
+        
+        try:
+            stats = await self.database_experience_buffer.get_statistics()
+            stats.update({
+                'database_experience_storage_enabled': True,
+                'database_connection_failed': self.database_connection_failed,
+                'simulation_experience_tags': self.simulation_experience_tags
+            })
+            return stats
+        except Exception as e:
+            self.logger.error("Failed to get database experience statistics", error=str(e))
+            return {
+                'database_experience_storage_enabled': True,
+                'database_connection_failed': True,
+                'error': str(e)
+            }
     
     async def get_xai_explanation(self, decision_id: str) -> Optional[Dict[str, Any]]:
         """Get XAI explanation by decision ID for dashboard/monitoring."""
