@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shyvr RLTE Dashboard Test</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Navigation Header -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <h1>Shyvr RLTE</h1>
+                <span class="nav-subtitle">AI Trading Dashboard</span>
+                <span class="mode-indicator" id="navModeIndicator">ANALYSIS</span>
+            </div>
+            <div class="nav-controls">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-indicator" id="statusIndicator"></span>
+                    <span class="status-text" id="statusText">Connecting...</span>
+                </div>
+                <button class="emergency-stop-btn" id="emergencyStopBtn" title="Emergency Stop">
+                    🛑 EMERGENCY STOP
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Dashboard Tabs -->
+        <div class="tab-container">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="trading">Trading</button>
+                <button class="tab-btn" data-tab="portfolio">Portfolio</button>
+                <button class="tab-btn" data-tab="ml-rl">ML & RL</button>
+                <button class="tab-btn" data-tab="backtest">Backtest Results</button>
+                <button class="tab-btn" data-tab="system">System</button>
+                <button class="tab-btn" data-tab="settings">Settings</button>
+            </div>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- Overview Tab -->
+            <div class="tab-panel active" id="overview">
+                <div class="dashboard-grid">
+                    <!-- System Status Card -->
+                    <div class="card system-status-card">
+                        <div class="card-header">
+                            <h3>System Status</h3>
+                            <div class="status-badge healthy" id="systemStatusBadge">HEALTHY</div>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Uptime:</span>
+                                <span class="metric-value" id="systemUptime">2h 15m</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">CPU:</span>
+                                <span class="metric-value" id="systemCpu">23%</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Memory:</span>
+                                <span class="metric-value" id="systemMemory">1,250 MB</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Active Connections:</span>
+                                <span class="metric-value" id="systemConnections">5</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Summary Card -->
+                    <div class="card portfolio-summary-card" id="portfolioSummaryCard">
+                        <div class="card-header">
+                            <h3>Portfolio Summary</h3>
+                            <span class="mode-badge analysis" id="portfolioModeBadge">ANALYSIS</span>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-large">
+                                <span class="metric-label">Total Value</span>
+                                <span class="metric-value large portfolio-value" id="portfolioTotalValue">$125,430.50</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Daily P&L:</span>
+                                <span class="metric-value pnl positive portfolio-value" id="portfolioDailyPnl">$2,145.32 (+1.74%)</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Unrealized P&L:</span>
+                                <span class="metric-value pnl positive portfolio-value" id="portfolioUnrealizedPnl">$850.75</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Active Positions:</span>
+                                <span class="metric-value" id="portfolioActivePositions">12</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trading Activity Card -->
+                    <div class="card trading-activity-card" id="tradingActivityCard">
+                        <div class="card-header">
+                            <h3>Trading Activity</h3>
+                            <span class="mode-badge analysis" id="tradingModeBadge">ANALYSIS</span>
+                        </div>
+                        <div class="card-content">
+                            <div class="metric-row">
+                                <span class="metric-label">Mode:</span>
+                                <span class="trading-mode analysis" id="tradingMode">Analysis</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Trades Today:</span>
+                                <span class="metric-value" id="tradingTradesToday">0</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Volume Today:</span>
+                                <span class="metric-value portfolio-value" id="tradingVolumeToday">$0.00</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="metric-label">Win Rate:</span>
+                                <span class="metric-value" id="tradingWinRate">67%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>
