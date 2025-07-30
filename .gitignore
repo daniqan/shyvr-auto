@@ -9,6 +9,7 @@ wheels/
 # Environment files and secrets
 .env
 .env.*
+!.env.example
 *.key
 *.pem
 *.crt
