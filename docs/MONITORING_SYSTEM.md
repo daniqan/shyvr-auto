@@ -82,6 +82,16 @@ custom.googleapis.com/shyvr_rlte/rl_agent_reward{agent_id, episode}
 custom.googleapis.com/shyvr_rlte/rl_exploration_rate{agent_id}
 ```
 
+**RL Experience Storage Metrics:**
+```
+custom.googleapis.com/shyvr_rlte/rl_experience_storage_rate{session_id, trading_mode}
+custom.googleapis.com/shyvr_rlte/rl_experience_total_count{session_id}
+custom.googleapis.com/shyvr_rlte/rl_experience_query_latency{operation_type}
+custom.googleapis.com/shyvr_rlte/rl_training_session_duration{session_id, status}
+custom.googleapis.com/shyvr_rlte/rl_database_connection_count
+custom.googleapis.com/shyvr_rlte/rl_experience_batch_size{operation}
+```
+
 **DEX and Wallet Metrics:**
 ```
 custom.googleapis.com/shyvr_rlte/dex_connection_status{dex, chain}
@@ -102,6 +112,9 @@ custom.googleapis.com/shyvr_rlte/wallet_balance{token, chain, wallet_type}
 - High drawdown (drawdown > 15% for >300s)
 - Low trading success rate (success_rate < 40% for >600s)
 - ML model accuracy degradation (accuracy < 65% for >900s)
+- RL experience storage slow queries (query_latency > 100ms for >300s)
+- High database connection usage (connection_count > 15 for >180s)
+- RL training session failures (session failure rate > 20% for >600s)
 - DEX connection issues (connection_status < 1 for >180s)
 - High system error rate (error_rate > 10/min for >300s)
 
@@ -217,6 +230,28 @@ safety_margin_ratio{account}
 safety_volatility_score{timeframe}
 ```
 
+##### RL Experience Storage Metrics Collector
+Monitors database-backed RL experience storage performance:
+
+- **Storage Rate**: Experiences stored per second by session and mode
+- **Query Performance**: Database query latency for different operations
+- **Connection Health**: Database connection pool usage and health
+- **Session Tracking**: Training session duration and completion rates
+- **Data Volume**: Total experience count and growth trends
+- **Batch Operations**: Batch processing performance and throughput
+
+**Key Metrics:**
+```
+rl_experience_storage_rate_per_second{session_id,trading_mode}
+rl_experience_total_count{session_id}
+rl_experience_query_latency_seconds{operation_type}
+rl_training_session_duration_seconds{session_id,status}
+rl_database_connection_count
+rl_experience_batch_size{operation}
+rl_database_query_error_rate{error_type}
+rl_experience_retrieval_success_rate{batch_size}
+```
+
 ### 2. Alerting System
 
 #### Alert Levels
@@ -260,6 +295,14 @@ Pre-configured dashboard with panels for:
 - Response times
 - Error rates
 - Database performance
+
+**RL Experience Storage**
+- Experience storage rate trends
+- Database query latency histograms
+- Connection pool utilization
+- Training session completion rates
+- Experience batch processing metrics
+- Database error rate tracking
 
 #### Prometheus Configuration
 - 30-second scrape intervals
