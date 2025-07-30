@@ -1,0 +1,246 @@
+# =============================================================================
+# Dockerignore for Shyvr RLTE - Production Optimized
+# =============================================================================
+
+# Development and testing files
+.git/
+.gitignore
+.github/
+**/.pytest_cache/
+**/htmlcov/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+*.cover
+*.coverage
+.coverage.*
+coverage.xml
+.tox/
+.cache
+nosetests.xml
+pytest.ini
+
+# Development tools and configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Documentation (exclude from production builds)
+docs/
+*.md
+!README.md
+TODO_CHECKLIST.md
+hist/
+htmlcov/
+
+# Local development files
+.env
+.env.local
+.env.*.local
+*.log
+logs/
+**/.logs/
+
+# Build artifacts and temporary files
+build/
+dist/
+*.egg-info/
+.eggs/
+.build/
+.cache/
+tmp/
+temp/
+**/.tmp/
+
+# Package management (uv.lock is needed, pyproject.toml is needed)
+.pip-cache/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database files (should be external)
+*.db
+*.sqlite
+*.sqlite3
+database/*.sql
+database/migrations/
+!database/migrations/001_create_initial_schema.sql
+
+# Model artifacts (should be loaded from external storage)
+models/
+*.pkl
+*.pt
+*.pth
+*.h5
+*.model
+performance_results/
+reports/
+
+# Monitoring and operational files
+monitoring/grafana/
+monitoring/prometheus/
+**/.prometheus/
+
+# Testing infrastructure
+tests/
+**/test_*.py
+**/*_test.py
+conftest.py
+pytest.ini
+
+# Examples and demos
+examples/
+demo/
+samples/
+
+# Future work and planning
+future_work/
+planning/
+
+# CI/CD files (handled separately)
+.github/
+.gitlab-ci.yml
+.travis.yml
+circle.yml
+Jenkinsfile
+cloudbuild.yaml
+deploy/
+
+# Container-specific ignores
+Dockerfile*
+docker-compose*.yml
+.dockerignore*
+
+# Backup and archive files
+*.bak
+*.backup
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor backup files
+*~
+.#*
+#*#
+.#*
+*.swp
+*.swo
+*.tmp
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Environment and secrets
+.env*
+!.env.example
+secrets/
+*.key
+*.pem
+*.crt
+*.cert
+
+# Local configuration overrides
+config/local.yaml
+config/development.yaml
+config/test.yaml
+!config/config.yaml
+
+# Scripts and utilities (most not needed in production)
+scripts/
+!scripts/production_*.py
+
+# Static files that aren't core to the app
+static/test.html
+static/**/*.test.js
+
+# Large data files
+data/
+datasets/
+*.csv
+*.json
+!config/*.json
+*.parquet
+*.h5
+*.hdf5
+
+# Compiled code
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+*.dylib
+
+# Package files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Development server files
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store*
+ehthumbs.db
+Icon?
+Thumbs.db
+*.tmp
+
+# Security scan results
+.snyk
+security/
+
+# Performance profiling
+*.prof
+*.profile
+profiling/
+
+# Helm charts and k8s configs (handled separately)
+charts/
+k8s/
+kubernetes/
+
+# Terraform and infrastructure
+terraform/
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Local overrides for any config
+local_*
+*_local.*
