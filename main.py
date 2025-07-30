@@ -26,6 +26,8 @@ from src.monitoring.safety_metrics import SafetyMetricsCollector
 from src.monitoring.trading_metrics import TradingMetricsCollector
 from src.utils.base import ConfigurationError
 from src.utils.config import get_config, init_config
+from src.model_preservation import initialize_preservation_system, shutdown_preservation_system
+from src.model_preservation.integration import setup_preservation_hooks
 
 # Configure structured logging
 structlog.configure(
@@ -131,6 +133,14 @@ async def lifespan(app: FastAPI):
         # Start dashboard service
         await dashboard_service.start()
         logger.info("Dashboard service started")
+        
+        # Initialize model preservation system
+        await initialize_preservation_system()
+        logger.info("Model preservation system initialized")
+        
+        # Setup preservation hooks
+        await setup_preservation_hooks(app)
+        logger.info("Model preservation hooks configured")
 
     except ConfigurationError as e:
         logger.error("Configuration error", error=str(e))
@@ -143,6 +153,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shyvr RLTE shutting down")
+    
+    # Shutdown model preservation system (performs emergency backup)
+    await shutdown_preservation_system()
+    logger.info("Model preservation system shut down")
 
     # Stop dashboard service
     await dashboard_service.stop()
