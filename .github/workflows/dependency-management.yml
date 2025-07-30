@@ -1,0 +1,665 @@
+name: Dependency Management
+
+on:
+  schedule:
+    # Run dependency updates weekly on Mondays at 6 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Type of dependency update'
+        required: false
+        default: 'minor'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - security-only
+      create_pr:
+        description: 'Create pull request for updates'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # =============================================================================
+  # DEPENDENCY AUDIT AND ANALYSIS
+  # =============================================================================
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      security-updates: ${{ steps.audit.outputs.security-updates }}
+      regular-updates: ${{ steps.audit.outputs.regular-updates }}
+      outdated-count: ${{ steps.audit.outputs.outdated-count }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run comprehensive dependency audit
+        id: audit
+        run: |
+          echo "::group::Dependency Security Audit"
+          
+          # Create audit directory
+          mkdir -p audit-reports
+          
+          # Run security audit with Safety
+          uv run safety check --json --output audit-reports/safety-audit.json || true
+          uv run safety check --output audit-reports/safety-audit.txt || true
+          
+          # Run pip-audit for vulnerability scanning
+          uv run pip-audit --format=json --output=audit-reports/pip-audit.json || true
+          uv run pip-audit --format=cyclonedx-json --output=audit-reports/sbom.json || true
+          
+          # Check for outdated packages
+          uv run pip list --outdated --format=json > audit-reports/outdated-packages.json || true
+          
+          # Generate dependency tree
+          uv run pip-tree --json-tree > audit-reports/dependency-tree.json || true
+          
+          echo "::endgroup::"
+          
+          echo "::group::Analysis Results"
+          
+          # Analyze results
+          python3 << 'EOF'
+          import json
+          import sys
+          
+          security_updates = []
+          regular_updates = []
+          
+          # Parse safety results
+          try:
+              with open('audit-reports/safety-audit.json', 'r') as f:
+                  safety_data = json.load(f)
+              
+              for vuln in safety_data.get('vulnerabilities', []):
+                  package = vuln.get('package_name', 'unknown')
+                  current_version = vuln.get('analyzed_version', 'unknown')
+                  safe_versions = vuln.get('more_info_url', '')
+                  
+                  security_updates.append({
+                      'package': package,
+                      'current_version': current_version,
+                      'vulnerability': vuln.get('vulnerability_id', ''),
+                      'severity': vuln.get('advisory', {}).get('severity', 'unknown')
+                  })
+          except (FileNotFoundError, json.JSONDecodeError, KeyError):
+              print("Safety audit results not available")
+          
+          # Parse outdated packages
+          try:
+              with open('audit-reports/outdated-packages.json', 'r') as f:
+                  outdated_data = json.load(f)
+              
+              for pkg in outdated_data:
+                  package = pkg.get('name', '')
+                  current = pkg.get('version', '')
+                  latest = pkg.get('latest_version', '')
+                  
+                  # Skip if already in security updates
+                  if not any(s['package'] == package for s in security_updates):
+                      regular_updates.append({
+                          'package': package,
+                          'current_version': current,
+                          'latest_version': latest,
+                          'latest_filetype': pkg.get('latest_filetype', '')
+                      })
+          except (FileNotFoundError, json.JSONDecodeError):
+              print("Outdated packages data not available")
+          
+          # Output results
+          print(f"Security updates needed: {len(security_updates)}")
+          print(f"Regular updates available: {len(regular_updates)}")
+          print(f"Total outdated packages: {len(security_updates) + len(regular_updates)}")
+          
+          # Set outputs for GitHub Actions
+          with open('audit-reports/security-updates.json', 'w') as f:
+              json.dump(security_updates, f)
+          with open('audit-reports/regular-updates.json', 'w') as f:
+              json.dump(regular_updates, f)
+              
+          print(f"security-updates={len(security_updates)}")
+          print(f"regular-updates={len(regular_updates)}")
+          print(f"outdated-count={len(security_updates) + len(regular_updates)}")
+          EOF
+          
+          # Set GitHub outputs
+          security_count=$(cat audit-reports/security-updates.json | jq length)
+          regular_count=$(cat audit-reports/regular-updates.json | jq length)
+          total_count=$((security_count + regular_count))
+          
+          echo "security-updates=$security_count" >> $GITHUB_OUTPUT
+          echo "regular-updates=$regular_count" >> $GITHUB_OUTPUT
+          echo "outdated-count=$total_count" >> $GITHUB_OUTPUT
+          
+          echo "::endgroup::"
+          
+      - name: Generate dependency report
+        run: |
+          echo "::group::Dependency Report Generation"
+          
+          cat > audit-reports/dependency-report.md << 'EOF'
+          # Dependency Audit Report
+          
+          **Generated:** $(date -u)
+          **Repository:** ${{ github.repository }}
+          **Branch:** ${{ github.ref_name }}
+          
+          ## Summary
+          
+          - **Security Updates:** ${{ steps.audit.outputs.security-updates }}
+          - **Regular Updates:** ${{ steps.audit.outputs.regular-updates }}  
+          - **Total Outdated:** ${{ steps.audit.outputs.outdated-count }}
+          
+          ## Security Vulnerabilities
+          
+          EOF
+          
+          # Add security vulnerabilities if any
+          if [[ -f "audit-reports/safety-audit.txt" ]]; then
+            echo "### Safety Audit Results" >> audit-reports/dependency-report.md
+            echo '```' >> audit-reports/dependency-report.md
+            cat audit-reports/safety-audit.txt >> audit-reports/dependency-report.md
+            echo '```' >> audit-reports/dependency-report.md
+          fi
+          
+          echo "::endgroup::"
+          
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-reports
+          path: audit-reports/
+          retention-days: 30
+
+  # =============================================================================
+  # SECURITY UPDATES (High Priority)
+  # =============================================================================
+  security-updates:
+    name: Security Updates
+    runs-on: ubuntu-latest
+    needs: dependency-audit
+    if: needs.dependency-audit.outputs.security-updates > 0
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Download audit reports
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-audit-reports
+          path: audit-reports/
+          
+      - name: Apply security updates
+        id: security-updates
+        run: |
+          echo "::group::Applying Security Updates"
+          
+          # Read security updates from audit
+          security_updates=$(cat audit-reports/security-updates.json | jq -r '.[] | "\(.package)"' | head -10)
+          
+          updated_packages=""
+          
+          for package in $security_updates; do
+            echo "Updating security vulnerability in: $package"
+            
+            # Try to update to latest secure version
+            if uv add "$package" --upgrade; then
+              updated_packages="$updated_packages $package"
+              echo "✅ Updated $package"
+            else
+              echo "❌ Failed to update $package"
+            fi
+          done
+          
+          # Regenerate lock file
+          uv lock --upgrade
+          
+          echo "updated-packages=$updated_packages" >> $GITHUB_OUTPUT
+          
+          echo "::endgroup::"
+          
+      - name: Test security updates
+        run: |
+          echo "::group::Testing Security Updates"
+          
+          # Install updated dependencies
+          uv sync --frozen --all-extras
+          
+          # Run critical tests to ensure updates don't break core functionality
+          uv run pytest tests/unit/test_config.py -v || {
+            echo "::error::Security updates broke core functionality"
+            exit 1
+          }
+          
+          # Run import tests
+          uv run python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from src.dashboard.api import app
+          from src.rl_agent.dqn_agent import DQNAgent
+          print('✅ Core imports still working after security updates')
+          "
+          
+          echo "::endgroup::"
+          
+      - name: Create security update PR
+        if: steps.security-updates.outputs.updated-packages != '' && inputs.create_pr != false
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "security: update dependencies with security vulnerabilities"
+          title: "🔒 Security: Update dependencies with vulnerabilities"
+          body: |
+            ## Security Dependency Updates
+            
+            This PR addresses security vulnerabilities in the following packages:
+            
+            **Updated packages:** ${{ steps.security-updates.outputs.updated-packages }}
+            
+            ### Changes
+            - Updated packages with known security vulnerabilities
+            - Regenerated uv.lock file
+            - Verified core functionality still works
+            
+            ### Verification
+            - [x] Core imports tested
+            - [x] Basic configuration tests passed
+            - [x] Dependencies resolved successfully
+            
+            **Priority:** HIGH - Contains security fixes
+            
+            Auto-generated by dependency management workflow.
+          branch: security/dependency-updates-${{ github.run_number }}
+          labels: |
+            security
+            dependencies
+            automated
+          reviewers: |
+            ${{ github.actor }}
+
+  # =============================================================================
+  # REGULAR DEPENDENCY UPDATES
+  # =============================================================================
+  regular-updates:
+    name: Regular Updates
+    runs-on: ubuntu-latest
+    needs: dependency-audit  
+    if: needs.dependency-audit.outputs.regular-updates > 0 && (github.event.inputs.update_type != 'security-only' || github.event_name == 'schedule')
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        update-type: 
+          - ${{ github.event.inputs.update_type || 'minor' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Download audit reports
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-audit-reports
+          path: audit-reports/
+          
+      - name: Apply regular updates
+        id: regular-updates
+        run: |
+          echo "::group::Applying Regular Updates (${{ matrix.update-type }})"
+          
+          case "${{ matrix.update-type }}" in
+            "patch")
+              echo "Applying patch updates only"
+              update_strategy="--upgrade-patch"
+              ;;
+            "minor")
+              echo "Applying minor updates (default)"
+              update_strategy="--upgrade"
+              ;;
+            "major")
+              echo "Applying major updates (use with caution)"
+              update_strategy="--upgrade"
+              ;;
+            *)
+              echo "Unknown update type, defaulting to minor"
+              update_strategy="--upgrade"
+              ;;
+          esac
+          
+          # Get list of packages to update (limit to prevent massive PRs)
+          regular_updates=$(cat audit-reports/regular-updates.json | jq -r '.[] | "\(.package)"' | head -20)
+          
+          updated_packages=""
+          failed_packages=""
+          
+          for package in $regular_updates; do
+            echo "Updating: $package"
+            
+            if uv add "$package" $update_strategy; then
+              updated_packages="$updated_packages $package"
+              echo "✅ Updated $package"
+            else
+              failed_packages="$failed_packages $package"
+              echo "❌ Failed to update $package"
+            fi
+          done
+          
+          # Regenerate lock file
+          uv lock --upgrade
+          
+          echo "updated-packages=$updated_packages" >> $GITHUB_OUTPUT
+          echo "failed-packages=$failed_packages" >> $GITHUB_OUTPUT
+          
+          echo "::endgroup::"
+          
+      - name: Run comprehensive tests
+        run: |
+          echo "::group::Testing Regular Updates"
+          
+          # Install updated dependencies
+          uv sync --frozen --all-extras
+          
+          # Run expanded test suite for regular updates
+          uv run pytest tests/unit/ \
+            --tb=short \
+            -x \
+            --maxfail=5 \
+            -q || {
+              echo "::error::Regular updates broke unit tests"
+              exit 1
+            }
+          
+          # Test ML/RL imports (critical for this project)
+          uv run python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          try:
+              from src.rl_agent.dqn_agent import DQNAgent
+              from src.ml_analysis.model_manager import ModelManager
+              from src.monitoring.trading_metrics import TradingMetrics
+              print('✅ ML/RL components still working after updates')
+          except ImportError as e:
+              print(f'❌ ML/RL import error: {e}')
+              sys.exit(1)
+          "
+          
+          echo "::endgroup::"
+          
+      - name: Create regular update PR
+        if: steps.regular-updates.outputs.updated-packages != '' && inputs.create_pr != false
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "deps: update dependencies (${{ matrix.update-type }} updates)"
+          title: "📦 Dependencies: ${{ matrix.update-type }} updates"
+          body: |
+            ## Regular Dependency Updates (${{ matrix.update-type }})
+            
+            This PR updates dependencies to their latest ${{ matrix.update-type }} versions.
+            
+            ### Updated Packages
+            ${{ steps.regular-updates.outputs.updated-packages }}
+            
+            ### Failed Updates
+            ${{ steps.regular-updates.outputs.failed-packages }}
+            
+            ### Changes
+            - Updated packages to latest ${{ matrix.update-type }} versions
+            - Regenerated uv.lock file
+            - Verified unit tests pass
+            - Verified ML/RL components still work
+            
+            ### Testing
+            - [x] Unit tests passed
+            - [x] Core imports verified
+            - [x] ML/RL components verified
+            - [x] Dependencies resolved successfully
+            
+            **Update Type:** ${{ matrix.update-type }}
+            
+            Auto-generated by dependency management workflow.
+          branch: deps/${{ matrix.update-type }}-updates-${{ github.run_number }}
+          labels: |
+            dependencies
+            automated
+            ${{ matrix.update-type }}-update
+          reviewers: |
+            ${{ github.actor }}
+
+  # =============================================================================
+  # DEPENDENCY ANALYSIS AND REPORTING
+  # =============================================================================
+  dependency-analysis:
+    name: Dependency Analysis
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, security-updates, regular-updates]
+    if: always()
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Generate dependency insights
+        run: |
+          echo "::group::Dependency Insights"
+          
+          mkdir -p analysis-reports
+          
+          # Generate license report
+          uv run pip-licenses --format json --output-file analysis-reports/licenses.json || true
+          uv run pip-licenses --format csv --output-file analysis-reports/licenses.csv || true
+          
+          # Generate dependency tree
+          uv run pip-tree --json-tree > analysis-reports/dependency-tree.json || true
+          uv run pip-tree > analysis-reports/dependency-tree.txt || true
+          
+          # Analyze package sizes
+          uv run pip list --format json > analysis-reports/package-list.json || true
+          
+          # Check for duplicate dependencies
+          uv run pip-check > analysis-reports/pip-check.txt || true
+          
+          echo "::endgroup::"
+          
+      - name: Analyze dependency health
+        run: |
+          echo "::group::Dependency Health Analysis"
+          
+          python3 << 'EOF'
+          import json
+          import subprocess
+          import sys
+          from collections import defaultdict
+          
+          print("🔍 Dependency Health Analysis")
+          print("=" * 50)
+          
+          # Analyze package list
+          try:
+              with open('analysis-reports/package-list.json', 'r') as f:
+                  packages = json.load(f)
+              
+              print(f"📦 Total packages: {len(packages)}")
+              
+              # Categorize by type
+              ml_packages = [p for p in packages if any(ml in p['name'].lower() for ml in ['torch', 'sklearn', 'numpy', 'pandas', 'scipy', 'matplotlib'])]
+              web_packages = [p for p in packages if any(web in p['name'].lower() for web in ['fastapi', 'uvicorn', 'aiohttp', 'requests'])]
+              crypto_packages = [p for p in packages if any(crypto in p['name'].lower() for crypto in ['web3', 'solana', 'ccxt', 'cryptography'])]
+              
+              print(f"🤖 ML/Data packages: {len(ml_packages)}")
+              print(f"🌐 Web framework packages: {len(web_packages)}") 
+              print(f"₿ Crypto/Blockchain packages: {len(crypto_packages)}")
+              
+          except Exception as e:
+              print(f"Error analyzing packages: {e}")
+          
+          # Analyze licenses
+          try:
+              with open('analysis-reports/licenses.json', 'r') as f:
+                  licenses = json.load(f)
+              
+              license_counts = defaultdict(int)
+              for pkg in licenses:
+                  license_counts[pkg.get('License', 'Unknown')] += 1
+              
+              print("\n📄 License Distribution:")
+              for license_type, count in sorted(license_counts.items(), key=lambda x: x[1], reverse=True):
+                  print(f"   {license_type}: {count}")
+                  
+          except Exception as e:
+              print(f"Error analyzing licenses: {e}")
+          
+          print("\n✅ Analysis complete")
+          EOF
+          
+          echo "::endgroup::"
+          
+      - name: Upload analysis reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-analysis-reports
+          path: analysis-reports/
+          retention-days: 90
+          
+      - name: Generate summary report
+        run: |
+          echo "## 📊 Dependency Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Updates | ${{ needs.dependency-audit.outputs.security-updates }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Regular Updates | ${{ needs.dependency-audit.outputs.regular-updates }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Outdated | ${{ needs.dependency-audit.outputs.outdated-count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Job | ${{ needs.security-updates.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Regular Job | ${{ needs.regular-updates.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Actions Taken" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.security-updates.result }}" == "success" ]]; then
+            echo "- ✅ Security updates applied and tested" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.dependency-audit.outputs.security-updates }}" -gt 0 ]]; then
+            echo "- ⚠️ Security updates needed but not applied" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.regular-updates.result }}" == "success" ]]; then
+            echo "- ✅ Regular updates applied and tested" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.dependency-audit.outputs.regular-updates }}" -gt 0 ]]; then
+            echo "- ⏭️ Regular updates available but not applied" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "- 📊 Dependency analysis completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Resources" >> $GITHUB_STEP_SUMMARY
+          echo "- Review dependency audit reports in workflow artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Check for new pull requests with dependency updates" >> $GITHUB_STEP_SUMMARY
+          echo "- Monitor GitHub Security tab for vulnerability alerts" >> $GITHUB_STEP_SUMMARY
+
+  # =============================================================================
+  # NOTIFICATION AND MONITORING
+  # =============================================================================
+  notification:
+    name: Dependency Notifications
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, security-updates, regular-updates, dependency-analysis]
+    if: always() && (needs.dependency-audit.outputs.security-updates > 0 || needs.dependency-audit.outputs.outdated-count > 20)
+    steps:
+      - name: Prepare notification
+        run: |
+          echo "::notice::Dependency management completed with notable results"
+          
+          if [[ "${{ needs.dependency-audit.outputs.security-updates }}" -gt 0 ]]; then
+            echo "::warning::${{ needs.dependency-audit.outputs.security-updates }} security updates required"
+          fi
+          
+          if [[ "${{ needs.dependency-audit.outputs.outdated-count }}" -gt 20 ]]; then
+            echo "::notice::${{ needs.dependency-audit.outputs.outdated-count }} total packages are outdated"
+          fi
+          
+      - name: Create issue for critical updates
+        if: needs.dependency-audit.outputs.security-updates > 5
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const securityUpdates = ${{ needs.dependency-audit.outputs.security-updates }};
+            
+            if (securityUpdates > 5) {
+              const title = `🚨 Critical: ${securityUpdates} security updates required`;
+              const body = `## Security Update Alert
+              
+              This is an automated alert for critical security updates.
+              
+              **Security Updates Required:** ${securityUpdates}
+              **Regular Updates Available:** ${{ needs.dependency-audit.outputs.regular-updates }}
+              
+              ### Next Steps
+              1. Review the dependency audit reports
+              2. Check for automatically created security update PRs
+              3. Prioritize security updates for immediate review
+              4. Test updates in staging environment
+              
+              **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              
+              /label security high-priority dependencies`;
+              
+              github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['security', 'high-priority', 'dependencies']
+              });
+            }

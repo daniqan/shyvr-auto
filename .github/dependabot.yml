@@ -1,0 +1,67 @@
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "kendo"
+    assignees:
+      - "kendo"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore patch updates for stable packages
+      - dependency-name: "torch"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "numpy"
+        update-types: ["version-update:semver-patch"]
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "kendo"
+    assignees:
+      - "kendo"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "kendo"
+    assignees:
+      - "kendo"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"

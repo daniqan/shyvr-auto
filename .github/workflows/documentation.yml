@@ -1,0 +1,1079 @@
+name: Documentation & Release Management
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - '**/*.md'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - '**/*.md'
+  release:
+    types: [published, created]
+  workflow_dispatch:
+    inputs:
+      action_type:
+        description: 'Action to perform'
+        required: false
+        default: 'validate'
+        type: choice
+        options:
+          - validate
+          - build
+          - release-notes
+          - api-docs
+      version:
+        description: 'Version for release (semver format)'
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # =============================================================================
+  # DOCUMENTATION VALIDATION
+  # =============================================================================
+  validate-documentation:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.inputs.action_type != 'release-notes' && github.event.inputs.action_type != 'api-docs'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install markdown validation tools
+        run: |
+          npm install -g markdownlint-cli
+          npm install -g markdown-link-check
+          
+      - name: Validate markdown syntax
+        run: |
+          echo "::group::Markdown Syntax Validation"
+          markdownlint docs/ README.md --config .markdownlint.json || {
+            echo "Creating default markdownlint config..."
+            cat > .markdownlint.json << 'EOF'
+            {
+              "default": true,
+              "MD013": false,
+              "MD033": false,
+              "MD041": false
+            }
+            EOF
+            markdownlint docs/ README.md --config .markdownlint.json
+          }
+          echo "::endgroup::"
+          
+      - name: Check markdown links
+        run: |
+          echo "::group::Link Validation"
+          find docs/ -name "*.md" -exec markdown-link-check {} \; || {
+            echo "::warning::Some links may be broken, but continuing..."
+          }
+          
+          # Check README links specifically
+          markdown-link-check README.md || {
+            echo "::warning::Some README links may be broken, but continuing..."
+          }
+          echo "::endgroup::"
+          
+      - name: Validate documentation structure
+        run: |
+          echo "::group::Documentation Structure Validation"
+          python3 << 'EOF'
+          import os
+          import sys
+          from pathlib import Path
+          
+          print("📚 Documentation Structure Validation")
+          print("=" * 50)
+          
+          # Expected documentation structure
+          expected_docs = {
+              'docs/': {
+                  'required': ['README.md'],
+                  'recommended': [
+                      'API_DOCUMENTATION.md',
+                      'DEPLOYMENT_READINESS_CHECKLIST.md',
+                      'PRODUCTION_DEPLOYMENT_GUIDE.md'
+                  ]
+              },
+              'docs/development/': {
+                  'recommended': [
+                      'CICD_PIPELINE_GUIDE.md',
+                      'LOCAL_TESTING_GUIDE.md'
+                  ]
+              },
+              'docs/testing/': {
+                  'recommended': [
+                      'HYBRID_TESTING_STRATEGY.md'
+                  ]
+              }
+          }
+          
+          validation_results = {
+              'missing_required': [],
+              'missing_recommended': [],
+              'found_docs': [],
+              'structure_valid': True
+          }
+          
+          # Check if docs directory exists
+          if not os.path.exists('docs'):
+              print("❌ docs/ directory not found")
+              validation_results['structure_valid'] = False
+              sys.exit(1)
+          
+          # Validate structure
+          for base_path, requirements in expected_docs.items():
+              print(f"\n🔍 Checking {base_path}")
+              
+              if not os.path.exists(base_path):
+                  print(f"⚠️ Directory {base_path} not found")
+                  continue
+              
+              # Check required files
+              for required_file in requirements.get('required', []):
+                  file_path = os.path.join(base_path, required_file)
+                  if os.path.exists(file_path):
+                      print(f"✅ Required: {file_path}")
+                      validation_results['found_docs'].append(file_path)
+                  else:
+                      print(f"❌ Missing required: {file_path}")
+                      validation_results['missing_required'].append(file_path)
+                      validation_results['structure_valid'] = False
+              
+              # Check recommended files
+              for rec_file in requirements.get('recommended', []):
+                  file_path = os.path.join(base_path, rec_file)
+                  if os.path.exists(file_path):
+                      print(f"✅ Recommended: {file_path}")
+                      validation_results['found_docs'].append(file_path)
+                  else:
+                      print(f"⚠️ Missing recommended: {file_path}")
+                      validation_results['missing_recommended'].append(file_path)
+          
+          # Find all markdown files
+          all_md_files = []
+          for root, dirs, files in os.walk('docs'):
+              for file in files:
+                  if file.endswith('.md'):
+                      all_md_files.append(os.path.join(root, file))
+          
+          # Also check root README
+          if os.path.exists('README.md'):
+              all_md_files.append('README.md')
+          
+          print(f"\n📊 Documentation Summary:")
+          print(f"   Total markdown files: {len(all_md_files)}")
+          print(f"   Required files found: {len(validation_results['found_docs'])}")
+          print(f"   Missing required: {len(validation_results['missing_required'])}")
+          print(f"   Missing recommended: {len(validation_results['missing_recommended'])}")
+          
+          if validation_results['missing_required']:
+              print(f"\n❌ Missing required documentation:")
+              for missing in validation_results['missing_required']:
+                  print(f"     {missing}")
+          
+          if validation_results['missing_recommended']:
+              print(f"\n⚠️ Missing recommended documentation:")
+              for missing in validation_results['missing_recommended']:
+                  print(f"     {missing}")
+          
+          if not validation_results['structure_valid']:
+              print(f"\n❌ Documentation structure validation failed")
+              sys.exit(1)
+          else:
+              print(f"\n✅ Documentation structure validation passed")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Check documentation completeness
+        run: |
+          echo "::group::Documentation Completeness Check"
+          python3 << 'EOF'
+          import os
+          import re
+          
+          print("🔍 Documentation Completeness Check")
+          print("=" * 50)
+          
+          # Check if key topics are covered
+          key_topics = {
+              'installation': ['install', 'setup', 'getting started'],
+              'configuration': ['config', 'environment', 'variables'],
+              'api': ['api', 'endpoint', 'rest'],
+              'deployment': ['deploy', 'production', 'cloud'],
+              'testing': ['test', 'testing', 'pytest'],
+              'monitoring': ['monitor', 'metrics', 'observability'],
+              'security': ['security', 'auth', 'token'],
+              'ml_rl': ['machine learning', 'reinforcement learning', 'model', 'training']
+          }
+          
+          coverage_results = {}
+          
+          # Scan all markdown files for topic coverage
+          md_files = []
+          for root, dirs, files in os.walk('.'):
+              for file in files:
+                  if file.endswith('.md'):
+                      md_files.append(os.path.join(root, file))
+          
+          print(f"📄 Scanning {len(md_files)} markdown files...")
+          
+          for topic, keywords in key_topics.items():
+              coverage_results[topic] = {
+                  'covered': False,
+                  'files': [],
+                  'keyword_matches': 0
+              }
+              
+              for md_file in md_files:
+                  try:
+                      with open(md_file, 'r', encoding='utf-8') as f:
+                          content = f.read().lower()
+                          
+                      for keyword in keywords:
+                          if keyword.lower() in content:
+                              coverage_results[topic]['covered'] = True
+                              if md_file not in coverage_results[topic]['files']:
+                                  coverage_results[topic]['files'].append(md_file)
+                              coverage_results[topic]['keyword_matches'] += content.count(keyword.lower())
+                  except Exception as e:
+                      print(f"⚠️ Could not read {md_file}: {e}")
+          
+          # Report coverage
+          print(f"\n📊 Topic Coverage Analysis:")
+          covered_topics = 0
+          for topic, results in coverage_results.items():
+              status = "✅" if results['covered'] else "❌"
+              print(f"   {status} {topic.replace('_', ' ').title()}: {len(results['files'])} files, {results['keyword_matches']} mentions")
+              if results['covered']:
+                  covered_topics += 1
+          
+          coverage_percentage = (covered_topics / len(key_topics)) * 100
+          print(f"\n📈 Overall Coverage: {coverage_percentage:.1f}% ({covered_topics}/{len(key_topics)} topics)")
+          
+          if coverage_percentage < 70:
+              print(f"⚠️ Documentation coverage is below 70%. Consider adding more comprehensive documentation.")
+          else:
+              print(f"✅ Documentation coverage is adequate.")
+          EOF
+          echo "::endgroup::"
+
+  # =============================================================================
+  # API DOCUMENTATION GENERATION
+  # =============================================================================
+  generate-api-docs:
+    name: Generate API Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.inputs.action_type == 'api-docs' || github.event.inputs.action_type == 'build' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Generate API documentation
+        run: |
+          echo "::group::API Documentation Generation"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import json
+          import inspect
+          from datetime import datetime
+          from src.dashboard.api import app
+          from src.dashboard.service import DashboardService
+          
+          print("📋 Generating API Documentation")
+          print("=" * 50)
+          
+          # Extract API routes from FastAPI app
+          api_docs = {
+              'title': 'Shyvr RLTE Trading System API',
+              'version': '1.0.0',
+              'description': 'AI-augmented cryptocurrency trading bot with reinforcement learning',
+              'generated_at': datetime.utcnow().isoformat() + 'Z',
+              'base_url': 'https://shyvr-rlte.example.com',
+              'endpoints': []
+          }
+          
+          try:
+              # Get OpenAPI schema from FastAPI
+              openapi_schema = app.openapi()
+              
+              if 'paths' in openapi_schema:
+                  for path, methods in openapi_schema['paths'].items():
+                      for method, details in methods.items():
+                          endpoint_doc = {
+                              'path': path,
+                              'method': method.upper(),
+                              'summary': details.get('summary', ''),
+                              'description': details.get('description', ''),
+                              'tags': details.get('tags', []),
+                              'parameters': [],
+                              'responses': {}
+                          }
+                          
+                          # Extract parameters
+                          if 'parameters' in details:
+                              for param in details['parameters']:
+                                  endpoint_doc['parameters'].append({
+                                      'name': param.get('name', ''),
+                                      'in': param.get('in', ''),
+                                      'required': param.get('required', False),
+                                      'type': param.get('schema', {}).get('type', ''),
+                                      'description': param.get('description', '')
+                                  })
+                          
+                          # Extract responses
+                          if 'responses' in details:
+                              for status_code, response in details['responses'].items():
+                                  endpoint_doc['responses'][status_code] = {
+                                      'description': response.get('description', ''),
+                                      'content_type': list(response.get('content', {}).keys()) if 'content' in response else []
+                                  }
+                          
+                          api_docs['endpoints'].append(endpoint_doc)
+              
+              print(f"✅ Extracted {len(api_docs['endpoints'])} API endpoints")
+              
+          except Exception as e:
+              print(f"❌ Failed to extract API documentation: {e}")
+              
+              # Fallback: manual endpoint documentation
+              manual_endpoints = [
+                  {
+                      'path': '/health',
+                      'method': 'GET',
+                      'summary': 'Health Check',
+                      'description': 'Returns the health status of the application',
+                      'tags': ['health'],
+                      'parameters': [],
+                      'responses': {
+                          '200': {
+                              'description': 'Service is healthy',
+                              'content_type': ['application/json']
+                          }
+                      }
+                  },
+                  {
+                      'path': '/api/v1/status',
+                      'method': 'GET',
+                      'summary': 'System Status',
+                      'description': 'Returns detailed system status including trading mode and metrics',
+                      'tags': ['status'],
+                      'parameters': [],
+                      'responses': {
+                          '200': {
+                              'description': 'System status information',
+                              'content_type': ['application/json']
+                          }
+                      }
+                  },
+                  {
+                      'path': '/api/v1/metrics',
+                      'method': 'GET',
+                      'summary': 'Trading Metrics',
+                      'description': 'Returns current trading performance metrics',
+                      'tags': ['metrics'],
+                      'parameters': [],
+                      'responses': {
+                          '200': {
+                              'description': 'Trading metrics data',
+                              'content_type': ['application/json']
+                          }
+                      }
+                  }
+              ]
+              
+              api_docs['endpoints'] = manual_endpoints
+              print(f"⚠️ Using manual endpoint documentation: {len(manual_endpoints)} endpoints")
+          
+          # Save API documentation as JSON
+          with open('api-documentation.json', 'w') as f:
+              json.dump(api_docs, f, indent=2)
+          
+          print("✅ API documentation saved as JSON")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Generate markdown API documentation
+        run: |
+          echo "::group::Markdown API Documentation"
+          python3 << 'EOF'
+          import json
+          from datetime import datetime
+          
+          # Load API documentation
+          with open('api-documentation.json', 'r') as f:
+              api_docs = json.load(f)
+          
+          # Generate markdown documentation
+          md_content = f"""# {api_docs['title']}
+          
+          **Version:** {api_docs['version']}  
+          **Generated:** {api_docs['generated_at']}  
+          **Base URL:** `{api_docs['base_url']}`
+          
+          {api_docs['description']}
+          
+          ## Authentication
+          
+          The API uses standard HTTP authentication methods. For production deployments, ensure proper authentication tokens are configured.
+          
+          ## Endpoints
+          
+          """
+          
+          # Group endpoints by tags
+          endpoints_by_tag = {}
+          for endpoint in api_docs['endpoints']:
+              tags = endpoint.get('tags', ['general'])
+              for tag in tags:
+                  if tag not in endpoints_by_tag:
+                      endpoints_by_tag[tag] = []
+                  endpoints_by_tag[tag].append(endpoint)
+          
+          # Generate documentation for each tag group
+          for tag, endpoints in endpoints_by_tag.items():
+              md_content += f"### {tag.title()}\n\n"
+              
+              for endpoint in endpoints:
+                  md_content += f"#### `{endpoint['method']} {endpoint['path']}`\n\n"
+                  
+                  if endpoint['summary']:
+                      md_content += f"**Summary:** {endpoint['summary']}\n\n"
+                  
+                  if endpoint['description']:
+                      md_content += f"{endpoint['description']}\n\n"
+                  
+                  # Parameters
+                  if endpoint['parameters']:
+                      md_content += "**Parameters:**\n\n"
+                      md_content += "| Name | Type | Required | Location | Description |\n"
+                      md_content += "|------|------|----------|----------|-------------|\n"
+                      
+                      for param in endpoint['parameters']:
+                          required = "✅" if param['required'] else "❌"
+                          md_content += f"| {param['name']} | {param['type']} | {required} | {param['in']} | {param['description']} |\n"
+                      
+                      md_content += "\n"
+                  
+                  # Responses
+                  if endpoint['responses']:
+                      md_content += "**Responses:**\n\n"
+                      
+                      for status_code, response in endpoint['responses'].items():
+                          md_content += f"- **{status_code}:** {response['description']}\n"
+                          if response['content_type']:
+                              md_content += f"  - Content-Type: {', '.join(response['content_type'])}\n"
+                      
+                      md_content += "\n"
+                  
+                  md_content += "---\n\n"
+          
+          # Add examples section
+          md_content += """## Examples
+          
+          ### Health Check
+          
+          ```bash
+          curl -X GET "{base_url}/health"
+          ```
+          
+          ### Get System Status
+          
+          ```bash
+          curl -X GET "{base_url}/api/v1/status"
+          ```
+          
+          ### Get Trading Metrics
+          
+          ```bash
+          curl -X GET "{base_url}/api/v1/metrics"
+          ```
+          
+          ## Error Handling
+          
+          The API uses standard HTTP status codes:
+          
+          - `200` - Success
+          - `400` - Bad Request
+          - `401` - Unauthorized
+          - `404` - Not Found
+          - `500` - Internal Server Error
+          
+          Error responses include a JSON object with error details:
+          
+          ```json
+          {
+            "error": "Error message",
+            "detail": "Detailed error description",
+            "timestamp": "2023-01-01T00:00:00Z"
+          }
+          ```
+          
+          ## Rate Limiting
+          
+          API endpoints may be rate limited. Check response headers for rate limit information:
+          
+          - `X-RateLimit-Limit` - Request limit per time window
+          - `X-RateLimit-Remaining` - Remaining requests in current window
+          - `X-RateLimit-Reset` - Time when rate limit resets
+          
+          ---
+          *Documentation generated automatically from API specifications*
+          """.format(base_url=api_docs['base_url'])
+          
+          # Save markdown documentation
+          with open('API_DOCUMENTATION.md', 'w') as f:
+              f.write(md_content)
+          
+          print("✅ Markdown API documentation generated")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload API documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-documentation
+          path: |
+            api-documentation.json
+            API_DOCUMENTATION.md
+          retention-days: 90
+
+  # =============================================================================
+  # RELEASE NOTES GENERATION
+  # =============================================================================
+  generate-release-notes:
+    name: Generate Release Notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.action_type == 'release-notes'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
+          
+      - name: Get version information
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            version="${{ github.ref_name }}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="$(date +%Y.%m.%d)"
+          fi
+          
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "🏷️ Version: $version"
+          
+      - name: Generate release notes from commits
+        run: |
+          echo "::group::Release Notes Generation"
+          python3 << 'EOF'
+          import subprocess
+          import re
+          from datetime import datetime
+          from collections import defaultdict
+          
+          print("📝 Generating Release Notes")
+          print("=" * 50)
+          
+          version = "${{ steps.version.outputs.version }}"
+          
+          # Get the previous tag for changelog
+          try:
+              # Get the previous tag
+              prev_tag_result = subprocess.run(
+                  ['git', 'describe', '--tags', '--abbrev=0', 'HEAD~1'],
+                  capture_output=True, text=True, check=False
+              )
+              
+              if prev_tag_result.returncode == 0:
+                  prev_tag = prev_tag_result.stdout.strip()
+                  print(f"📅 Previous tag: {prev_tag}")
+                  
+                  # Get commits since previous tag
+                  commit_range = f"{prev_tag}..HEAD"
+              else:
+                  print("📅 No previous tag found, using all commits")
+                  commit_range = "HEAD"
+                  prev_tag = None
+              
+          except Exception as e:
+              print(f"⚠️ Error getting previous tag: {e}")
+              commit_range = "HEAD"
+              prev_tag = None
+          
+          # Get commit messages
+          try:
+              commits_result = subprocess.run(
+                  ['git', 'log', commit_range, '--pretty=format:%s (%h)', '--no-merges'],
+                  capture_output=True, text=True, check=True
+              )
+              
+              commit_messages = commits_result.stdout.strip().split('\n')
+              print(f"📊 Found {len(commit_messages)} commits since {prev_tag or 'beginning'}")
+              
+          except subprocess.CalledProcessError as e:
+              print(f"❌ Error getting commits: {e}")
+              commit_messages = []
+          
+          # Categorize commits
+          categories = {
+              'features': {
+                  'title': '🚀 New Features',
+                  'keywords': ['feat', 'feature', 'add', 'implement'],
+                  'commits': []
+              },
+              'improvements': {
+                  'title': '✨ Improvements',
+                  'keywords': ['improve', 'enhance', 'optimize', 'update', 'upgrade'],
+                  'commits': []
+              },
+              'fixes': {
+                  'title': '🐛 Bug Fixes',
+                  'keywords': ['fix', 'bug', 'error', 'issue', 'resolve'],
+                  'commits': []
+              },
+              'security': {
+                  'title': '🔒 Security',
+                  'keywords': ['security', 'vulnerability', 'auth', 'token'],
+                  'commits': []
+              },
+              'docs': {
+                  'title': '📚 Documentation',
+                  'keywords': ['doc', 'docs', 'documentation', 'readme'],
+                  'commits': []
+              },
+              'ci': {
+                  'title': '🔧 CI/CD',
+                  'keywords': ['ci', 'cd', 'pipeline', 'workflow', 'build', 'deploy'],
+                  'commits': []
+              },
+              'dependencies': {
+                  'title': '📦 Dependencies',
+                  'keywords': ['deps', 'dependency', 'dependencies', 'bump', 'requirements'],
+                  'commits': []
+              },
+              'other': {
+                  'title': '🔨 Other Changes',
+                  'keywords': [],
+                  'commits': []
+              }
+          }
+          
+          # Categorize each commit
+          for commit in commit_messages:
+              if not commit.strip():
+                  continue
+                  
+              categorized = False
+              commit_lower = commit.lower()
+              
+              for category, info in categories.items():
+                  if category == 'other':
+                      continue
+                      
+                  for keyword in info['keywords']:
+                      if keyword in commit_lower:
+                          info['commits'].append(commit)
+                          categorized = True
+                          break
+                  
+                  if categorized:
+                      break
+              
+              if not categorized:
+                  categories['other']['commits'].append(commit)
+          
+          # Generate release notes
+          release_notes = f"""# Release Notes - {version}
+          
+          **Release Date:** {datetime.utcnow().strftime('%Y-%m-%d')}
+          **Repository:** ${{ github.repository }}
+          
+          """
+          
+          if prev_tag:
+              release_notes += f"**Changes since {prev_tag}**\n\n"
+          
+          # Add each category with commits
+          total_changes = 0
+          for category, info in categories.items():
+              if info['commits']:
+                  release_notes += f"## {info['title']}\n\n"
+                  for commit in info['commits']:
+                      release_notes += f"- {commit}\n"
+                  release_notes += "\n"
+                  total_changes += len(info['commits'])
+          
+          if total_changes == 0:
+              release_notes += "## 📝 Changes\n\nNo significant changes in this release.\n\n"
+          
+          # Add system information
+          release_notes += f"""## 📊 Release Statistics
+          
+          - **Total Changes:** {total_changes}
+          - **New Features:** {len(categories['features']['commits'])}
+          - **Bug Fixes:** {len(categories['fixes']['commits'])}
+          - **Improvements:** {len(categories['improvements']['commits'])}
+          - **Documentation Updates:** {len(categories['docs']['commits'])}
+          
+          ## 🔗 Links
+          
+          - **Repository:** https://github.com/${{ github.repository }}
+          - **Issues:** https://github.com/${{ github.repository }}/issues
+          - **Documentation:** https://github.com/${{ github.repository }}/tree/main/docs
+          
+          ## 🚀 Deployment
+          
+          This release can be deployed using:
+          
+          ```bash
+          # Docker deployment
+          docker pull us-central1-docker.pkg.dev/shvyr-ai-bots/shyvr-ai-prod/shyvr-rlte:{version}
+          
+          # Cloud Run deployment
+          gcloud run deploy shyvr-rlte \\
+            --image=us-central1-docker.pkg.dev/shvyr-ai-bots/shyvr-ai-prod/shyvr-rlte:{version} \\
+            --region=us-central1
+          ```
+          
+          ## ⚠️ Breaking Changes
+          
+          Please review the documentation for any breaking changes that may affect your deployment.
+          
+          ## 🙏 Contributors
+          
+          Thank you to all contributors who made this release possible!
+          
+          ---
+          *Release notes generated automatically from commit history*
+          """
+          
+          # Save release notes
+          with open('RELEASE_NOTES.md', 'w') as f:
+              f.write(release_notes)
+          
+          print(f"✅ Release notes generated for version {version}")
+          print(f"   Total changes: {total_changes}")
+          
+          # Also create a shorter version for GitHub releases
+          short_notes = f"""## What's Changed
+          
+          """
+          
+          for category, info in categories.items():
+              if info['commits'] and category in ['features', 'improvements', 'fixes', 'security']:
+                  short_notes += f"### {info['title']}\n"
+                  for commit in info['commits'][:5]:  # Limit to first 5
+                      short_notes += f"- {commit}\n"
+                  if len(info['commits']) > 5:
+                      short_notes += f"- ...and {len(info['commits']) - 5} more\n"
+                  short_notes += "\n"
+          
+          short_notes += f"""
+          **Full Changelog:** See [RELEASE_NOTES.md](RELEASE_NOTES.md) for complete details.
+          
+          🚀 **Docker Image:** `us-central1-docker.pkg.dev/shvyr-ai-bots/shyvr-ai-prod/shyvr-rlte:{version}`
+          """
+          
+          with open('GITHUB_RELEASE_NOTES.md', 'w') as f:
+              f.write(short_notes)
+          
+          print("✅ GitHub release notes generated")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ steps.version.outputs.version }}
+          path: |
+            RELEASE_NOTES.md
+            GITHUB_RELEASE_NOTES.md
+          retention-days: 365
+
+  # =============================================================================
+  # DOCUMENTATION SITE BUILD
+  # =============================================================================
+  build-documentation-site:
+    name: Build Documentation Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.inputs.action_type == 'build' || github.ref == 'refs/heads/main'
+    needs: [validate-documentation, generate-api-docs]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install Python and dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin
+          
+      - name: Download API documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: api-documentation
+          path: docs/api/
+        continue-on-error: true
+        
+      - name: Setup MkDocs configuration
+        run: |
+          echo "::group::MkDocs Configuration"
+          cat > mkdocs.yml << 'EOF'
+          site_name: Shyvr RLTE Documentation
+          site_description: AI-augmented cryptocurrency trading bot with reinforcement learning
+          site_url: https://shyvr-rlte-docs.example.com
+          repo_url: https://github.com/${{ github.repository }}
+          repo_name: ${{ github.repository }}
+          
+          theme:
+            name: material
+            palette:
+              - scheme: default
+                primary: blue
+                accent: orange
+                toggle:
+                  icon: material/brightness-7
+                  name: Switch to dark mode
+              - scheme: slate
+                primary: blue
+                accent: orange
+                toggle:
+                  icon: material/brightness-4
+                  name: Switch to light mode
+            features:
+              - navigation.tabs
+              - navigation.sections
+              - navigation.expand
+              - navigation.top
+              - search.highlight
+              - search.share
+          
+          nav:
+            - Home: index.md
+            - Getting Started:
+              - Installation: installation.md
+              - Configuration: configuration.md
+              - Quick Start: quick-start.md
+            - API Documentation:
+              - Overview: api/API_DOCUMENTATION.md
+              - Endpoints: api/endpoints.md
+            - Development:
+              - Local Testing: development/LOCAL_TESTING_GUIDE.md
+              - CI/CD Pipeline: development/CICD_PIPELINE_GUIDE.md
+            - Deployment:
+              - Production Guide: PRODUCTION_DEPLOYMENT_GUIDE.md
+              - Readiness Checklist: DEPLOYMENT_READINESS_CHECKLIST.md
+            - Testing:
+              - Testing Strategy: testing/HYBRID_TESTING_STRATEGY.md
+              - Performance Testing: testing/performance/README.md
+            - Monitoring:
+              - System Monitoring: MONITORING_SYSTEM.md
+              - Alerts: monitoring.md
+            - About:
+              - Release Notes: releases.md
+              - Contributing: contributing.md
+          
+          plugins:
+            - search
+            - mermaid2
+          
+          markdown_extensions:
+            - admonition
+            - codehilite
+            - toc:
+                permalink: true
+            - pymdownx.superfences:
+                custom_fences:
+                  - name: mermaid
+                    class: mermaid
+                    format: !!python/name:mermaid2.fence_mermaid
+          
+          extra:
+            social:
+              - icon: fontawesome/brands/github
+                link: https://github.com/${{ github.repository }}
+          EOF
+          echo "::endgroup::"
+          
+      - name: Create documentation index
+        run: |
+          echo "::group::Documentation Index"
+          cat > docs/index.md << 'EOF'
+          # Shyvr RLTE Trading System
+          
+          Welcome to the documentation for the Shyvr RLTE (Reinforcement Learning Trading Engine) - an AI-augmented cryptocurrency trading bot that combines machine learning, reinforcement learning, and modern trading strategies.
+          
+          ## Quick Navigation
+          
+          ### 🚀 Getting Started
+          - [Installation Guide](installation.md) - Set up the system locally
+          - [Configuration](configuration.md) - Configure API keys and settings
+          - [Quick Start](quick-start.md) - Run your first trading simulation
+          
+          ### 📚 Core Documentation
+          - [API Documentation](api/API_DOCUMENTATION.md) - REST API reference
+          - [Production Deployment](PRODUCTION_DEPLOYMENT_GUIDE.md) - Deploy to production
+          - [Monitoring System](MONITORING_SYSTEM.md) - Monitor system health and performance
+          
+          ### 🧪 Development & Testing
+          - [Local Testing Guide](development/LOCAL_TESTING_GUIDE.md) - Run tests locally
+          - [CI/CD Pipeline](development/CICD_PIPELINE_GUIDE.md) - Continuous integration setup
+          - [Testing Strategy](testing/HYBRID_TESTING_STRATEGY.md) - Comprehensive testing approach
+          
+          ## System Overview
+          
+          The Shyvr RLTE system consists of several key components:
+          
+          ```mermaid
+          graph TB
+              A[Trading Bot] --> B[ML Analysis Engine]
+              A --> C[RL Agent]
+              A --> D[Portfolio Manager]
+              B --> E[Market Data]
+              C --> F[Trading Environment]
+              D --> G[Risk Management]
+              
+              H[Dashboard API] --> A
+              I[Monitoring System] --> A
+              J[Database] --> A
+          ```
+          
+          ## Key Features
+          
+          - **🤖 Reinforcement Learning**: Advanced RL algorithms for trading decisions
+          - **📊 ML Analysis**: Technical analysis with machine learning models
+          - **🔒 Risk Management**: Sophisticated risk assessment and position sizing
+          - **📈 Real-time Monitoring**: Comprehensive system and trading metrics
+          - **🌐 Web Dashboard**: Interactive web interface for monitoring and control
+          - **☁️ Cloud Native**: Designed for deployment on Google Cloud Platform
+          
+          ## Architecture
+          
+          The system follows a microservices architecture with:
+          
+          - **FastAPI** backend for REST API services
+          - **PostgreSQL** database for data persistence
+          - **PyTorch** for machine learning models
+          - **Stable Baselines3** for reinforcement learning
+          - **Google Cloud Run** for containerized deployment
+          - **Prometheus & Grafana** for monitoring
+          
+          ## Security & Compliance
+          
+          - Secure API key management with Google Secret Manager
+          - Comprehensive security scanning and vulnerability detection
+          - Automated dependency updates and security patches
+          - Production-ready authentication and authorization
+          
+          ## Support & Contributing
+          
+          - **Issues**: Report bugs and request features on [GitHub Issues](https://github.com/${{ github.repository }}/issues)
+          - **Discussions**: Join the conversation in [GitHub Discussions](https://github.com/${{ github.repository }}/discussions)
+          - **Contributing**: See our [Contributing Guide](contributing.md)
+          
+          ---
+          
+          *Last updated: {{ "now" | date: "%Y-%m-%d" }}*
+          EOF
+          echo "::endgroup::"
+          
+      - name: Build documentation site
+        run: |
+          echo "::group::Building Documentation Site"
+          mkdocs build --verbose
+          echo "::endgroup::"
+          
+      - name: Upload documentation site
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-site
+          path: site/
+          retention-days: 30
+          
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'Deploy documentation site'
+
+  # =============================================================================
+  # DOCUMENTATION SUMMARY
+  # =============================================================================
+  documentation-summary:
+    name: Documentation Summary
+    runs-on: ubuntu-latest
+    needs: [validate-documentation, generate-api-docs, generate-release-notes, build-documentation-site]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 📚 Documentation & Release Management Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Task | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate Documentation | ${{ needs.validate-documentation.result == 'success' && '✅' || needs.validate-documentation.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate API Docs | ${{ needs.generate-api-docs.result == 'success' && '✅' || needs.generate-api-docs.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate Release Notes | ${{ needs.generate-release-notes.result == 'success' && '✅' || needs.generate-release-notes.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Documentation Site | ${{ needs.build-documentation-site.result == 'success' && '✅' || needs.build-documentation-site.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deliverables" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.generate-api-docs.result }}" == "success" ]]; then
+            echo "- ✅ API Documentation generated and available" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.generate-release-notes.result }}" == "success" ]]; then
+            echo "- ✅ Release notes generated for version" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.build-documentation-site.result }}" == "success" ]]; then
+            echo "- ✅ Documentation site built successfully" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              echo "- 🌐 Documentation deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "- Download documentation artifacts from workflow" >> $GITHUB_STEP_SUMMARY
+          echo "- Review generated API documentation for accuracy" >> $GITHUB_STEP_SUMMARY
+          echo "- Update any missing or outdated documentation" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
+            echo "- Create GitHub release with generated release notes" >> $GITHUB_STEP_SUMMARY
+          fi

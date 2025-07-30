@@ -1,0 +1,44 @@
+name: "CodeQL Configuration for Shyvr RLTE"
+
+# Disable default CodeQL queries and use custom ones
+disable-default-queries: false
+
+# Additional query packs
+queries:
+  - uses: security-and-quality
+  - uses: security-extended
+
+# Path filters - include only source code
+paths:
+  - "src/**"
+  - "scripts/**"
+
+# Path filters - exclude test files and documentation
+paths-ignore:
+  - "tests/**"
+  - "docs/**"
+  - "**/*.md"
+  - "htmlcov/**"
+  - "reports/**"
+  - ".github/**"
+  - "hist/**"
+  - "future_work/**"
+  - "examples/**"
+  - "monitoring/grafana/**"
+
+# Custom query filters
+query-filters:
+  # Exclude some noisy queries for ML/AI code
+  - exclude:
+      id: py/unused-import
+  - exclude:
+      id: py/similar-function
+  # Focus on security-relevant queries
+  - include:
+      tags:
+        - security
+        - external/cwe/cwe-079  # XSS
+        - external/cwe/cwe-089  # SQL injection
+        - external/cwe/cwe-020  # Input validation
+        - external/cwe/cwe-022  # Path traversal
+        - external/cwe/cwe-078  # Command injection

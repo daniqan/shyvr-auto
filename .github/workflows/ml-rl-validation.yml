@@ -1,0 +1,948 @@
+name: ML/RL Model Validation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/rl_agent/**'
+      - 'src/ml_analysis/**'
+      - 'src/monitoring/**'
+      - 'models/**'
+      - 'tests/performance/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/rl_agent/**'
+      - 'src/ml_analysis/**'
+      - 'src/monitoring/**'
+      - 'models/**'
+  schedule:
+    # Run model validation daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      validation_type:
+        description: 'Type of ML/RL validation to run'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - model-only
+          - performance-only
+          - regression-only
+      generate_report:
+        description: 'Generate detailed validation report'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+  TORCH_CPU_ONLY: '1'  # Use CPU-only PyTorch for CI
+  OMP_NUM_THREADS: '2'  # Limit OpenMP threads
+
+jobs:
+  # =============================================================================
+  # MODEL STRUCTURE AND INTEGRITY VALIDATION
+  # =============================================================================
+  model-structure-validation:
+    name: Model Structure Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.inputs.validation_type != 'performance-only' && github.event.inputs.validation_type != 'regression-only'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Validate RL agent models
+        run: |
+          echo "::group::RL Agent Model Validation"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import torch
+          import torch.nn as nn
+          from src.rl_agent.dqn_agent import DQNAgent
+          from src.rl_agent.trading_environment import TradingEnvironment
+          import numpy as np
+          
+          print("🤖 Validating RL Agent Models")
+          print("=" * 50)
+          
+          # Test DQN Agent initialization
+          try:
+              env = TradingEnvironment()
+              agent = DQNAgent(
+                  state_size=env.observation_space.shape[0],
+                  action_size=env.action_space.n,
+                  learning_rate=0.001
+              )
+              print("✅ DQN Agent initialized successfully")
+              
+              # Validate model architecture
+              model = agent.q_network
+              print(f"✅ Q-Network architecture: {sum(p.numel() for p in model.parameters())} parameters")
+              
+              # Test forward pass
+              dummy_state = torch.randn(1, env.observation_space.shape[0])
+              with torch.no_grad():
+                  output = model(dummy_state)
+                  assert output.shape[1] == env.action_space.n
+              print("✅ Forward pass validation successful")
+              
+              # Test action selection
+              state = np.random.randn(env.observation_space.shape[0])
+              action = agent.act(state, epsilon=0.1)
+              assert 0 <= action < env.action_space.n
+              print("✅ Action selection validation successful")
+              
+          except Exception as e:
+              print(f"❌ RL Agent validation failed: {e}")
+              sys.exit(1)
+          
+          print("\n🧠 RL Agent Model Validation Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Validate ML analysis models
+        run: |
+          echo "::group::ML Analysis Model Validation"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import torch
+          import numpy as np
+          from src.ml_analysis.lstm_model import LSTMModel
+          from src.ml_analysis.feature_engineer import FeatureEngineer
+          from src.ml_analysis.model_manager import ModelManager
+          
+          print("📊 Validating ML Analysis Models")
+          print("=" * 50)
+          
+          # Test LSTM Model
+          try:
+              model = LSTMModel(
+                  input_size=10,
+                  hidden_size=64,
+                  num_layers=2,
+                  output_size=3,
+                  dropout=0.2
+              )
+              print("✅ LSTM Model initialized successfully")
+              
+              # Test forward pass
+              dummy_input = torch.randn(32, 20, 10)  # batch_size, seq_len, input_size
+              with torch.no_grad():
+                  output = model(dummy_input)
+                  assert output.shape == (32, 3)
+              print("✅ LSTM forward pass validation successful")
+              
+          except Exception as e:
+              print(f"❌ LSTM Model validation failed: {e}")
+              sys.exit(1)
+          
+          # Test Feature Engineer
+          try:
+              fe = FeatureEngineer()
+              
+              # Create dummy market data
+              dummy_data = {
+                  'timestamp': np.arange(100),
+                  'price': np.random.randn(100) * 0.1 + 100,
+                  'volume': np.random.exponential(1000, 100),
+                  'market_cap': np.random.exponential(1e9, 100)
+              }
+              
+              features = fe.engineer_features(dummy_data)
+              print(f"✅ Feature engineering successful: {len(features)} features generated")
+              
+          except Exception as e:
+              print(f"❌ Feature Engineer validation failed: {e}")
+              sys.exit(1)
+          
+          # Test Model Manager
+          try:
+              mm = ModelManager()
+              print("✅ Model Manager initialized successfully")
+              
+          except Exception as e:
+              print(f"❌ Model Manager validation failed: {e}")
+              sys.exit(1)
+          
+          print("\n📊 ML Analysis Model Validation Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Generate model structure report
+        run: |
+          echo "::group::Model Structure Report"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import torch
+          import json
+          from src.rl_agent.dqn_agent import DQNAgent
+          from src.rl_agent.trading_environment import TradingEnvironment
+          from src.ml_analysis.lstm_model import LSTMModel
+          
+          # Generate model structure report
+          report = {
+              "validation_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "models": {}
+          }
+          
+          # RL Agent structure
+          try:
+              env = TradingEnvironment()
+              agent = DQNAgent(
+                  state_size=env.observation_space.shape[0],
+                  action_size=env.action_space.n,
+                  learning_rate=0.001
+              )
+              
+              model_params = sum(p.numel() for p in agent.q_network.parameters())
+              trainable_params = sum(p.numel() for p in agent.q_network.parameters() if p.requires_grad)
+              
+              report["models"]["dqn_agent"] = {
+                  "total_parameters": model_params,
+                  "trainable_parameters": trainable_params,
+                  "state_size": env.observation_space.shape[0],
+                  "action_size": env.action_space.n,
+                  "architecture": str(agent.q_network)
+              }
+              
+          except Exception as e:
+              report["models"]["dqn_agent"] = {"error": str(e)}
+          
+          # LSTM Model structure
+          try:
+              lstm_model = LSTMModel(input_size=10, hidden_size=64, num_layers=2, output_size=3)
+              model_params = sum(p.numel() for p in lstm_model.parameters())
+              trainable_params = sum(p.numel() for p in lstm_model.parameters() if p.requires_grad)
+              
+              report["models"]["lstm_model"] = {
+                  "total_parameters": model_params,
+                  "trainable_parameters": trainable_params,
+                  "input_size": 10,
+                  "hidden_size": 64,
+                  "num_layers": 2,
+                  "output_size": 3,
+                  "architecture": str(lstm_model)
+              }
+              
+          except Exception as e:
+              report["models"]["lstm_model"] = {"error": str(e)}
+          
+          # Save report
+          with open('model-structure-report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          
+          print("✅ Model structure report generated")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload model structure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-structure-report
+          path: model-structure-report.json
+          retention-days: 30
+
+  # =============================================================================
+  # MODEL PERFORMANCE BENCHMARKS
+  # =============================================================================
+  model-performance-benchmarks:
+    name: Model Performance Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.inputs.validation_type != 'model-only' && github.event.inputs.validation_type != 'regression-only'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Run ML/RL performance benchmarks
+        run: |
+          echo "::group::ML/RL Performance Benchmarks"
+          uv run pytest tests/performance/test_ml_rl_performance.py \
+            --benchmark-only \
+            --benchmark-json=ml-rl-benchmark-results.json \
+            --benchmark-min-rounds=3 \
+            --benchmark-max-time=30 \
+            -v
+          echo "::endgroup::"
+          
+      - name: Run model training performance tests
+        run: |
+          echo "::group::Model Training Performance"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import time
+          import torch
+          import numpy as np
+          import json
+          from src.rl_agent.dqn_agent import DQNAgent
+          from src.rl_agent.trading_environment import TradingEnvironment
+          from src.rl_agent.experience_replay import ExperienceReplay
+          
+          print("⚡ Model Training Performance Tests")
+          print("=" * 50)
+          
+          results = {}
+          
+          # RL Agent training performance
+          try:
+              env = TradingEnvironment()
+              agent = DQNAgent(
+                  state_size=env.observation_space.shape[0],
+                  action_size=env.action_space.n,
+                  learning_rate=0.001
+              )
+              
+              # Test single training step performance
+              start_time = time.time()
+              
+              # Generate dummy experience
+              replay_buffer = ExperienceReplay(capacity=10000)
+              for _ in range(100):
+                  state = np.random.randn(env.observation_space.shape[0])
+                  action = np.random.randint(env.action_space.n)
+                  reward = np.random.randn()
+                  next_state = np.random.randn(env.observation_space.shape[0])
+                  done = np.random.choice([True, False])
+                  replay_buffer.push(state, action, reward, next_state, done)
+              
+              # Test training performance
+              if len(replay_buffer) >= 32:
+                  for _ in range(10):  # 10 training steps
+                      agent.learn(replay_buffer, batch_size=32)
+              
+              training_time = time.time() - start_time
+              results["rl_training"] = {
+                  "training_steps": 10,
+                  "total_time_seconds": training_time,
+                  "time_per_step": training_time / 10,
+                  "status": "success"
+              }
+              
+              print(f"✅ RL training: {training_time:.3f}s for 10 steps ({training_time/10:.3f}s per step)")
+              
+          except Exception as e:
+              results["rl_training"] = {"error": str(e), "status": "failed"}
+              print(f"❌ RL training performance test failed: {e}")
+          
+          # Inference performance test
+          try:
+              start_time = time.time()
+              
+              for _ in range(1000):  # 1000 inferences
+                  state = np.random.randn(env.observation_space.shape[0])
+                  action = agent.act(state, epsilon=0.0)  # No exploration
+              
+              inference_time = time.time() - start_time
+              results["rl_inference"] = {
+                  "inferences": 1000,
+                  "total_time_seconds": inference_time,
+                  "time_per_inference": inference_time / 1000,
+                  "inferences_per_second": 1000 / inference_time,
+                  "status": "success"
+              }
+              
+              print(f"✅ RL inference: {inference_time:.3f}s for 1000 inferences ({1000/inference_time:.1f} inferences/sec)")
+              
+          except Exception as e:
+              results["rl_inference"] = {"error": str(e), "status": "failed"}
+              print(f"❌ RL inference performance test failed: {e}")
+          
+          # Save results
+          with open('training-performance-results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          print("\n⚡ Model Training Performance Tests Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Memory usage profiling
+        run: |
+          echo "::group::Memory Usage Profiling"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import psutil
+          import torch
+          import json
+          import gc
+          from src.rl_agent.dqn_agent import DQNAgent
+          from src.rl_agent.trading_environment import TradingEnvironment
+          
+          print("💾 Memory Usage Profiling")
+          print("=" * 50)
+          
+          def get_memory_usage():
+              process = psutil.Process()
+              return process.memory_info().rss / 1024 / 1024  # MB
+          
+          results = {}
+          
+          # Baseline memory usage
+          gc.collect()
+          baseline_memory = get_memory_usage()
+          print(f"📊 Baseline memory usage: {baseline_memory:.1f} MB")
+          
+          # Memory usage with RL agent
+          try:
+              env = TradingEnvironment()
+              agent = DQNAgent(
+                  state_size=env.observation_space.shape[0],
+                  action_size=env.action_space.n,
+                  learning_rate=0.001
+              )
+              
+              agent_memory = get_memory_usage()
+              memory_increase = agent_memory - baseline_memory
+              
+              results["rl_agent_memory"] = {
+                  "baseline_mb": baseline_memory,
+                  "with_agent_mb": agent_memory,
+                  "increase_mb": memory_increase,
+                  "status": "success"
+              }
+              
+              print(f"🤖 RL Agent memory usage: {agent_memory:.1f} MB (+{memory_increase:.1f} MB)")
+              
+              # Test memory usage during training
+              peak_memory = agent_memory
+              for _ in range(10):
+                  # Simulate training step
+                  state = torch.randn(32, env.observation_space.shape[0])
+                  target = torch.randn(32, env.action_space.n)
+                  
+                  agent.optimizer.zero_grad()
+                  output = agent.q_network(state)
+                  loss = torch.nn.mse_loss(output, target)
+                  loss.backward()
+                  agent.optimizer.step()
+                  
+                  current_memory = get_memory_usage()
+                  peak_memory = max(peak_memory, current_memory)
+              
+              results["rl_training_memory"] = {
+                  "initial_mb": agent_memory,
+                  "peak_mb": peak_memory,
+                  "increase_mb": peak_memory - agent_memory,
+                  "status": "success"
+              }
+              
+              print(f"🎯 Training peak memory: {peak_memory:.1f} MB (+{peak_memory - agent_memory:.1f} MB)")
+              
+          except Exception as e:
+              results["memory_profiling"] = {"error": str(e), "status": "failed"}
+              print(f"❌ Memory profiling failed: {e}")
+          
+          # Save results
+          with open('memory-profiling-results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          print("\n💾 Memory Usage Profiling Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload performance benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-benchmark-results
+          path: |
+            ml-rl-benchmark-results.json
+            training-performance-results.json
+            memory-profiling-results.json
+          retention-days: 30
+
+  # =============================================================================
+  # REGRESSION TESTING
+  # =============================================================================
+  regression-testing:
+    name: Model Regression Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event.inputs.validation_type != 'model-only' && github.event.inputs.validation_type != 'performance-only'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Download previous benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-benchmark-results
+          path: previous-results/
+        continue-on-error: true
+        
+      - name: Run regression tests
+        run: |
+          echo "::group::Model Regression Testing"
+          uv run pytest tests/performance/test_ml_rl_performance.py \
+            --benchmark-only \
+            --benchmark-json=current-benchmark-results.json \
+            --benchmark-compare=previous-results/ml-rl-benchmark-results.json \
+            --benchmark-compare-fail=mean:20% \
+            -v || {
+              echo "::warning::Some performance regressions detected"
+            }
+          echo "::endgroup::"
+          
+      - name: Analyze regression results
+        run: |
+          echo "::group::Regression Analysis"
+          uv run python << 'EOF'
+          import json
+          import sys
+          
+          print("📈 Model Regression Analysis")
+          print("=" * 50)
+          
+          try:
+              # Load current results
+              with open('current-benchmark-results.json', 'r') as f:
+                  current_results = json.load(f)
+              
+              print("✅ Current benchmark results loaded")
+              
+              # Try to load previous results for comparison
+              try:
+                  with open('previous-results/ml-rl-benchmark-results.json', 'r') as f:
+                      previous_results = json.load(f)
+                  
+                  print("✅ Previous benchmark results loaded for comparison")
+                  
+                  # Simple regression detection
+                  regressions = []
+                  improvements = []
+                  
+                  current_benchmarks = {b['name']: b for b in current_results.get('benchmarks', [])}
+                  previous_benchmarks = {b['name']: b for b in previous_results.get('benchmarks', [])}
+                  
+                  for name, current_bench in current_benchmarks.items():
+                      if name in previous_benchmarks:
+                          previous_bench = previous_benchmarks[name]
+                          
+                          current_mean = current_bench['stats']['mean']
+                          previous_mean = previous_bench['stats']['mean']
+                          
+                          change_percent = ((current_mean - previous_mean) / previous_mean) * 100
+                          
+                          if change_percent > 20:  # 20% slower
+                              regressions.append({
+                                  'test': name,
+                                  'change_percent': change_percent,
+                                  'current_mean': current_mean,
+                                  'previous_mean': previous_mean
+                              })
+                          elif change_percent < -10:  # 10% faster
+                              improvements.append({
+                                  'test': name,
+                                  'change_percent': change_percent,
+                                  'current_mean': current_mean,
+                                  'previous_mean': previous_mean
+                              })
+                  
+                  if regressions:
+                      print(f"⚠️ Performance regressions detected: {len(regressions)}")
+                      for reg in regressions:
+                          print(f"   {reg['test']}: {reg['change_percent']:+.1f}% slower")
+                  
+                  if improvements:
+                      print(f"✅ Performance improvements found: {len(improvements)}")
+                      for imp in improvements:
+                          print(f"   {imp['test']}: {abs(imp['change_percent']):.1f}% faster")
+                  
+                  if not regressions and not improvements:
+                      print("📊 No significant performance changes detected")
+                      
+              except FileNotFoundError:
+                  print("ℹ️ No previous results available for comparison")
+                  
+          except Exception as e:
+              print(f"❌ Regression analysis failed: {e}")
+              sys.exit(1)
+          
+          print("\n📈 Model Regression Analysis Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload regression test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-test-results
+          path: current-benchmark-results.json
+          retention-days: 90  # Keep longer for historical comparison
+
+  # =============================================================================
+  # MODEL VALIDATION REPORT GENERATION
+  # =============================================================================
+  generate-validation-report:
+    name: Generate Validation Report
+    runs-on: ubuntu-latest
+    needs: [model-structure-validation, model-performance-benchmarks, regression-testing]
+    if: always() && inputs.generate_report != false
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all validation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: validation-artifacts/
+          
+      - name: Generate comprehensive validation report
+        run: |
+          echo "::group::Validation Report Generation"
+          python3 << 'EOF'
+          import json
+          import os
+          from datetime import datetime
+          
+          print("📋 Generating ML/RL Validation Report")
+          print("=" * 50)
+          
+          # Initialize report
+          report = {
+              "validation_timestamp": datetime.utcnow().isoformat() + "Z",
+              "repository": "${{ github.repository }}",
+              "commit": "${{ github.sha }}",
+              "branch": "${{ github.ref_name }}",
+              "workflow_run": "${{ github.run_id }}",
+              "validation_summary": {
+                  "model_structure": "${{ needs.model-structure-validation.result }}",
+                  "performance_benchmarks": "${{ needs.model-performance-benchmarks.result }}",
+                  "regression_testing": "${{ needs.regression-testing.result }}"
+              },
+              "details": {}
+          }
+          
+          # Process model structure results
+          try:
+              with open('validation-artifacts/model-structure-report/model-structure-report.json', 'r') as f:
+                  structure_data = json.load(f)
+              report["details"]["model_structure"] = structure_data
+              print("✅ Model structure data included")
+          except FileNotFoundError:
+              print("⚠️ Model structure report not found")
+          
+          # Process performance benchmark results
+          try:
+              with open('validation-artifacts/performance-benchmark-results/ml-rl-benchmark-results.json', 'r') as f:
+                  benchmark_data = json.load(f)
+              report["details"]["performance_benchmarks"] = benchmark_data
+              print("✅ Performance benchmark data included")
+          except FileNotFoundError:
+              print("⚠️ Performance benchmark results not found")
+          
+          # Process training performance results
+          try:
+              with open('validation-artifacts/performance-benchmark-results/training-performance-results.json', 'r') as f:
+                  training_data = json.load(f)
+              report["details"]["training_performance"] = training_data
+              print("✅ Training performance data included")
+          except FileNotFoundError:
+              print("⚠️ Training performance results not found")
+          
+          # Process memory profiling results
+          try:
+              with open('validation-artifacts/performance-benchmark-results/memory-profiling-results.json', 'r') as f:
+                  memory_data = json.load(f)
+              report["details"]["memory_profiling"] = memory_data
+              print("✅ Memory profiling data included")
+          except FileNotFoundError:
+              print("⚠️ Memory profiling results not found")
+          
+          # Process regression test results
+          try:
+              with open('validation-artifacts/regression-test-results/current-benchmark-results.json', 'r') as f:
+                  regression_data = json.load(f)
+              report["details"]["regression_testing"] = regression_data
+              print("✅ Regression testing data included")
+          except FileNotFoundError:
+              print("⚠️ Regression test results not found")
+          
+          # Generate summary statistics
+          summary_stats = {
+              "total_models_validated": 0,
+              "performance_tests_run": 0,
+              "memory_profiling_completed": False,
+              "regression_tests_run": 0
+          }
+          
+          if "model_structure" in report["details"]:
+              summary_stats["total_models_validated"] = len(report["details"]["model_structure"].get("models", {}))
+          
+          if "performance_benchmarks" in report["details"]:
+              summary_stats["performance_tests_run"] = len(report["details"]["performance_benchmarks"].get("benchmarks", []))
+          
+          if "memory_profiling" in report["details"]:
+              summary_stats["memory_profiling_completed"] = True
+          
+          if "regression_testing" in report["details"]:
+              summary_stats["regression_tests_run"] = len(report["details"]["regression_testing"].get("benchmarks", []))
+              
+          report["summary_statistics"] = summary_stats
+          
+          # Save comprehensive report
+          with open('ml-rl-validation-report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          
+          print(f"✅ Comprehensive validation report generated")
+          print(f"   Models validated: {summary_stats['total_models_validated']}")
+          print(f"   Performance tests: {summary_stats['performance_tests_run']}")
+          print(f"   Memory profiling: {summary_stats['memory_profiling_completed']}")
+          print(f"   Regression tests: {summary_stats['regression_tests_run']}")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Generate markdown report
+        run: |
+          echo "::group::Markdown Report Generation"
+          python3 << 'EOF'
+          import json
+          from datetime import datetime
+          
+          # Load the JSON report
+          with open('ml-rl-validation-report.json', 'r') as f:
+              report = json.load(f)
+          
+          # Generate markdown report
+          md_content = f"""# ML/RL Model Validation Report
+          
+          **Generated:** {report['validation_timestamp']}  
+          **Repository:** {report['repository']}  
+          **Commit:** {report['commit']}  
+          **Branch:** {report['branch']}
+          
+          ## Summary
+          
+          | Validation Stage | Status |
+          |------------------|--------|
+          | Model Structure | {report['validation_summary']['model_structure']} |
+          | Performance Benchmarks | {report['validation_summary']['performance_benchmarks']} |
+          | Regression Testing | {report['validation_summary']['regression_testing']} |
+          
+          ## Statistics
+          
+          - **Models Validated:** {report['summary_statistics']['total_models_validated']}
+          - **Performance Tests:** {report['summary_statistics']['performance_tests_run']}
+          - **Memory Profiling:** {'✅' if report['summary_statistics']['memory_profiling_completed'] else '❌'}
+          - **Regression Tests:** {report['summary_statistics']['regression_tests_run']}
+          
+          ## Model Structure Details
+          
+          """
+          
+          # Add model structure details if available
+          if "model_structure" in report["details"]:
+              models = report["details"]["model_structure"].get("models", {})
+              for model_name, model_info in models.items():
+                  if "error" not in model_info:
+                      md_content += f"""### {model_name.replace('_', ' ').title()}
+          
+          - **Parameters:** {model_info.get('total_parameters', 'N/A'):,}
+          - **Trainable Parameters:** {model_info.get('trainable_parameters', 'N/A'):,}
+          
+          """
+          
+          # Add performance summary if available
+          if "training_performance" in report["details"]:
+              training_perf = report["details"]["training_performance"]
+              md_content += f"""
+          ## Training Performance
+          
+          | Metric | Value |
+          |--------|-------|
+          """
+              if "rl_training" in training_perf and training_perf["rl_training"]["status"] == "success":
+                  rl_training = training_perf["rl_training"]
+                  md_content += f"""| RL Training (10 steps) | {rl_training['total_time_seconds']:.3f}s |
+          | Time per Training Step | {rl_training['time_per_step']:.3f}s |
+          """
+              
+              if "rl_inference" in training_perf and training_perf["rl_inference"]["status"] == "success":
+                  rl_inference = training_perf["rl_inference"]
+                  md_content += f"""| RL Inference (1000 samples) | {rl_inference['total_time_seconds']:.3f}s |
+          | Inferences per Second | {rl_inference['inferences_per_second']:.1f} |
+          """
+          
+          # Add memory usage summary if available
+          if "memory_profiling" in report["details"]:
+              memory_prof = report["details"]["memory_profiling"]
+              md_content += f"""
+          ## Memory Usage
+          
+          | Component | Memory Usage |
+          |-----------|--------------|
+          """
+              if "rl_agent_memory" in memory_prof and memory_prof["rl_agent_memory"]["status"] == "success":
+                  agent_mem = memory_prof["rl_agent_memory"]
+                  md_content += f"""| RL Agent | {agent_mem['with_agent_mb']:.1f} MB (+{agent_mem['increase_mb']:.1f} MB) |
+          """
+              
+              if "rl_training_memory" in memory_prof and memory_prof["rl_training_memory"]["status"] == "success":
+                  training_mem = memory_prof["rl_training_memory"]
+                  md_content += f"""| Training Peak | {training_mem['peak_mb']:.1f} MB (+{training_mem['increase_mb']:.1f} MB) |
+          """
+          
+          md_content += f"""
+          ## Validation Workflow
+          
+          **Workflow Run:** [View Details](https://github.com/{report['repository']}/actions/runs/{report['workflow_run']})
+          
+          ---
+          *Report generated automatically by ML/RL validation workflow*
+          """
+          
+          # Save markdown report
+          with open('ml-rl-validation-report.md', 'w') as f:
+              f.write(md_content)
+          
+          print("✅ Markdown validation report generated")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-rl-validation-reports
+          path: |
+            ml-rl-validation-report.json
+            ml-rl-validation-report.md
+          retention-days: 90
+          
+      - name: Update GitHub summary
+        run: |
+          echo "## 🤖 ML/RL Model Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Model Structure | ${{ needs.model-structure-validation.result == 'success' && '✅' || needs.model-structure-validation.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance Benchmarks | ${{ needs.model-performance-benchmarks.result == 'success' && '✅' || needs.model-performance-benchmarks.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Regression Testing | ${{ needs.regression-testing.result == 'success' && '✅' || needs.regression-testing.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Key Metrics" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ -f "ml-rl-validation-report.json" ]]; then
+            python3 << 'EOF'
+            import json
+            with open('ml-rl-validation-report.json', 'r') as f:
+                report = json.load(f)
+            stats = report['summary_statistics']
+            print(f"- **Models Validated:** {stats['total_models_validated']}")
+            print(f"- **Performance Tests:** {stats['performance_tests_run']}")  
+            print(f"- **Memory Profiling:** {'✅' if stats['memory_profiling_completed'] else '❌'}")
+            print(f"- **Regression Tests:** {stats['regression_tests_run']}")
+            EOF
+          fi >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Actions" >> $GITHUB_STEP_SUMMARY
+          echo "- Download detailed validation reports from workflow artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Review performance benchmarks for any regressions" >> $GITHUB_STEP_SUMMARY
+          echo "- Monitor model training metrics in production" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,609 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Type of security scan to run'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - dependencies-only
+          - code-only
+          - container-only
+
+env:
+  PYTHON_VERSION: '3.12'
+  REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: shvyr-ai-bots
+  REPOSITORY: shyvr-ai-prod
+  IMAGE_NAME: shyvr-rlte
+
+jobs:
+  # =============================================================================
+  # STATIC APPLICATION SECURITY TESTING (SAST)
+  # =============================================================================
+  sast-scan:
+    name: Static Code Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.inputs.scan_type != 'container-only' && github.event.inputs.scan_type != 'dependencies-only'
+    permissions:
+      security-events: write  # for uploading SARIF results
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run Bandit security scan
+        run: |
+          echo "::group::Bandit SAST Scan"
+          uv run bandit -r src/ \
+            --format sarif \
+            --output bandit-results.sarif \
+            --severity-level medium \
+            --confidence-level medium || true
+            
+          # Also generate human-readable report
+          uv run bandit -r src/ \
+            --format txt \
+            --output bandit-report.txt \
+            --severity-level medium \
+            --confidence-level medium || true
+          echo "::endgroup::"
+          
+      - name: Run Semgrep SAST scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/python
+            p/django
+            p/flask
+          generateSarif: "1"
+          
+      - name: Upload Bandit SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+          
+      - name: Upload Semgrep SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+          
+      - name: Upload security scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-reports
+          path: |
+            bandit-results.sarif
+            bandit-report.txt
+            semgrep.sarif
+          retention-days: 30
+
+  # =============================================================================
+  # DEPENDENCY VULNERABILITY SCANNING
+  # =============================================================================
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.inputs.scan_type != 'container-only' && github.event.inputs.scan_type != 'code-only'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run Safety dependency scan
+        run: |
+          echo "::group::Safety Dependency Scan"
+          uv run safety check \
+            --json \
+            --output safety-report.json || true
+            
+          # Generate human-readable report
+          uv run safety check \
+            --output safety-report.txt || true
+            
+          echo "::endgroup::"
+          
+      - name: Run pip-audit vulnerability scan
+        run: |
+          echo "::group::pip-audit Vulnerability Scan"
+          uv run pip-audit \
+            --format=sarif \
+            --output=pip-audit-results.sarif || true
+            
+          # Also generate JSON format for processing
+          uv run pip-audit \
+            --format=json \
+            --output=pip-audit-results.json || true
+          echo "::endgroup::"
+          
+      - name: Analyze dependency vulnerabilities
+        run: |
+          echo "::group::Vulnerability Analysis"
+          python3 << 'EOF'
+          import json
+          import sys
+          
+          # Parse pip-audit results if available
+          try:
+              with open('pip-audit-results.json', 'r') as f:
+                  audit_data = json.load(f)
+                  
+              vulnerabilities = audit_data.get('vulnerabilities', [])
+              critical_count = len([v for v in vulnerabilities if v.get('severity') == 'critical'])
+              high_count = len([v for v in vulnerabilities if v.get('severity') == 'high'])
+              medium_count = len([v for v in vulnerabilities if v.get('severity') == 'medium'])
+              low_count = len([v for v in vulnerabilities if v.get('severity') == 'low'])
+              
+              print(f"🔍 Dependency Vulnerability Summary:")
+              print(f"   Critical: {critical_count}")
+              print(f"   High: {high_count}")
+              print(f"   Medium: {medium_count}")
+              print(f"   Low: {low_count}")
+              
+              if critical_count > 0:
+                  print("::error::Critical vulnerabilities found in dependencies")
+                  for vuln in vulnerabilities:
+                      if vuln.get('severity') == 'critical':
+                          pkg = vuln.get('package', 'unknown')
+                          cve = vuln.get('id', 'unknown')
+                          print(f"::error::Critical vulnerability in {pkg}: {cve}")
+                          
+              if high_count > 0:
+                  print("::warning::High severity vulnerabilities found in dependencies")
+                  
+          except FileNotFoundError:
+              print("pip-audit results not found, skipping analysis")
+          except Exception as e:
+              print(f"Error analyzing vulnerabilities: {e}")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload pip-audit SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: pip-audit-results.sarif
+          category: dependencies
+          
+      - name: Upload dependency scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-reports
+          path: |
+            safety-report.json
+            safety-report.txt
+            pip-audit-results.sarif
+            pip-audit-results.json
+          retention-days: 30
+
+  # =============================================================================
+  # CONTAINER SECURITY SCANNING
+  # =============================================================================
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.inputs.scan_type != 'code-only' && github.event.inputs.scan_type != 'dependencies-only'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Build Docker image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:security-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker
+          
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:security-scan
+          format: 'sarif'
+          output: 'trivy-container-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          
+      - name: Run Grype container scan
+        uses: anchore/scan-action@v3
+        with:
+          image: ${{ env.IMAGE_NAME }}:security-scan
+          fail-build: false
+          output-format: sarif
+          
+      - name: Generate container security summary
+        run: |
+          echo "::group::Container Security Summary"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}:/workspace \
+            aquasec/trivy image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            ${{ env.IMAGE_NAME }}:security-scan || true
+          echo "::endgroup::"
+          
+      - name: Upload Trivy container SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-container-results.sarif
+          category: trivy-container
+          
+      - name: Upload Trivy filesystem SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-filesystem
+          
+      - name: Upload Grype SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: grype
+          
+      - name: Upload container scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-scan-reports
+          path: |
+            trivy-container-results.sarif
+            trivy-fs-results.sarif
+            results.sarif
+          retention-days: 30
+
+  # =============================================================================
+  # SECRETS DETECTION
+  # =============================================================================
+  secrets-scan:
+    name: Secrets Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.inputs.scan_type != 'container-only'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comprehensive scan
+          
+      - name: Run TruffleHog secrets scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+          
+      - name: Run GitLeaks secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }} # Only required for scanning non-public repos
+          
+      - name: Upload secrets scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secrets-scan-reports
+          path: |
+            results.json
+            results.sarif
+          retention-days: 30
+
+  # =============================================================================
+  # INFRASTRUCTURE AS CODE SECURITY
+  # =============================================================================
+  iac-scan:
+    name: Infrastructure Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.inputs.scan_type != 'dependencies-only' && github.event.inputs.scan_type != 'code-only'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Checkov IaC scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,github_actions,yaml
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          quiet: true
+          
+      - name: Run Trivy config scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-config-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          
+      - name: Upload Checkov SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+          
+      - name: Upload Trivy config SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-config-results.sarif
+          category: trivy-config
+          
+      - name: Upload IaC scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iac-scan-reports
+          path: |
+            checkov-results.sarif
+            trivy-config-results.sarif
+          retention-days: 30
+
+  # =============================================================================
+  # LICENSE COMPLIANCE SCANNING
+  # =============================================================================
+  license-scan:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.inputs.scan_type != 'container-only' && github.event.inputs.scan_type != 'code-only'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run pip-licenses scan
+        run: |
+          echo "::group::License Compliance Scan"
+          uv run pip-licenses \
+            --format json \
+            --output-file licenses-report.json || true
+            
+          uv run pip-licenses \
+            --format csv \
+            --output-file licenses-report.csv || true
+            
+          # Check for potentially problematic licenses
+          uv run pip-licenses \
+            --format plain \
+            --allow-only "MIT;BSD;Apache;ISC;MPL-2.0;Python Software Foundation License" \
+            --fail-on-forbidden || {
+              echo "::warning::Potentially problematic licenses found"
+            }
+          echo "::endgroup::"
+          
+      - name: Upload license scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-scan-reports
+          path: |
+            licenses-report.json
+            licenses-report.csv
+          retention-days: 30
+
+  # =============================================================================
+  # SECURITY SUMMARY AND REPORTING
+  # =============================================================================
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [sast-scan, dependency-scan, container-scan, secrets-scan, iac-scan, license-scan]
+    if: always()
+    permissions:
+      security-events: read
+      contents: read
+    steps:
+      - name: Download all security reports
+        uses: actions/download-artifact@v4
+        with:
+          path: security-reports
+          
+      - name: Generate security summary
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Type | Status | Critical | High | Medium |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Function to get status emoji
+          get_status() {
+            case "$1" in
+              "success") echo "✅" ;;
+              "failure") echo "❌" ;;
+              "skipped") echo "⏭️" ;;
+              *) echo "⚪" ;;
+            esac
+          }
+          
+          echo "| SAST | $(get_status '${{ needs.sast-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | $(get_status '${{ needs.dependency-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | $(get_status '${{ needs.container-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets | $(get_status '${{ needs.secrets-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| IaC | $(get_status '${{ needs.iac-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Licenses | $(get_status '${{ needs.license-scan.result }}') | - | - | - |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review security findings in the GitHub Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "2. Download detailed reports from workflow artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "3. Address critical and high severity issues" >> $GITHUB_STEP_SUMMARY
+          echo "4. Update security documentation as needed" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Check for critical vulnerabilities
+        run: |
+          # This step would normally parse SARIF files to count vulnerabilities
+          # For now, we'll rely on the individual scan steps to report issues
+          
+          echo "::notice::Security scan completed. Review results in the GitHub Security tab."
+          
+          # If this is a scheduled run, we might want to create an issue for critical findings
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "::notice::This was a scheduled security scan. Consider setting up automated issue creation for critical findings."
+          fi
+
+  # =============================================================================
+  # SECURITY POLICY COMPLIANCE
+  # =============================================================================
+  compliance-check:
+    name: Security Policy Compliance
+    runs-on: ubuntu-latest
+    needs: [sast-scan, dependency-scan, container-scan]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check security policy compliance
+        run: |
+          echo "::group::Security Policy Compliance Check"
+          
+          # Check if SECURITY.md exists
+          if [[ -f "SECURITY.md" ]]; then
+            echo "✅ Security policy document found"
+          else
+            echo "::warning::SECURITY.md not found. Consider adding a security policy."
+          fi
+          
+          # Check if vulnerability disclosure process is documented
+          if grep -q -i "vulnerability\|security\|disclosure" README.md 2>/dev/null; then
+            echo "✅ Vulnerability disclosure information found in README"
+          else
+            echo "::warning::Consider adding vulnerability disclosure information to README.md"
+          fi
+          
+          # Check for security-related CI/CD configurations
+          if [[ -f ".github/workflows/security.yml" ]]; then
+            echo "✅ Security workflow configured"
+          fi
+          
+          if [[ -f ".github/dependabot.yml" ]]; then
+            echo "✅ Dependabot configuration found"
+          else
+            echo "::warning::Consider enabling Dependabot for automated dependency updates"
+          fi
+          
+          echo "::endgroup::"
+          
+      - name: Generate compliance report
+        run: |
+          cat > compliance-report.md << 'EOF'
+          # Security Compliance Report
+          
+          Generated: $(date -u)
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          
+          ## Compliance Status
+          
+          - [x] Security scanning workflow configured
+          - [x] Multiple security tools integrated
+          - [x] SARIF results uploaded to GitHub Security
+          - [x] Automated vulnerability detection
+          
+          ## Recommendations
+          
+          1. Regular security policy reviews
+          2. Security training for development team  
+          3. Incident response plan documentation
+          4. Regular security audit scheduling
+          
+          EOF
+          
+      - name: Upload compliance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-report
+          path: compliance-report.md
+          retention-days: 90

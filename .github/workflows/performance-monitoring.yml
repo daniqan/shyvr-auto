@@ -1,0 +1,1081 @@
+name: Performance Monitoring & Regression Detection
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, ready_for_review]
+  schedule:
+    # Run performance monitoring daily at 4 AM UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      monitoring_type:
+        description: 'Type of performance monitoring'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - regression-only
+          - memory-only
+          - api-only
+      baseline_branch:
+        description: 'Baseline branch for comparison'
+        required: false
+        default: 'main'
+        type: string
+      create_report:
+        description: 'Create detailed performance report'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # =============================================================================
+  # PERFORMANCE BASELINE ESTABLISHMENT
+  # =============================================================================
+  establish-baseline:
+    name: Establish Performance Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.inputs.monitoring_type != 'regression-only'
+    outputs:
+      baseline-available: ${{ steps.baseline.outputs.available }}
+      baseline-commit: ${{ steps.baseline.outputs.commit }}
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout current code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Run comprehensive performance baseline
+        run: |
+          echo "::group::Performance Baseline Tests"
+          uv run pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=baseline-performance.json \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=60 \
+            --benchmark-sort=name \
+            -v
+          echo "::endgroup::"
+          
+      - name: Run memory profiling baseline
+        if: github.event.inputs.monitoring_type != 'api-only'
+        run: |
+          echo "::group::Memory Profiling Baseline"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import psutil
+          import json
+          import time
+          import gc
+          from src.rl_agent.dqn_agent import DQNAgent
+          from src.rl_agent.trading_environment import TradingEnvironment
+          from src.dashboard.api import app
+          from src.monitoring.trading_metrics import TradingMetrics
+          
+          print("💾 Memory Profiling Baseline")
+          print("=" * 50)
+          
+          def get_memory_usage():
+              process = psutil.Process()
+              return {
+                  'rss_mb': process.memory_info().rss / 1024 / 1024,
+                  'vms_mb': process.memory_info().vms / 1024 / 1024,
+                  'percent': process.memory_percent()
+              }
+          
+          results = {
+              'timestamp': time.time(),
+              'commit': '${{ github.sha }}',
+              'memory_profiles': {}
+          }
+          
+          # Baseline memory
+          gc.collect()
+          baseline = get_memory_usage()
+          results['memory_profiles']['baseline'] = baseline
+          print(f"📊 Baseline: {baseline['rss_mb']:.1f} MB RSS")
+          
+          # RL Agent memory profile
+          try:
+              env = TradingEnvironment()
+              agent = DQNAgent(
+                  state_size=env.observation_space.shape[0],
+                  action_size=env.action_space.n,
+                  learning_rate=0.001
+              )
+              
+              rl_memory = get_memory_usage()
+              results['memory_profiles']['rl_agent'] = rl_memory
+              print(f"🤖 RL Agent: {rl_memory['rss_mb']:.1f} MB RSS (+{rl_memory['rss_mb'] - baseline['rss_mb']:.1f} MB)")
+              
+          except Exception as e:
+              results['memory_profiles']['rl_agent'] = {'error': str(e)}
+              print(f"❌ RL Agent profiling failed: {e}")
+          
+          # API app memory profile  
+          try:
+              # This just loads the app, doesn't run it
+              api_memory = get_memory_usage()
+              results['memory_profiles']['api_app'] = api_memory
+              print(f"🌐 API App: {api_memory['rss_mb']:.1f} MB RSS (+{api_memory['rss_mb'] - baseline['rss_mb']:.1f} MB)")
+              
+          except Exception as e:
+              results['memory_profiles']['api_app'] = {'error': str(e)}
+              print(f"❌ API App profiling failed: {e}")
+          
+          # Trading metrics memory profile
+          try:
+              metrics = TradingMetrics()
+              metrics_memory = get_memory_usage()
+              results['memory_profiles']['trading_metrics'] = metrics_memory
+              print(f"📊 Trading Metrics: {metrics_memory['rss_mb']:.1f} MB RSS (+{metrics_memory['rss_mb'] - baseline['rss_mb']:.1f} MB)")
+              
+          except Exception as e:
+              results['memory_profiles']['trading_metrics'] = {'error': str(e)}
+              print(f"❌ Trading Metrics profiling failed: {e}")
+          
+          # Save results
+          with open('memory-baseline.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          print("\n💾 Memory Profiling Baseline Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Run API performance baseline
+        if: github.event.inputs.monitoring_type != 'memory-only'
+        run: |
+          echo "::group::API Performance Baseline"
+          uv run python << 'EOF'
+          import sys
+          sys.path.insert(0, 'src')
+          
+          import time
+          import json
+          import asyncio
+          import aiohttp
+          from src.dashboard.api import app
+          from src.dashboard.service import DashboardService
+          
+          print("🌐 API Performance Baseline")
+          print("=" * 50)
+          
+          results = {
+              'timestamp': time.time(),
+              'commit': '${{ github.sha }}',
+              'api_benchmarks': {}
+          }
+          
+          # Test service initialization performance
+          try:
+              start_time = time.time()
+              service = DashboardService()
+              init_time = time.time() - start_time
+              
+              results['api_benchmarks']['service_init'] = {
+                  'duration_seconds': init_time,
+                  'status': 'success'
+              }
+              print(f"⚡ Service Init: {init_time:.3f}s")
+              
+          except Exception as e:
+              results['api_benchmarks']['service_init'] = {
+                  'error': str(e),
+                  'status': 'failed'
+              }
+              print(f"❌ Service init failed: {e}")
+          
+          # Test data processing performance (mock data)
+          try:
+              start_time = time.time()
+              
+              # Simulate processing trading data
+              mock_data = [
+                  {'timestamp': i, 'price': 100 + i * 0.1, 'volume': 1000 + i}
+                  for i in range(1000)
+              ]
+              
+              # Process data (simple aggregation)
+              processed = {
+                  'count': len(mock_data),
+                  'avg_price': sum(d['price'] for d in mock_data) / len(mock_data),
+                  'total_volume': sum(d['volume'] for d in mock_data)
+              }
+              
+              processing_time = time.time() - start_time
+              
+              results['api_benchmarks']['data_processing'] = {
+                  'duration_seconds': processing_time,
+                  'records_processed': len(mock_data),
+                  'records_per_second': len(mock_data) / processing_time,
+                  'status': 'success'
+              }
+              print(f"📊 Data Processing: {processing_time:.3f}s ({len(mock_data)/processing_time:.0f} records/sec)")
+              
+          except Exception as e:
+              results['api_benchmarks']['data_processing'] = {
+                  'error': str(e),
+                  'status': 'failed'
+              }
+              print(f"❌ Data processing failed: {e}")
+          
+          # Save results
+          with open('api-baseline.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          print("\n🌐 API Performance Baseline Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Set baseline availability
+        id: baseline
+        run: |
+          if [[ -f "baseline-performance.json" ]]; then
+            echo "available=true" >> $GITHUB_OUTPUT
+            echo "commit=${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "commit=" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Upload baseline results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline-${{ github.sha }}
+          path: |
+            baseline-performance.json
+            memory-baseline.json
+            api-baseline.json
+          retention-days: 90
+
+  # =============================================================================
+  # REGRESSION DETECTION
+  # =============================================================================
+  detect-regressions:
+    name: Detect Performance Regressions
+    runs-on: ubuntu-latest
+    needs: establish-baseline
+    if: github.event_name == 'pull_request' || github.event.inputs.monitoring_type == 'regression-only' || github.event.inputs.monitoring_type == 'full'
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Download baseline from current branch
+        if: needs.establish-baseline.outputs.baseline-available == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-baseline-${{ needs.establish-baseline.outputs.baseline-commit }}
+          path: current-baseline/
+        continue-on-error: true
+        
+      - name: Download historical baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: performance-baseline-main
+          path: historical-baseline/
+        continue-on-error: true
+        
+      - name: Run current performance tests
+        run: |
+          echo "::group::Current Performance Tests"
+          uv run pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=current-performance.json \
+            --benchmark-min-rounds=3 \
+            --benchmark-max-time=45 \
+            --benchmark-sort=name \
+            -v
+          echo "::endgroup::"
+          
+      - name: Analyze performance regressions
+        run: |
+          echo "::group::Performance Regression Analysis"
+          uv run python << 'EOF'
+          import json
+          import sys
+          import os
+          from datetime import datetime
+          
+          print("📈 Performance Regression Analysis")
+          print("=" * 50)
+          
+          # Load current results
+          try:
+              with open('current-performance.json', 'r') as f:
+                  current_results = json.load(f)
+              print("✅ Current performance results loaded")
+          except FileNotFoundError:
+              print("❌ Current performance results not found")
+              sys.exit(1)
+          
+          # Try to load baseline for comparison
+          baseline_results = None
+          baseline_source = "none"
+          
+          # First try current baseline
+          if os.path.exists('current-baseline/baseline-performance.json'):
+              try:
+                  with open('current-baseline/baseline-performance.json', 'r') as f:
+                      baseline_results = json.load(f)
+                  baseline_source = "current"
+                  print("✅ Current baseline loaded for comparison")
+              except Exception:
+                  pass
+          
+          # Fallback to historical baseline
+          if baseline_results is None and os.path.exists('historical-baseline/baseline-performance.json'):
+              try:
+                  with open('historical-baseline/baseline-performance.json', 'r') as f:
+                      baseline_results = json.load(f)
+                  baseline_source = "historical"
+                  print("✅ Historical baseline loaded for comparison")
+              except Exception:
+                  pass
+          
+          if baseline_results is None:
+              print("⚠️ No baseline available for regression analysis")
+              regression_analysis = {
+                  'status': 'no_baseline',
+                  'message': 'No baseline results available for comparison',
+                  'current_benchmarks': len(current_results.get('benchmarks', [])),
+                  'baseline_source': baseline_source
+              }
+          else:
+              # Perform regression analysis
+              current_benchmarks = {b['name']: b for b in current_results.get('benchmarks', [])}
+              baseline_benchmarks = {b['name']: b for b in baseline_results.get('benchmarks', [])}
+              
+              regressions = []
+              improvements = []
+              unchanged = []
+              
+              regression_threshold = 25.0  # 25% slower is considered a regression
+              improvement_threshold = 15.0  # 15% faster is considered an improvement
+              
+              for name, current_bench in current_benchmarks.items():
+                  if name in baseline_benchmarks:
+                      baseline_bench = baseline_benchmarks[name]
+                      
+                      current_mean = current_bench['stats']['mean']
+                      baseline_mean = baseline_bench['stats']['mean']
+                      
+                      change_percent = ((current_mean - baseline_mean) / baseline_mean) * 100
+                      
+                      benchmark_comparison = {
+                          'test': name,
+                          'change_percent': change_percent,
+                          'current_mean': current_mean,
+                          'baseline_mean': baseline_mean,
+                          'current_stddev': current_bench['stats'].get('stddev', 0),
+                          'baseline_stddev': baseline_bench['stats'].get('stddev', 0)
+                      }
+                      
+                      if change_percent > regression_threshold:
+                          regressions.append(benchmark_comparison)
+                      elif change_percent < -improvement_threshold:
+                          improvements.append(benchmark_comparison)
+                      else:
+                          unchanged.append(benchmark_comparison)
+              
+              # Generate regression analysis
+              regression_analysis = {
+                  'status': 'completed',
+                  'baseline_source': baseline_source,
+                  'total_tests': len(current_benchmarks),
+                  'compared_tests': len(regressions) + len(improvements) + len(unchanged),
+                  'regressions': regressions,
+                  'improvements': improvements,
+                  'unchanged': unchanged,
+                  'regression_threshold_percent': regression_threshold,
+                  'improvement_threshold_percent': improvement_threshold
+              }
+              
+              # Print summary
+              print(f"📊 Regression Analysis Summary:")
+              print(f"   Baseline Source: {baseline_source}")
+              print(f"   Total Tests: {regression_analysis['total_tests']}")
+              print(f"   Compared Tests: {regression_analysis['compared_tests']}")
+              print(f"   Regressions: {len(regressions)}")
+              print(f"   Improvements: {len(improvements)}")
+              print(f"   Unchanged: {len(unchanged)}")
+              
+              if regressions:
+                  print(f"\n⚠️ Performance Regressions Detected:")
+                  for reg in regressions[:5]:  # Show top 5
+                      print(f"   {reg['test']}: {reg['change_percent']:+.1f}% slower")
+              
+              if improvements:
+                  print(f"\n✅ Performance Improvements:")
+                  for imp in improvements[:5]:  # Show top 5
+                      print(f"   {imp['test']}: {abs(imp['change_percent']):.1f}% faster")
+          
+          # Save regression analysis
+          with open('regression-analysis.json', 'w') as f:
+              json.dump(regression_analysis, f, indent=2)
+          
+          # Exit with error if critical regressions found
+          if regression_analysis['status'] == 'completed' and len(regression_analysis['regressions']) > 3:
+              print(f"\n❌ Critical: {len(regression_analysis['regressions'])} performance regressions detected")
+              print("   Consider investigating before merging")
+              # Don't fail the workflow, just warn
+              
+          print("\n📈 Performance Regression Analysis Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Create regression comment for PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              const regressionData = JSON.parse(fs.readFileSync('regression-analysis.json', 'utf8'));
+              
+              let comment = `## 📈 Performance Regression Analysis\n\n`;
+              
+              if (regressionData.status === 'no_baseline') {
+                comment += `⚠️ **No baseline available for comparison**\n\n`;
+                comment += `Current benchmarks: ${regressionData.current_benchmarks}\n\n`;
+                comment += `A baseline will be established when this PR is merged to main.\n`;
+              } else {
+                comment += `**Baseline Source:** ${regressionData.baseline_source}\n`;
+                comment += `**Tests Compared:** ${regressionData.compared_tests}/${regressionData.total_tests}\n\n`;
+                
+                if (regressionData.regressions.length > 0) {
+                  comment += `### ⚠️ Performance Regressions (${regressionData.regressions.length})\n\n`;
+                  comment += `| Test | Change | Current | Baseline |\n`;
+                  comment += `|------|--------|---------|----------|\n`;
+                  
+                  for (const reg of regressionData.regressions.slice(0, 10)) {
+                    comment += `| ${reg.test} | ${reg.change_percent.toFixed(1)}% slower | ${reg.current_mean.toFixed(4)}s | ${reg.baseline_mean.toFixed(4)}s |\n`;
+                  }
+                  
+                  if (regressionData.regressions.length > 10) {
+                    comment += `\n*... and ${regressionData.regressions.length - 10} more regressions*\n`;
+                  }
+                  comment += `\n`;
+                }
+                
+                if (regressionData.improvements.length > 0) {
+                  comment += `### ✅ Performance Improvements (${regressionData.improvements.length})\n\n`;
+                  comment += `| Test | Change | Current | Baseline |\n`;
+                  comment += `|------|--------|---------|----------|\n`;
+                  
+                  for (const imp of regressionData.improvements.slice(0, 5)) {
+                    comment += `| ${imp.test} | ${Math.abs(imp.change_percent).toFixed(1)}% faster | ${imp.current_mean.toFixed(4)}s | ${imp.baseline_mean.toFixed(4)}s |\n`;
+                  }
+                  comment += `\n`;
+                }
+                
+                if (regressionData.regressions.length === 0 && regressionData.improvements.length === 0) {
+                  comment += `✅ **No significant performance changes detected**\n\n`;
+                }
+              }
+              
+              comment += `\n*Regression threshold: >${regressionData.regression_threshold_percent || 25}% slower*`;
+              comment += `\n*Improvement threshold: >${regressionData.improvement_threshold_percent || 15}% faster*`;
+              
+              // Find and update existing comment or create new one
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              
+              const existingComment = comments.data.find(
+                comment => comment.body.includes('Performance Regression Analysis')
+              );
+              
+              if (existingComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                  body: comment
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: comment
+                });
+              }
+            } catch (error) {
+              console.log('Could not create regression comment:', error);
+            }
+            
+      - name: Upload regression analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-analysis-${{ github.sha }}
+          path: |
+            current-performance.json
+            regression-analysis.json
+          retention-days: 30
+
+  # =============================================================================
+  # CONTINUOUS PERFORMANCE MONITORING
+  # =============================================================================
+  continuous-monitoring:
+    name: Continuous Performance Monitoring
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.monitoring_type == 'full'
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=INFO" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Run comprehensive performance monitoring
+        run: |
+          echo "::group::Comprehensive Performance Monitoring"
+          uv run pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=monitoring-performance.json \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=90 \
+            --benchmark-sort=name \
+            --benchmark-histogram \
+            -v
+          echo "::endgroup::"
+          
+      - name: Generate performance trend analysis
+        run: |
+          echo "::group::Performance Trend Analysis"
+          uv run python << 'EOF'
+          import json
+          import time
+          from datetime import datetime, timedelta
+          
+          print("📊 Performance Trend Analysis")
+          print("=" * 50)
+          
+          # Load current monitoring results
+          try:
+              with open('monitoring-performance.json', 'r') as f:
+                  current_results = json.load(f)
+              print("✅ Current monitoring results loaded")
+          except FileNotFoundError:
+              print("❌ Current monitoring results not found")
+              exit(1)
+          
+          # Generate trend analysis
+          trend_analysis = {
+              'timestamp': datetime.utcnow().isoformat() + 'Z',
+              'commit': '${{ github.sha }}',
+              'branch': '${{ github.ref_name }}',
+              'total_benchmarks': len(current_results.get('benchmarks', [])),
+              'performance_summary': {},
+              'key_metrics': {},
+              'alerts': []
+          }
+          
+          # Analyze key performance metrics
+          benchmarks = current_results.get('benchmarks', [])
+          
+          if benchmarks:
+              # Calculate summary statistics
+              all_means = [b['stats']['mean'] for b in benchmarks if 'stats' in b and 'mean' in b['stats']]
+              
+              if all_means:
+                  trend_analysis['performance_summary'] = {
+                      'total_tests': len(benchmarks),
+                      'avg_duration': sum(all_means) / len(all_means),
+                      'min_duration': min(all_means),
+                      'max_duration': max(all_means),
+                      'total_duration': sum(all_means)
+                  }
+                  
+                  print(f"📈 Performance Summary:")
+                  print(f"   Total tests: {len(benchmarks)}")
+                  print(f"   Average duration: {sum(all_means) / len(all_means):.4f}s")
+                  print(f"   Total duration: {sum(all_means):.2f}s")
+              
+              # Identify key metrics and potential issues
+              slow_tests = [b for b in benchmarks if b['stats']['mean'] > 1.0]  # > 1 second
+              fast_tests = [b for b in benchmarks if b['stats']['mean'] < 0.01]  # < 10ms
+              variable_tests = [b for b in benchmarks if b['stats'].get('stddev', 0) / b['stats']['mean'] > 0.2 if b['stats']['mean'] > 0]  # CV > 20%
+              
+              trend_analysis['key_metrics'] = {
+                  'slow_tests': len(slow_tests),
+                  'fast_tests': len(fast_tests),
+                  'variable_tests': len(variable_tests)
+              }
+              
+              # Generate alerts for concerning performance
+              if slow_tests:
+                  trend_analysis['alerts'].append({
+                      'type': 'slow_performance',
+                      'severity': 'warning',
+                      'message': f'{len(slow_tests)} tests taking longer than 1 second',
+                      'tests': [t['name'] for t in slow_tests[:5]]
+                  })
+              
+              if variable_tests:
+                  trend_analysis['alerts'].append({
+                      'type': 'high_variability',
+                      'severity': 'info',
+                      'message': f'{len(variable_tests)} tests showing high variability',
+                      'tests': [t['name'] for t in variable_tests[:3]]
+                  })
+              
+              print(f"⚠️ Alerts generated: {len(trend_analysis['alerts'])}")
+              for alert in trend_analysis['alerts']:
+                  print(f"   {alert['severity'].upper()}: {alert['message']}")
+          
+          # Save trend analysis
+          with open('performance-trend-analysis.json', 'w') as f:
+              json.dump(trend_analysis, f, indent=2)
+          
+          print("\n📊 Performance Trend Analysis Complete")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload monitoring results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-monitoring-${{ github.run_number }}
+          path: |
+            monitoring-performance.json
+            performance-trend-analysis.json
+          retention-days: 180  # Keep monitoring data longer
+          
+      - name: Save baseline for main branch
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline-main
+          path: monitoring-performance.json
+          retention-days: 180
+
+  # =============================================================================
+  # PERFORMANCE REPORT GENERATION
+  # =============================================================================
+  generate-performance-report:
+    name: Generate Performance Report
+    runs-on: ubuntu-latest
+    needs: [establish-baseline, detect-regressions, continuous-monitoring]
+    if: always() && inputs.create_report != false
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all performance artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: performance-artifacts/
+          
+      - name: Generate comprehensive performance report
+        run: |
+          echo "::group::Performance Report Generation"
+          python3 << 'EOF'
+          import json
+          import os
+          from datetime import datetime
+          from glob import glob
+          
+          print("📋 Generating Performance Report")
+          print("=" * 50)
+          
+          # Initialize report
+          report = {
+              'report_timestamp': datetime.utcnow().isoformat() + 'Z',
+              'repository': '${{ github.repository }}',
+              'commit': '${{ github.sha }}',
+              'branch': '${{ github.ref_name }}',
+              'workflow_run': '${{ github.run_id }}',
+              'trigger': '${{ github.event_name }}',
+              'job_results': {
+                  'establish_baseline': '${{ needs.establish-baseline.result }}',
+                  'detect_regressions': '${{ needs.detect-regressions.result }}',
+                  'continuous_monitoring': '${{ needs.continuous-monitoring.result }}'
+              },
+              'performance_data': {}
+          }
+          
+          # Find and process performance artifacts
+          artifact_dirs = [d for d in os.listdir('performance-artifacts') if os.path.isdir(f'performance-artifacts/{d}')]
+          
+          print(f"📁 Found {len(artifact_dirs)} artifact directories")
+          
+          for artifact_dir in artifact_dirs:
+              artifact_path = f'performance-artifacts/{artifact_dir}'
+              
+              # Process different types of performance data
+              for json_file in glob(f'{artifact_path}/*.json'):
+                  filename = os.path.basename(json_file)
+                  artifact_name = f"{artifact_dir}_{filename.replace('.json', '')}"
+                  
+                  try:
+                      with open(json_file, 'r') as f:
+                          data = json.load(f)
+                      report['performance_data'][artifact_name] = data
+                      print(f"✅ Loaded {filename} from {artifact_dir}")
+                  except Exception as e:
+                      print(f"❌ Failed to load {filename}: {e}")
+          
+          # Generate summary statistics
+          summary_stats = {
+              'total_artifacts': len(report['performance_data']),
+              'baseline_established': any('baseline' in key for key in report['performance_data'].keys()),
+              'regressions_analyzed': any('regression' in key for key in report['performance_data'].keys()),
+              'monitoring_completed': any('monitoring' in key for key in report['performance_data'].keys())
+          }
+          
+          # Extract key metrics if available
+          key_metrics = {}
+          
+          # Look for benchmark results
+          for key, data in report['performance_data'].items():
+              if 'benchmarks' in data and isinstance(data['benchmarks'], list):
+                  benchmarks = data['benchmarks']
+                  if benchmarks:
+                      all_means = [b['stats']['mean'] for b in benchmarks if 'stats' in b and 'mean' in b['stats']]
+                      if all_means:
+                          key_metrics[f'{key}_summary'] = {
+                              'total_tests': len(benchmarks),
+                              'average_duration': sum(all_means) / len(all_means),
+                              'total_duration': sum(all_means),
+                              'fastest_test': min(all_means),
+                              'slowest_test': max(all_means)
+                          }
+          
+          report['summary_statistics'] = summary_stats
+          report['key_metrics'] = key_metrics
+          
+          # Save comprehensive report
+          with open('performance-report.json', 'w') as f:
+              json.dump(report, f, indent=2)
+          
+          print(f"✅ Performance report generated")
+          print(f"   Total artifacts: {summary_stats['total_artifacts']}")
+          print(f"   Baseline established: {summary_stats['baseline_established']}")
+          print(f"   Regressions analyzed: {summary_stats['regressions_analyzed']}")
+          print(f"   Monitoring completed: {summary_stats['monitoring_completed']}")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Generate markdown performance report
+        run: |
+          echo "::group::Markdown Report Generation"
+          python3 << 'EOF'
+          import json
+          from datetime import datetime
+          
+          # Load the JSON report
+          with open('performance-report.json', 'r') as f:
+              report = json.load(f)
+          
+          # Generate markdown report
+          md_content = f"""# Performance Monitoring Report
+          
+          **Generated:** {report['report_timestamp']}  
+          **Repository:** {report['repository']}  
+          **Commit:** {report['commit']}  
+          **Branch:** {report['branch']}  
+          **Trigger:** {report['trigger']}
+          
+          ## Job Results
+          
+          | Job | Status |
+          |-----|--------|
+          | Establish Baseline | {report['job_results']['establish_baseline']} |
+          | Detect Regressions | {report['job_results']['detect_regressions']} |
+          | Continuous Monitoring | {report['job_results']['continuous_monitoring']} |
+          
+          ## Summary
+          
+          - **Total Artifacts:** {report['summary_statistics']['total_artifacts']}
+          - **Baseline Established:** {'✅' if report['summary_statistics']['baseline_established'] else '❌'}
+          - **Regressions Analyzed:** {'✅' if report['summary_statistics']['regressions_analyzed'] else '❌'}
+          - **Monitoring Completed:** {'✅' if report['summary_statistics']['monitoring_completed'] else '❌'}
+          
+          """
+          
+          # Add key metrics if available
+          if report['key_metrics']:
+              md_content += "## Key Performance Metrics\n\n"
+              
+              for metric_name, metrics in report['key_metrics'].items():
+                  if 'summary' in metric_name:
+                      md_content += f"### {metric_name.replace('_summary', '').replace('_', ' ').title()}\n\n"
+                      md_content += f"- **Total Tests:** {metrics['total_tests']}\n"
+                      md_content += f"- **Average Duration:** {metrics['average_duration']:.4f}s\n"
+                      md_content += f"- **Total Duration:** {metrics['total_duration']:.2f}s\n"
+                      md_content += f"- **Fastest Test:** {metrics['fastest_test']:.4f}s\n"
+                      md_content += f"- **Slowest Test:** {metrics['slowest_test']:.4f}s\n\n"
+          
+          # Add regression information if available
+          regression_info = None
+          for key, data in report['performance_data'].items():
+              if 'regression' in key and 'regressions' in data:
+                  regression_info = data
+                  break
+          
+          if regression_info:
+              md_content += "## Regression Analysis\n\n"
+              md_content += f"**Status:** {regression_info['status']}\n\n"
+              
+              if regression_info['status'] == 'completed':
+                  md_content += f"- **Tests Compared:** {regression_info['compared_tests']}/{regression_info['total_tests']}\n"
+                  md_content += f"- **Regressions Found:** {len(regression_info['regressions'])}\n"
+                  md_content += f"- **Improvements Found:** {len(regression_info['improvements'])}\n"
+                  md_content += f"- **Unchanged:** {len(regression_info['unchanged'])}\n\n"
+                  
+                  if regression_info['regressions']:
+                      md_content += "### Performance Regressions\n\n"
+                      md_content += "| Test | Change | Current (s) | Baseline (s) |\n"
+                      md_content += "|------|--------|-------------|---------------|\n"
+                      
+                      for reg in regression_info['regressions'][:10]:
+                          md_content += f"| {reg['test']} | +{reg['change_percent']:.1f}% | {reg['current_mean']:.4f} | {reg['baseline_mean']:.4f} |\n"
+                      
+                      if len(regression_info['regressions']) > 10:
+                          md_content += f"\n*... and {len(regression_info['regressions']) - 10} more regressions*\n"
+                      md_content += "\n"
+                  
+                  if regression_info['improvements']:
+                      md_content += "### Performance Improvements\n\n"
+                      md_content += "| Test | Change | Current (s) | Baseline (s) |\n"
+                      md_content += "|------|--------|-------------|---------------|\n"
+                      
+                      for imp in regression_info['improvements'][:5]:
+                          md_content += f"| {imp['test']} | {imp['change_percent']:.1f}% | {imp['current_mean']:.4f} | {imp['baseline_mean']:.4f} |\n"
+                      md_content += "\n"
+          
+          md_content += f"""
+          ## Workflow Details
+          
+          **Workflow Run:** [View Details](https://github.com/{report['repository']}/actions/runs/{report['workflow_run']})
+          
+          ---
+          *Report generated automatically by performance monitoring workflow*
+          """
+          
+          # Save markdown report
+          with open('performance-report.md', 'w') as f:
+              f.write(md_content)
+          
+          print("✅ Markdown performance report generated")
+          EOF
+          echo "::endgroup::"
+          
+      - name: Upload performance reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-reports-${{ github.run_number }}
+          path: |
+            performance-report.json
+            performance-report.md
+          retention-days: 180
+          
+      - name: Update GitHub summary
+        run: |
+          echo "## ⚡ Performance Monitoring Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Establish Baseline | ${{ needs.establish-baseline.result == 'success' && '✅' || needs.establish-baseline.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Detect Regressions | ${{ needs.detect-regressions.result == 'success' && '✅' || needs.detect-regressions.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Continuous Monitoring | ${{ needs.continuous-monitoring.result == 'success' && '✅' || needs.continuous-monitoring.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Key Insights" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ -f "performance-report.json" ]]; then
+            python3 << 'EOF'
+            import json
+            try:
+                with open('performance-report.json', 'r') as f:
+                    report = json.load(f)
+                stats = report['summary_statistics']
+                print(f"- **Artifacts Generated:** {stats['total_artifacts']}")
+                print(f"- **Baseline Available:** {'✅' if stats['baseline_established'] else '❌'}")
+                print(f"- **Regression Analysis:** {'✅' if stats['regressions_analyzed'] else '❌'}")
+                print(f"- **Monitoring Data:** {'✅' if stats['monitoring_completed'] else '❌'}")
+                
+                # Show key performance metrics if available
+                if 'key_metrics' in report:
+                    for metric_name, metrics in report['key_metrics'].items():
+                        if 'summary' in metric_name and 'average_duration' in metrics:
+                            clean_name = metric_name.replace('_summary', '').replace('_', ' ').title()
+                            print(f"- **{clean_name} Avg:** {metrics['average_duration']:.4f}s")
+                            break
+            except Exception as e:
+                print(f"Error reading performance report: {e}")
+            EOF
+          fi >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "- Download detailed performance reports from workflow artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Review any identified performance regressions" >> $GITHUB_STEP_SUMMARY
+          echo "- Monitor trends over time for performance degradation" >> $GITHUB_STEP_SUMMARY
+          echo "- Consider optimizations for slow-performing components" >> $GITHUB_STEP_SUMMARY

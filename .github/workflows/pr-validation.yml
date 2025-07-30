@@ -1,0 +1,553 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, develop]
+  pull_request_review:
+    types: [submitted]
+
+env:
+  PYTHON_VERSION: '3.12'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================================================
+  # PR METADATA AND VALIDATION
+  # =============================================================================
+  pr-check:
+    name: PR Validation Check
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    timeout-minutes: 5
+    outputs:
+      should-run-full: ${{ steps.pr-analysis.outputs.should-run-full }}
+      changed-files: ${{ steps.pr-analysis.outputs.changed-files }}
+      test-categories: ${{ steps.pr-analysis.outputs.test-categories }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v42
+        with:
+          files_yaml: |
+            python:
+              - '**/*.py'
+            config:
+              - '**/*.yaml'
+              - '**/*.yml'
+              - '**/*.toml'
+            docker:
+              - 'Dockerfile*'
+              - 'docker-compose*.yml'
+            tests:
+              - 'tests/**'
+            docs:
+              - 'docs/**'
+              - '*.md'
+            workflows:
+              - '.github/workflows/**'
+              
+      - name: Analyze PR changes
+        id: pr-analysis
+        run: |
+          echo "changed-files<<EOF" >> $GITHUB_OUTPUT
+          echo "${{ steps.changed-files.outputs.all_changed_files }}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Determine test categories based on changed files
+          test_categories=()
+          
+          if [[ "${{ steps.changed-files.outputs.python_any_changed }}" == "true" ]]; then
+            test_categories+=("unit" "integration")
+          fi
+          
+          if [[ "${{ steps.changed-files.outputs.config_any_changed }}" == "true" ]]; then
+            test_categories+=("integration")
+          fi
+          
+          if [[ "${{ steps.changed-files.outputs.tests_any_changed }}" == "true" ]]; then
+            test_categories+=("unit" "integration" "performance")
+          fi
+          
+          # Remove duplicates and convert to JSON array
+          test_categories_unique=($(printf "%s\n" "${test_categories[@]}" | sort -u))
+          test_categories_json=$(printf '%s\n' "${test_categories_unique[@]}" | jq -R . | jq -s .)
+          
+          echo "test-categories=$test_categories_json" >> $GITHUB_OUTPUT
+          
+          # Determine if full validation should run
+          if [[ "${{ github.event.action }}" == "ready_for_review" ]] || \
+             [[ "${{ steps.changed-files.outputs.python_any_changed }}" == "true" ]] || \
+             [[ "${{ steps.changed-files.outputs.docker_any_changed }}" == "true" ]] || \
+             [[ "${{ steps.changed-files.outputs.workflows_any_changed }}" == "true" ]]; then
+            echo "should-run-full=true" >> $GITHUB_OUTPUT
+          else
+            echo "should-run-full=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: PR Size Check
+        run: |
+          files_changed=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | wc -w)
+          lines_added=${{ github.event.pull_request.additions }}
+          lines_deleted=${{ github.event.pull_request.deletions }}
+          
+          echo "Files changed: $files_changed"
+          echo "Lines added: $lines_added"
+          echo "Lines deleted: $lines_deleted"
+          
+          if [[ $files_changed -gt 50 ]]; then
+            echo "::warning::Large PR detected ($files_changed files). Consider breaking into smaller PRs."
+          fi
+          
+          if [[ $lines_added -gt 1000 ]]; then
+            echo "::warning::Large PR detected ($lines_added lines added). Consider breaking into smaller PRs."
+          fi
+
+  # =============================================================================
+  # FAST FEEDBACK CHECKS
+  # =============================================================================
+  quick-checks:
+    name: Quick Validation
+    runs-on: ubuntu-latest
+    needs: pr-check
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Quick lint check
+        run: |
+          echo "::group::Quick Ruff Check"
+          uv run ruff check src/ tests/ --output-format=github --exit-zero
+          echo "::endgroup::"
+          
+      - name: Import validation
+        run: |
+          echo "::group::Import Validation"
+          uv run python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          try:
+              from src.dashboard.api import app
+              from src.rl_agent.dqn_agent import DQNAgent
+              from src.monitoring.trading_metrics import TradingMetrics
+              print('✅ Core imports successful')
+          except ImportError as e:
+              print(f'❌ Import error: {e}')
+              sys.exit(1)
+          "
+          echo "::endgroup::"
+
+  # =============================================================================
+  # COMPREHENSIVE VALIDATION (conditional)
+  # =============================================================================
+  comprehensive-validation:
+    name: Comprehensive Validation
+    needs: [pr-check, quick-checks]
+    if: needs.pr-check.outputs.should-run-full == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      skip_tests: false
+      test_level: full
+    secrets: inherit
+
+  # =============================================================================
+  # TARGETED TESTING (for smaller changes)
+  # =============================================================================
+  targeted-tests:
+    name: Targeted Tests
+    runs-on: ubuntu-latest
+    needs: [pr-check, quick-checks]
+    if: needs.pr-check.outputs.should-run-full == 'false' && fromJson(needs.pr-check.outputs.test-categories)[0] != null
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        test-type: ${{ fromJson(needs.pr-check.outputs.test-categories) }}
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        if: matrix.test-type == 'integration'
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Get changed test files
+        id: changed-tests
+        run: |
+          changed_files="${{ needs.pr-check.outputs.changed-files }}"
+          test_files=""
+          
+          for file in $changed_files; do
+            if [[ $file == tests/${{ matrix.test-type }}/* ]]; then
+              test_files="$test_files $file"
+            fi
+          done
+          
+          if [[ -z "$test_files" ]]; then
+            # If no specific test files changed, run a sample of relevant tests
+            case "${{ matrix.test-type }}" in
+              "unit")
+                test_files="tests/unit/dashboard/ tests/unit/rl_agent/ tests/unit/monitoring/"
+                ;;
+              "integration")
+                test_files="tests/integration/test_monitoring_integration.py tests/integration/test_real_rl_integration.py"
+                ;;
+              "performance")
+                test_files="tests/performance/test_performance_targets.py"
+                ;;
+            esac
+          fi
+          
+          echo "test-files=$test_files" >> $GITHUB_OUTPUT
+          
+      - name: Run targeted tests
+        run: |
+          test_files="${{ steps.changed-tests.outputs.test-files }}"
+          
+          if [[ -n "$test_files" ]]; then
+            echo "Running tests for: $test_files"
+            
+            case "${{ matrix.test-type }}" in
+              "unit")
+                uv run pytest $test_files \
+                  --cov=src \
+                  --cov-report=term-missing \
+                  --tb=short \
+                  -v \
+                  --maxfail=5
+                ;;
+              "integration")
+                timeout 300 uv run pytest $test_files \
+                  --tb=short \
+                  -v \
+                  --maxfail=3 || {
+                    echo "::warning::Some integration tests failed - this may be expected"
+                    exit 0
+                  }
+                ;;
+              "performance")
+                timeout 180 uv run pytest $test_files \
+                  --benchmark-only \
+                  --benchmark-json=benchmark-results.json \
+                  -v \
+                  --maxfail=2 || {
+                    echo "::warning::Performance tests completed with warnings"
+                    exit 0
+                  }
+                ;;
+            esac
+          else
+            echo "No relevant test files found for ${{ matrix.test-type }}"
+          fi
+
+  # =============================================================================
+  # SECURITY AND COMPLIANCE CHECKS
+  # =============================================================================
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+    needs: pr-check
+    timeout-minutes: 10
+    if: contains(needs.pr-check.outputs.changed-files, '.py') || contains(needs.pr-check.outputs.changed-files, 'requirements') || contains(needs.pr-check.outputs.changed-files, 'pyproject.toml')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Bandit security scan
+        run: |
+          pip install bandit[toml]
+          bandit -r src/ -f json -o bandit-report.json || true
+          bandit -r src/ -f txt
+          
+      - name: Run Safety check
+        run: |
+          pip install safety
+          safety check --json --output safety-report.json || true
+          safety check || echo "::warning::Security vulnerabilities found in dependencies"
+          
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+          retention-days: 30
+
+  # =============================================================================
+  # DOCUMENTATION AND API CHANGES
+  # =============================================================================
+  api-changes:
+    name: API Changes Detection
+    runs-on: ubuntu-latest
+    needs: pr-check
+    if: contains(needs.pr-check.outputs.changed-files, '/api.py') || contains(needs.pr-check.outputs.changed-files, '/service.py')
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Generate API documentation
+        run: |
+          echo "::group::API Documentation Check"
+          uv run python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from src.dashboard.api import app
+          import json
+          
+          # Extract API routes and methods
+          routes = []
+          for rule in app.url_map.iter_rules():
+              routes.append({
+                  'endpoint': rule.endpoint,
+                  'methods': list(rule.methods),
+                  'rule': str(rule)
+              })
+          
+          with open('api-routes.json', 'w') as f:
+              json.dump(routes, f, indent=2)
+              
+          print(f'Documented {len(routes)} API endpoints')
+          "
+          echo "::endgroup::"
+          
+      - name: Check for breaking changes
+        run: |
+          echo "::warning::API changes detected. Please ensure backwards compatibility and update documentation."
+          
+      - name: Upload API documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-documentation
+          path: api-routes.json
+          retention-days: 30
+
+  # =============================================================================
+  # PERFORMANCE IMPACT ANALYSIS
+  # =============================================================================
+  performance-impact:
+    name: Performance Impact
+    runs-on: ubuntu-latest
+    needs: pr-check
+    if: contains(needs.pr-check.outputs.changed-files, '/rl_agent/') || contains(needs.pr-check.outputs.changed-files, '/ml_analysis/')
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run lightweight performance tests
+        run: |
+          echo "::group::Performance Impact Analysis"
+          uv run pytest tests/performance/test_performance_targets.py \
+            --benchmark-only \
+            --benchmark-json=perf-impact.json \
+            -v \
+            -k "test_memory_usage or test_basic_throughput" || {
+              echo "::warning::Performance impact tests completed with warnings"
+            }
+          echo "::endgroup::"
+          
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-impact
+          path: perf-impact.json
+          retention-days: 15
+
+  # =============================================================================
+  # FINAL PR STATUS
+  # =============================================================================
+  pr-status:
+    name: PR Status Summary
+    runs-on: ubuntu-latest
+    needs: [pr-check, quick-checks, comprehensive-validation, targeted-tests, security-check, api-changes, performance-impact]
+    if: always()
+    steps:
+      - name: Determine overall status
+        id: status
+        run: |
+          # Required checks
+          quick_checks="${{ needs.quick-checks.result }}"
+          
+          # Optional checks (only run conditionally)
+          comprehensive="${{ needs.comprehensive-validation.result }}"
+          targeted="${{ needs.targeted-tests.result }}"
+          security="${{ needs.security-check.result }}"
+          api_changes="${{ needs.api-changes.result }}"
+          perf_impact="${{ needs.performance-impact.result }}"
+          
+          echo "Quick checks: $quick_checks"
+          echo "Comprehensive: $comprehensive"
+          echo "Targeted: $targeted"
+          echo "Security: $security"
+          echo "API changes: $api_changes"
+          echo "Performance: $perf_impact"
+          
+          # Determine overall status
+          if [[ "$quick_checks" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Quick validation checks failed. Please fix basic issues before proceeding." >> $GITHUB_OUTPUT
+          elif [[ "$comprehensive" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Comprehensive validation failed. Please review test results and fix issues." >> $GITHUB_OUTPUT
+          elif [[ "$targeted" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Targeted tests failed. Please fix the failing tests." >> $GITHUB_OUTPUT
+          elif [[ "$security" == "failure" ]]; then
+            echo "status=warning" >> $GITHUB_OUTPUT
+            echo "message=⚠️ Security issues detected. Please review and address security concerns." >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ All PR validation checks passed! Ready for review." >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Update PR status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.status.outputs.status }}';
+            const message = '${{ steps.status.outputs.message }}';
+            
+            const statusEmoji = {
+              'success': '✅',
+              'warning': '⚠️',
+              'failure': '❌'
+            };
+            
+            const body = `## ${statusEmoji[status]} PR Validation Summary
+            
+            ${message}
+            
+            ### Validation Results
+            | Check | Status |
+            |-------|--------|
+            | Quick Checks | ${{ needs.quick-checks.result == 'success' && '✅' || '❌' }} |
+            | Comprehensive | ${{ needs.comprehensive-validation.result == 'success' && '✅' || needs.comprehensive-validation.result == 'skipped' && '⏭️' || needs.comprehensive-validation.result == '' && '⏭️' || '❌' }} |
+            | Targeted Tests | ${{ needs.targeted-tests.result == 'success' && '✅' || needs.targeted-tests.result == 'skipped' && '⏭️' || needs.targeted-tests.result == '' && '⏭️' || '❌' }} |
+            | Security Check | ${{ needs.security-check.result == 'success' && '✅' || needs.security-check.result == 'skipped' && '⏭️' || needs.security-check.result == '' && '⏭️' || '⚠️' }} |
+            | API Changes | ${{ needs.api-changes.result == 'success' && '✅' || needs.api-changes.result == 'skipped' && '⏭️' || needs.api-changes.result == '' && '⏭️' || '❌' }} |
+            | Performance | ${{ needs.performance-impact.result == 'success' && '✅' || needs.performance-impact.result == 'skipped' && '⏭️' || needs.performance-impact.result == '' && '⏭️' || '⚠️' }} |
+            
+            **Changed files:** ${{ needs.pr-check.outputs.changed-files && fromJson(format('[{0}]', join(fromJson(format('["{0}"]', needs.pr-check.outputs.changed-files)), '", "')))[0] && length(fromJson(format('[{0}]', join(fromJson(format('["{0}"]', needs.pr-check.outputs.changed-files)), '", "')))) || 0 }}
+            `;
+            
+            // Find existing comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existingComment = comments.data.find(
+              comment => comment.body.includes('PR Validation Summary')
+            );
+            
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }

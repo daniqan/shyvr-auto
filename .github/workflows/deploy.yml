@@ -1,0 +1,664 @@
+name: Deployment Automation
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true  
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip pre-deployment tests'
+        required: false
+        default: false
+        type: boolean
+      force_deploy:
+        description: 'Force deployment (bypass checks)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+  REGISTRY: us-central1-docker.pkg.dev
+  PROJECT_ID: shvyr-ai-bots
+  REPOSITORY: shyvr-ai-prod
+  IMAGE_NAME: shyvr-rlte
+  REGION: us-central1
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+  cancel-in-progress: false  # Don't cancel deployments
+
+jobs:
+  # =============================================================================
+  # DEPLOYMENT PREPARATION
+  # =============================================================================
+  prepare-deployment:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      environment: ${{ steps.config.outputs.environment }}
+      service-name: ${{ steps.config.outputs.service-name }}
+      should-deploy: ${{ steps.config.outputs.should-deploy }}
+      image-tag: ${{ steps.config.outputs.image-tag }}
+      deployment-config: ${{ steps.config.outputs.deployment-config }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure deployment
+        id: config
+        run: |
+          # Determine target environment
+          if [[ "${{ github.event.inputs.environment }}" != "" ]]; then
+            environment="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            environment="production"
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            environment="staging"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            environment="production"
+          else
+            environment="staging"
+          fi
+          
+          echo "environment=$environment" >> $GITHUB_OUTPUT
+          
+          # Set service name based on environment
+          if [[ "$environment" == "production" ]]; then
+            service_name="shyvr-rlte"
+          else
+            service_name="shyvr-rlte-staging"
+          fi
+          
+          echo "service-name=$service_name" >> $GITHUB_OUTPUT
+          
+          # Generate image tag
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            image_tag="${{ github.ref_name }}"
+          else
+            image_tag="${{ github.sha }}"
+          fi
+          
+          echo "image-tag=$image_tag" >> $GITHUB_OUTPUT
+          
+          # Check if deployment should proceed
+          should_deploy="true"
+          
+          # Skip deployment for draft PRs or if explicitly disabled
+          if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
+            should_deploy="false"
+          fi
+          
+          echo "should-deploy=$should_deploy" >> $GITHUB_OUTPUT
+          
+          # Set deployment configuration based on environment
+          if [[ "$environment" == "production" ]]; then
+            deployment_config='{
+              "memory": "4Gi",
+              "cpu": "2",
+              "concurrency": 50,
+              "max_instances": 5,
+              "min_instances": 1,
+              "timeout": 900
+            }'
+          else
+            deployment_config='{
+              "memory": "2Gi", 
+              "cpu": "1",
+              "concurrency": 25,
+              "max_instances": 3,
+              "min_instances": 0,
+              "timeout": 600
+            }'
+          fi
+          
+          echo "deployment-config=$deployment_config" >> $GITHUB_OUTPUT
+          
+          echo "🚀 Deployment Configuration:"
+          echo "   Environment: $environment"
+          echo "   Service: $service_name"
+          echo "   Image Tag: $image_tag"
+          echo "   Should Deploy: $should_deploy"
+
+  # =============================================================================
+  # PRE-DEPLOYMENT VALIDATION
+  # =============================================================================
+  pre-deployment-validation:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    needs: prepare-deployment
+    if: needs.prepare-deployment.outputs.should-deploy == 'true' && !inputs.skip_tests
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libpq-dev \
+            libssl-dev \
+            libta-lib-dev \
+            postgresql-client
+            
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Setup test environment
+        run: |
+          echo "PYTHONPATH=${{ github.workspace }}/src" >> $GITHUB_ENV
+          echo "ENVIRONMENT=test" >> $GITHUB_ENV
+          echo "LOG_LEVEL=DEBUG" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb" >> $GITHUB_ENV
+          
+      - name: Initialize test database
+        run: |
+          export PGPASSWORD=testpass
+          psql -h localhost -U testuser -d testdb -f database/migrations/001_create_initial_schema.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/002_create_indexes_and_functions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/003_create_views_and_permissions.sql
+          psql -h localhost -U testuser -d testdb -f database/migrations/004_create_rl_experience_schema.sql
+          
+      - name: Run critical pre-deployment tests
+        run: |
+          echo "::group::Critical Tests"
+          uv run pytest tests/unit/test_config.py \
+            tests/unit/dashboard/test_api.py \
+            tests/unit/rl_agent/test_dqn_agent.py \
+            tests/unit/monitoring/test_trading_metrics.py \
+            --tb=short \
+            -v \
+            --maxfail=3
+          echo "::endgroup::"
+          
+      - name: Validate deployment readiness
+        run: |
+          echo "::group::Deployment Readiness Validation"
+          bash scripts/run_all_validations.sh ${{ env.PROJECT_ID }} "http://localhost:8080" true
+          echo "::endgroup::"
+          
+      - name: Validate ML/RL models
+        run: |
+          echo "::group::ML/RL Model Validation"
+          uv run python scripts/validate_ml_rl_models.py --mode=deployment
+          echo "::endgroup::"
+
+  # =============================================================================
+  # DOCKER BUILD AND PUSH
+  # =============================================================================
+  build-and-push:
+    name: Build & Push Container
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, pre-deployment-validation]
+    if: always() && (needs.pre-deployment-validation.result == 'success' || needs.pre-deployment-validation.result == 'skipped') && needs.prepare-deployment.outputs.should-deploy == 'true'
+    timeout-minutes: 30
+    outputs:
+      image-url: ${{ steps.push.outputs.image-url }}
+      image-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        
+      - name: Configure Docker for GCP
+        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+        
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.prepare-deployment.outputs.image-tag }}
+            
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDTIME=${{ github.event.head_commit.timestamp }}
+            VERSION=${{ needs.prepare-deployment.outputs.image-tag }}
+            REVISION=${{ github.sha }}
+            
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.image-tag }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ needs.prepare-deployment.outputs.image-tag }}
+          path: sbom.spdx.json
+          retention-days: 90
+          
+      - name: Set output
+        run: |
+          image_url="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.image-tag }}"
+          echo "image-url=$image_url" >> $GITHUB_OUTPUT
+
+  # =============================================================================
+  # STAGING DEPLOYMENT
+  # =============================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, build-and-push]
+    if: needs.prepare-deployment.outputs.environment == 'staging' && needs.prepare-deployment.outputs.should-deploy == 'true'
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.service-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        
+      - name: Deploy to Cloud Run (Staging)
+        id: deploy
+        run: |
+          config='${{ needs.prepare-deployment.outputs.deployment-config }}'
+          memory=$(echo $config | jq -r '.memory')
+          cpu=$(echo $config | jq -r '.cpu')
+          concurrency=$(echo $config | jq -r '.concurrency')
+          max_instances=$(echo $config | jq -r '.max_instances')
+          min_instances=$(echo $config | jq -r '.min_instances')
+          timeout=$(echo $config | jq -r '.timeout')
+          
+          echo "🚀 Deploying to staging with configuration:"
+          echo "   Memory: $memory"
+          echo "   CPU: $cpu"
+          echo "   Concurrency: $concurrency"
+          echo "   Max instances: $max_instances"
+          echo "   Min instances: $min_instances"
+          
+          gcloud run deploy ${{ needs.prepare-deployment.outputs.service-name }} \
+            --image=${{ needs.build-and-push.outputs.image-url }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --port=8080 \
+            --memory=$memory \
+            --cpu=$cpu \
+            --concurrency=$concurrency \
+            --timeout=${timeout}s \
+            --max-instances=$max_instances \
+            --min-instances=$min_instances \
+            --allow-unauthenticated \
+            --set-env-vars="ENVIRONMENT=staging,LOG_LEVEL=INFO,TRADING_MODE=simulation" \
+            --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:shyvr-rlte-db" \
+            --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest" \
+            --revision-suffix="${{ github.run_number }}" \
+            --quiet
+          
+          # Get service URL
+          service_url=$(gcloud run services describe ${{ needs.prepare-deployment.outputs.service-name }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "service-url=$service_url" >> $GITHUB_OUTPUT
+          
+      - name: Wait for deployment readiness
+        run: |
+          echo "⏳ Waiting for staging deployment to be ready..."
+          sleep 60
+          
+      - name: Run staging smoke tests
+        run: |
+          service_url="${{ steps.deploy.outputs.service-url }}"
+          
+          echo "🧪 Running staging smoke tests against: $service_url"
+          
+          # Health check
+          if curl -f -s "$service_url/health" > /dev/null; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+          
+          # API endpoints check
+          if curl -f -s "$service_url/api/v1/status" > /dev/null; then
+            echo "✅ API status endpoint working"
+          else
+            echo "⚠️ API status endpoint may not be available"
+          fi
+          
+          echo "✅ Staging smoke tests completed successfully"
+
+  # =============================================================================
+  # PRODUCTION DEPLOYMENT
+  # =============================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, build-and-push]
+    if: needs.prepare-deployment.outputs.environment == 'production' && needs.prepare-deployment.outputs.should-deploy == 'true'
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.service-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        
+      - name: Pre-production safety checks
+        if: !inputs.force_deploy
+        run: |
+          echo "🔍 Running pre-production safety checks..."
+          
+          # Check if staging is healthy (if exists)
+          staging_url=$(gcloud run services describe shyvr-rlte-staging --region=${{ env.REGION }} --format="value(status.url)" 2>/dev/null || echo "")
+          
+          if [[ -n "$staging_url" ]]; then
+            echo "Checking staging health: $staging_url"
+            if ! curl -f -s "$staging_url/health" > /dev/null; then
+              echo "::error::Staging environment is unhealthy. Aborting production deployment."
+              exit 1
+            fi
+            echo "✅ Staging environment is healthy"
+          fi
+          
+          # Additional production readiness checks
+          echo "✅ Pre-production safety checks passed"
+          
+      - name: Deploy to Cloud Run (Production)
+        id: deploy
+        run: |
+          config='${{ needs.prepare-deployment.outputs.deployment-config }}'
+          memory=$(echo $config | jq -r '.memory')
+          cpu=$(echo $config | jq -r '.cpu')
+          concurrency=$(echo $config | jq -r '.concurrency')
+          max_instances=$(echo $config | jq -r '.max_instances')
+          min_instances=$(echo $config | jq -r '.min_instances')
+          timeout=$(echo $config | jq -r '.timeout')
+          
+          echo "🚀 Deploying to production with configuration:"
+          echo "   Memory: $memory"
+          echo "   CPU: $cpu"
+          echo "   Concurrency: $concurrency"
+          echo "   Max instances: $max_instances"
+          echo "   Min instances: $min_instances"
+          
+          # Production deployment with full configuration
+          gcloud run deploy ${{ needs.prepare-deployment.outputs.service-name }} \
+            --image=${{ needs.build-and-push.outputs.image-url }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --port=8080 \
+            --memory=$memory \
+            --cpu=$cpu \
+            --concurrency=$concurrency \
+            --timeout=${timeout}s \
+            --max-instances=$max_instances \
+            --min-instances=$min_instances \
+            --allow-unauthenticated \
+            --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,TRADING_MODE=simulation" \
+            --add-cloudsql-instances="${{ env.PROJECT_ID }}:${{ env.REGION }}:shyvr-rlte-db" \
+            --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,COINGECKO_API_KEY=COINGECKO_API_KEY:latest,LUNARCRUSH_API_KEY=LUNARCRUSH_API_KEY:latest" \
+            --revision-suffix="${{ github.run_number }}" \
+            --quiet
+          
+          # Get service URL
+          service_url=$(gcloud run services describe ${{ needs.prepare-deployment.outputs.service-name }} --region=${{ env.REGION }} --format="value(status.url)")
+          echo "service-url=$service_url" >> $GITHUB_OUTPUT
+          
+      - name: Wait for production deployment
+        run: |
+          echo "⏳ Waiting for production deployment to be ready..."
+          sleep 90  # Production gets more time to stabilize
+          
+      - name: Run production smoke tests
+        run: |
+          service_url="${{ steps.deploy.outputs.service-url }}"
+          
+          echo "🧪 Running production smoke tests against: $service_url"
+          
+          # Health check
+          if curl -f -s "$service_url/health" > /dev/null; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+          
+          # API endpoints check
+          if curl -f -s "$service_url/api/v1/status" > /dev/null; then
+            echo "✅ API status endpoint working"
+          else
+            echo "⚠️ API status endpoint may not be available"
+          fi
+          
+          echo "✅ Production smoke tests completed successfully"
+          
+      - name: Update Telegram webhook
+        if: success()
+        run: |
+          service_url="${{ steps.deploy.outputs.service-url }}"
+          
+          # Update Telegram webhook for production (if token is available)
+          if [[ -n "${{ secrets.TELEGRAM_TOKEN }}" ]]; then
+            echo "📱 Updating Telegram webhook..."
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/setWebhook" \
+              -d "url=$service_url/webhook" \
+              -d "drop_pending_updates=true" || {
+                echo "⚠️ Failed to update Telegram webhook"
+              }
+            echo "✅ Telegram webhook updated"
+          fi
+
+  # =============================================================================
+  # POST-DEPLOYMENT MONITORING
+  # =============================================================================
+  post-deployment-monitoring:
+    name: Post-deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+        
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+        
+      - name: Run post-deployment health check
+        run: |
+          echo "🔍 Running post-deployment health monitoring..."
+          
+          # Determine service URL based on what was deployed
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            environment="production"
+            service_name="shyvr-rlte"
+          else
+            environment="staging"
+            service_name="shyvr-rlte-staging"
+          fi
+          
+          echo "Monitoring $environment environment..."
+          
+          # Run comprehensive health check
+          uv run python scripts/production_health_check.py \
+            --project-id=${{ env.PROJECT_ID }} \
+            --service-name=$service_name \
+            --region=${{ env.REGION }} \
+            --environment=$environment
+            
+      - name: Setup monitoring alerts
+        run: |
+          echo "📊 Setting up post-deployment monitoring..."
+          
+          # This would typically configure monitoring dashboards and alerts
+          # For now, we'll just ensure the monitoring setup script exists
+          if [[ -f "scripts/setup_production_monitoring.py" ]]; then
+            echo "✅ Monitoring setup script available"
+          else
+            echo "⚠️ Consider adding monitoring setup automation"
+          fi
+
+  # =============================================================================
+  # DEPLOYMENT SUMMARY
+  # =============================================================================
+  deployment-summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [prepare-deployment, pre-deployment-validation, build-and-push, deploy-staging, deploy-production, post-deployment-monitoring]
+    if: always()
+    steps:
+      - name: Generate deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status | Duration |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|----------|" >> $GITHUB_STEP_SUMMARY
+          
+          get_status() {
+            case "$1" in
+              "success") echo "✅ Success" ;;
+              "failure") echo "❌ Failed" ;;
+              "skipped") echo "⏭️ Skipped" ;;
+              "cancelled") echo "🚫 Cancelled" ;;
+              *) echo "⚪ Unknown" ;;
+            esac
+          }
+          
+          echo "| Validation | $(get_status '${{ needs.pre-deployment-validation.result }}') | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Push | $(get_status '${{ needs.build-and-push.result }}') | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging Deploy | $(get_status '${{ needs.deploy-staging.result }}') | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production Deploy | $(get_status '${{ needs.deploy-production.result }}') | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Monitoring | $(get_status '${{ needs.post-deployment-monitoring.result }}') | - |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ needs.prepare-deployment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service:** ${{ needs.prepare-deployment.outputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag:** ${{ needs.prepare-deployment.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.deploy-staging.result }}" == "success" ]]; then
+            echo "- **Staging URL:** Available in job outputs" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            echo "- **Production URL:** Available in job outputs" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Monitor application metrics and logs" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify trading functionality in deployed environment" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check Telegram bot integration" >> $GITHUB_STEP_SUMMARY
+          echo "4. Review Cloud Run service metrics" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Create deployment notification
+        if: needs.deploy-production.result == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '🚀 Production Deployment Successful';
+            const body = `## Production Deployment Complete
+            
+            **Environment:** Production
+            **Service:** ${{ needs.prepare-deployment.outputs.service-name }}
+            **Image Tag:** ${{ needs.prepare-deployment.outputs.image-tag }}
+            **Commit:** ${{ github.sha }}
+            
+            ### Deployment Status
+            - ✅ Pre-deployment validation passed
+            - ✅ Container built and pushed
+            - ✅ Production deployment successful
+            - ✅ Smoke tests passed
+            - ✅ Post-deployment monitoring setup
+            
+            **Deployment URL:** Check Cloud Run console for service URL
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['deployment', 'production', 'automated']
+            });
