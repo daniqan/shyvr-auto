@@ -11,6 +11,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import List, Tuple
+from dotenv import load_dotenv
 
 # Add src to path for config imports
 sys.path.append(str(Path(__file__).parent.parent / "src"))
@@ -129,10 +130,18 @@ async def main():
                 database_url = config.database.url
             except Exception as e:
                 logger.error(f"Failed to load database configuration: {e}")
-                sys.exit(1)
+                
+        # Try loading from .env file if still not found
+        if not database_url:
+            env_path = Path(__file__).parent.parent / ".env"
+            if env_path.exists():
+                load_dotenv(env_path)
+                database_url = os.getenv('DATABASE_URL')
+                if database_url:
+                    logger.info("Loaded DATABASE_URL from .env file")
                 
         if not database_url:
-            logger.error("DATABASE_URL not found in environment or config")
+            logger.error("DATABASE_URL not found in environment, config, or .env file")
             sys.exit(1)
             
         logger.info("🚀 Starting database migrations...")
