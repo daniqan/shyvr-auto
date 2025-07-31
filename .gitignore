@@ -54,4 +54,13 @@ reports/
 .pytest_cache/
 TODO_CHECKLIST.md
 
+# Model files
+*.pt
+*.pth
+*.pkl
+*.h5
+*.onnx
+models/
+checkpoints/
+
 
