@@ -714,15 +714,18 @@ class CacheManager:
         
         # Store in memory cache
         if self.config.enable_memory_cache and self.memory_cache:
-            success &= self.memory_cache.put(key, data, metadata)
+            result = self.memory_cache.put(key, data, metadata)
+            success = success and bool(result)
         
         # Store in disk cache
         if self.config.enable_disk_cache and self.disk_cache:
-            success &= await self.disk_cache.put(key, data, metadata)
+            result = await self.disk_cache.put(key, data, metadata)
+            success = success and bool(result)
         
         # Store in GCS cache
         if self.config.enable_gcs_cache and self.gcs_cache:
-            success &= await self.gcs_cache.put(key, data, metadata)
+            result = await self.gcs_cache.put(key, data, metadata)
+            success = success and bool(result)
         
         return success
     
@@ -756,14 +759,45 @@ class CacheManager:
     async def get_metrics(self) -> CacheMetrics:
         """Get comprehensive cache metrics"""
         async with self._lock:
-            # Update usage metrics
+            # Aggregate metrics from all cache levels
+            total_memory_hits = 0
+            total_disk_hits = 0
+            total_gcs_hits = 0
+            total_memory_misses = 0
+            total_disk_misses = 0
+            total_gcs_misses = 0
+            
+            # Update usage metrics and collect stats
             if self.memory_cache:
                 stats = self.memory_cache.get_stats()
                 self.metrics.memory_usage_bytes = stats.get("size_bytes", 0)
+                total_memory_hits = stats.get("hits", 0)
+                total_memory_misses = stats.get("misses", 0)
             
             if self.disk_cache:
                 stats = await self.disk_cache.get_stats()
                 self.metrics.disk_usage_bytes = stats.get("size_bytes", 0)
+                total_disk_hits = stats.get("hits", 0)
+                total_disk_misses = stats.get("misses", 0)
+            
+            if self.gcs_cache:
+                stats = await self.gcs_cache.get_stats()
+                total_gcs_hits = stats.get("hits", 0)
+                total_gcs_misses = stats.get("misses", 0)
+            
+            # Update the metrics with current aggregated values
+            # Note: This overlays cache-level stats onto manager-level tracking
+            self.metrics.memory_hits = max(self.metrics.memory_hits, total_memory_hits)
+            self.metrics.disk_hits = max(self.metrics.disk_hits, total_disk_hits) 
+            self.metrics.gcs_hits = max(self.metrics.gcs_hits, total_gcs_hits)
+            
+            # Calculate total requests from hits and misses
+            total_hits = total_memory_hits + total_disk_hits + total_gcs_hits
+            total_misses = total_memory_misses + total_disk_misses + total_gcs_misses
+            total_requests = total_hits + total_misses
+            
+            # Update total requests if it's greater than current
+            self.metrics.total_requests = max(self.metrics.total_requests, total_requests)
             
             return self.metrics
 
