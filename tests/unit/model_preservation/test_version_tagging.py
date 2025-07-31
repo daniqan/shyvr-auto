@@ -218,71 +218,100 @@ class TestPreservationManagerTagging:
     @pytest.mark.asyncio
     async def test_tag_model(self, mock_preservation_manager):
         """Test tagging a model with a specific tag"""
-        # TODO: Test tag_model method once implemented
-        # with patch.object(mock_preservation_manager.db_handler, 'save_tag') as mock_save:
-        #     mock_save.return_value = "tag_id"
-        #     
-        #     result = await mock_preservation_manager.tag_model(
-        #         model_type="dqn",
-        #         version="v1.2.3",
-        #         tag_name="stable",
-        #         description="Stable release"
-        #     )
-        #     assert result == "tag_id"
-        pytest.skip("tag_model method not yet implemented")
+        # Mock the db_handler
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.save_tag.return_value = "tag_id"
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        
+        result = await mock_preservation_manager.tag_model(
+            model_type="dqn",
+            version="v1.2.3",
+            tag_name="stable",
+            description="Stable release"
+        )
+        assert result == "tag_id"
+        
+        # Verify tag was saved
+        mock_preservation_manager.db_handler.save_tag.assert_called_once()
+        mock_preservation_manager.db_handler.record_event.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_resolve_tag(self, mock_preservation_manager):
         """Test resolving a tag to get version"""
-        # TODO: Test resolve_tag method once implemented
-        # with patch.object(mock_preservation_manager.db_handler, 'resolve_tag_to_version') as mock_resolve:
-        #     mock_resolve.return_value = "v1.2.3"
-        #     
-        #     version = await mock_preservation_manager.resolve_tag("dqn", "latest")
-        #     assert version == "v1.2.3"
-        pytest.skip("resolve_tag method not yet implemented")
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.resolve_tag_to_version.return_value = "v1.2.3"
+        
+        version = await mock_preservation_manager.resolve_tag("dqn", "latest")
+        assert version == "v1.2.3"
+        
+        mock_preservation_manager.db_handler.resolve_tag_to_version.assert_called_once_with("dqn", "latest", branch="main")
     
     @pytest.mark.asyncio
     async def test_load_model_by_tag(self, mock_preservation_manager):
         """Test loading a model using a tag instead of version"""
-        # TODO: Test loading model by tag once implemented
-        # with patch.object(mock_preservation_manager, 'resolve_tag') as mock_resolve:
-        #     mock_resolve.return_value = "v1.2.3"
-        #     with patch.object(mock_preservation_manager, 'load_model') as mock_load:
-        #         mock_load.return_value = (b"model_data", {"version": "v1.2.3"})
-        #         
-        #         data, metadata = await mock_preservation_manager.load_model(
-        #             model_type="dqn",
-        #             version="latest"  # This should resolve to v1.2.3
-        #         )
-        #         assert metadata["version"] == "v1.2.3"
-        pytest.skip("load_model by tag not yet implemented")
+        # Mock db_handler for tag resolution and metadata retrieval
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.branch_exists.return_value = True
+        mock_preservation_manager.db_handler.resolve_tag_to_version.return_value = "v1.2.3"
+        mock_preservation_manager.db_handler.get_metadata.return_value = {
+            "model_id": "dqn-v1.2.3-12345678",
+            "model_type": "dqn",
+            "version": "v1.2.3",
+            "storage_path": "gs://bucket/dqn-v1.2.3.pkl"
+        }
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        
+        # Mock storage handler
+        mock_preservation_manager.storage_handler = AsyncMock()
+        mock_preservation_manager.storage_handler.load.return_value = b"model_data"
+        
+        # Mock cache manager (disable caching for this test)
+        mock_preservation_manager.cache_manager = None
+        
+        data, metadata = await mock_preservation_manager.load_model(
+            model_type="dqn",
+            version="latest"  # This should resolve to v1.2.3
+        )
+        
+        assert data == b"model_data"
+        assert metadata["version"] == "v1.2.3"
+        assert metadata["model_type"] == "dqn"
+        
+        # Verify tag resolution was called
+        mock_preservation_manager.db_handler.resolve_tag_to_version.assert_called_once_with("dqn", "latest", branch="main")
     
     @pytest.mark.asyncio
     async def test_move_tag(self, mock_preservation_manager):
         """Test moving a tag from one version to another"""
-        # TODO: Test move_tag method once implemented
-        # with patch.object(mock_preservation_manager.db_handler, 'update_tag') as mock_update:
-        #     mock_update.return_value = None
-        #     
-        #     await mock_preservation_manager.move_tag("dqn", "latest", "v1.3.0")
-        #     mock_update.assert_called_once_with("dqn", "latest", "v1.3.0")
-        pytest.skip("move_tag method not yet implemented")
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.update_tag.return_value = None
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        
+        await mock_preservation_manager.move_tag("dqn", "latest", "v1.3.0", description="Updated to latest")
+        
+        mock_preservation_manager.db_handler.update_tag.assert_called_once_with(
+            model_type="dqn", 
+            tag_name="latest", 
+            new_version="v1.3.0", 
+            description="Updated to latest"
+        )
+        mock_preservation_manager.db_handler.record_event.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_list_model_tags(self, mock_preservation_manager):
         """Test listing all tags for a model type"""
-        # TODO: Test list_model_tags method once implemented
-        # with patch.object(mock_preservation_manager.db_handler, 'list_tags') as mock_list:
-        #     mock_list.return_value = [
-        #         {"tag_name": "latest", "version": "v1.2.3"},
-        #         {"tag_name": "stable", "version": "v1.2.0"}
-        #     ]
-        #     
-        #     tags = await mock_preservation_manager.list_model_tags("dqn")
-        #     assert len(tags) == 2
-        #     assert tags[0]["tag_name"] == "latest"
-        pytest.skip("list_model_tags method not yet implemented")
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.list_tags.return_value = [
+            {"tag_name": "latest", "version": "v1.2.3", "description": "Latest version"},
+            {"tag_name": "stable", "version": "v1.2.0", "description": "Stable version"}
+        ]
+        
+        tags = await mock_preservation_manager.list_model_tags("dqn")
+        assert len(tags) == 2
+        assert tags[0]["tag_name"] == "latest"
+        assert tags[1]["tag_name"] == "stable"
+        
+        mock_preservation_manager.db_handler.list_tags.assert_called_once_with("dqn")
 
 
 class TestAutomaticTagging:
