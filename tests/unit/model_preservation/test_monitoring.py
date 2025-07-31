@@ -50,10 +50,17 @@ class TestPreservationMetricsCollector:
             success=True
         )
         
-        # Should fail until implemented
-        assert collector.model_save_duration._value.get() > 0
-        assert collector.model_size_bytes._value.get() > 0
-        assert collector.models_preserved_total._value.get() == 1
+        # Check that metrics were recorded by collecting samples
+        save_duration_samples = list(collector.model_save_duration.collect()[0].samples)
+        assert len(save_duration_samples) > 0
+        
+        size_samples = list(collector.model_size_bytes.collect()[0].samples)
+        assert len(size_samples) > 0
+        assert any(sample.value == 1024 * 1024 for sample in size_samples)
+        
+        preserved_samples = list(collector.models_preserved_total.collect()[0].samples)
+        assert len(preserved_samples) > 0
+        assert any(sample.value == 1 for sample in preserved_samples)
 
     def test_record_load_duration(self):
         """Test recording model load duration metrics."""
@@ -66,9 +73,14 @@ class TestPreservationMetricsCollector:
             success=True
         )
         
-        # Should fail until implemented
-        assert collector.model_load_duration._value.get() > 0
-        assert collector.model_cache_hit_rate._value.get() > 0
+        # Check that load duration was recorded
+        load_duration_samples = list(collector.model_load_duration.collect()[0].samples)
+        assert len(load_duration_samples) > 0
+        
+        # Check that cache hit rate was updated
+        cache_hit_samples = list(collector.model_cache_hit_rate.collect()[0].samples)
+        assert len(cache_hit_samples) > 0
+        assert any(sample.value == 1.0 for sample in cache_hit_samples)  # 100% hit rate for first hit
 
     def test_record_cache_metrics(self):
         """Test recording cache-related metrics."""
@@ -78,9 +90,15 @@ class TestPreservationMetricsCollector:
         collector.record_cache_miss("dqn_agent")
         collector.record_cache_eviction("lstm_model", size_bytes=512 * 1024)
         
-        # Should fail until implemented
-        assert collector.model_cache_hit_rate._value.get() >= 0
-        assert collector.cache_evictions_total._value.get() == 1
+        # Check cache hit rate (should be 0.5 with 1 hit and 1 miss)
+        cache_hit_samples = list(collector.model_cache_hit_rate.collect()[0].samples)
+        assert len(cache_hit_samples) > 0
+        assert any(sample.value == 0.5 for sample in cache_hit_samples)
+        
+        # Check cache evictions
+        eviction_samples = list(collector.cache_evictions_total.collect()[0].samples)
+        assert len(eviction_samples) > 0
+        assert any(sample.value == 1 for sample in eviction_samples)
 
     def test_record_error(self):
         """Test recording preservation errors."""
@@ -92,8 +110,10 @@ class TestPreservationMetricsCollector:
             error_type="storage_error"
         )
         
-        # Should fail until implemented
-        assert collector.preservation_errors_total._value.get() == 1
+        # Check that error was recorded
+        error_samples = list(collector.preservation_errors_total.collect()[0].samples)
+        assert len(error_samples) > 0
+        assert any(sample.value == 1 for sample in error_samples)
 
     def test_record_storage_operation(self):
         """Test recording storage operations."""
@@ -106,8 +126,10 @@ class TestPreservationMetricsCollector:
             success=True
         )
         
-        # Should fail until implemented
-        assert collector.storage_operations_total._value.get() == 1
+        # Check that storage operation was recorded
+        storage_samples = list(collector.storage_operations_total.collect()[0].samples)
+        assert len(storage_samples) > 0
+        assert any(sample.value == 1 for sample in storage_samples)
 
     def test_get_metrics_summary(self):
         """Test getting comprehensive metrics summary."""
@@ -140,11 +162,12 @@ class TestPreservationMetricsCollector:
             mode="live"
         )
         
-        # Should fail until implemented - check labels are properly set
+        # Check labels are properly set
         registry_data = generate_latest(collector.registry)
-        assert b'model_type="dqn_agent"' in registry_data
-        assert b'priority="high"' in registry_data
-        assert b'mode="live"' in registry_data
+        registry_str = registry_data.decode('utf-8')
+        assert 'model_type="dqn_agent"' in registry_str
+        assert 'priority="high"' in registry_str
+        assert 'mode="live"' in registry_str
 
     def test_concurrent_metric_updates(self):
         """Test thread safety of metrics collection."""
@@ -167,9 +190,13 @@ class TestPreservationMetricsCollector:
         for t in threads:
             t.join()
         
-        # Should fail until implemented - no errors should occur
+        # No errors should occur
         assert len(errors) == 0
-        assert collector.models_preserved_total._value.get() == 500
+        
+        # Check that all saves were recorded (5 threads * 100 saves each = 500)
+        preserved_samples = list(collector.models_preserved_total.collect()[0].samples)
+        total_saves = sum(sample.value for sample in preserved_samples)
+        assert total_saves == 500
 
 
 class TestGrafanaDashboardConfig:
@@ -617,6 +644,10 @@ class TestIntegrationScenarios:
                 storage_path="gs://bucket/test"
             )
             
-            # Should fail until implemented
+            # Check that both logging and metrics worked
             mock_logger.info.assert_called_once()
-            assert collector.models_preserved_total._value.get() == 1
+            
+            # Check metrics were recorded
+            preserved_samples = list(collector.models_preserved_total.collect()[0].samples)
+            total_saves = sum(sample.value for sample in preserved_samples)
+            assert total_saves == 1
