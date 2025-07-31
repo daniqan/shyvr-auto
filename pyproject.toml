@@ -66,6 +66,7 @@ dependencies = [
     "google-cloud-logging>=3.10.0",
     "httpx>=0.28.1",
     "google-cloud-monitoring-dashboards>=2.18.2",
+    "google-cloud-storage>=3.2.0",
 ]
 
 [project.optional-dependencies]

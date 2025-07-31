@@ -1,715 +1,586 @@
 """
 Model Preservation Manager
 
-Orchestrates model preservation across the system with:
-- Graceful shutdown handling
-- Automated backups
-- Model versioning
-- Rollback capabilities
-- Mode-specific isolation
+Coordinates between GCS storage and database metadata for comprehensive model preservation.
+Implements Phase 1.4 requirements from TODO_CHECKLIST.md.
 """
 
 import asyncio
-import pickle
 import signal
-import io
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
-from pathlib import Path
-import structlog
-import torch
-import numpy as np
+from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass, field
+import re
 
 from .base import (
-    ModelMetadata, ModelType, PreservationConfig, PreservationPriority,
-    PreservationError, BackupError, RestoreError
+    ModelMetadata,
+    PreservationPriority,
+    ModelState,
+    PreservationError,
+    VersionError,
+    generate_model_id,
+    calculate_checksum
 )
-from .gcs_handler import GCSModelPreservationHandler
-from src.ml_analysis.model_manager import ModelManager
-from src.rl_agent.dqn_agent import DQNTradingAgent
-from src.utils.config import get_config
-from src.activity_logging.activity_logger import (
-    activity_logger, ActivityCategory, ActivityAction, ActivitySeverity
-)
+from .gcs_handler import GCSHandler
 
 
-logger = structlog.get_logger()
-
-
-class ModelPreservationManager:
-    """
-    Central manager for model preservation across the system
+@dataclass
+class PreservationConfig:
+    """Configuration for preservation manager"""
+    gcs_bucket: str
+    backup_interval_hours: float = 6.0
+    max_versions_per_model: int = 10
+    enable_compression: bool = True
+    mode_isolation: bool = True
+    auto_backup: bool = True
+    emergency_backup: bool = True
     
-    Handles:
-    - Automatic versioning
-    - Emergency backups
-    - Graceful shutdown preservation
-    - Mode-specific model isolation
-    - Cross-mode model migration
+    def __post_init__(self):
+        """Validate configuration"""
+        if self.backup_interval_hours <= 0:
+            raise ValueError("Backup interval must be positive")
+        if self.max_versions_per_model < 1:
+            raise ValueError("Max versions must be at least 1")
+
+
+@dataclass
+class PreservationStats:
+    """Statistics for preservation system"""
+    total_models: int = 0
+    active_models: int = 0
+    total_size_mb: float = 0.0
+    models_by_type: Dict[str, int] = field(default_factory=dict)
+    models_by_mode: Dict[str, int] = field(default_factory=dict)
+    last_backup: Optional[datetime] = None
+    backup_success_rate: float = 100.0
+
+
+class PreservationManager:
+    """
+    Manager for model preservation
+    
+    Coordinates between GCS storage and database operations to provide:
+    - Auto-versioning support
+    - Graceful shutdown handling
+    - Emergency backup functionality
+    - Background backup tasks
+    - Rollback functionality
+    - Model migration between modes
     """
     
-    def __init__(self, config: Optional[PreservationConfig] = None):
-        self.logger = structlog.get_logger().bind(component="ModelPreservationManager")
-        
-        # Load config
-        if config is None:
-            app_config = get_config()
-            config = self._build_preservation_config(app_config)
-        
+    def __init__(self, config: PreservationConfig):
         self.config = config
-        self.handler = GCSModelPreservationHandler(config)
         
-        # Model registry
-        self._ml_manager: Optional[ModelManager] = None
-        self._rl_agents: Dict[str, DQNTradingAgent] = {}
+        # Initialize storage handler
+        self.storage_handler = GCSHandler(bucket_name=config.gcs_bucket)
         
-        # State tracking
-        self._current_mode = "analysis"
-        self._is_shutting_down = False
-        self._auto_backup_task: Optional[asyncio.Task] = None
-        self._version_tracker: Dict[str, Dict[str, int]] = {}  # model_type -> version info
+        # Database handler will be initialized later
+        self.db_handler = None
         
-        # Register shutdown handlers
-        self._register_shutdown_handlers()
+        # Internal state
+        self._shutdown_event = asyncio.Event()
+        self._background_task = None
+        self._is_running = False
+        self._version_cache: Dict[str, List[str]] = {}  # model_type -> versions
+        
+        # Register signal handlers
+        self._register_signal_handlers()
     
-    def _build_preservation_config(self, app_config) -> PreservationConfig:
-        """Build preservation config from app config"""
-        return PreservationConfig(
-            gcs_bucket=app_config.apis.get("gcs", {}).get("bucket", "shyvr-models"),
-            gcs_prefix="models",
-            max_backups_per_model=10,
-            backup_retention_days=30,
-            emergency_backup_retention_days=90,
-            versioning_enabled=True,
-            compression_enabled=True,
-            isolate_by_mode=True,
-            emergency_backup_enabled=True,
-            emergency_backup_interval_minutes=5
-        )
-    
-    def _register_shutdown_handlers(self):
+    def _register_signal_handlers(self):
         """Register signal handlers for graceful shutdown"""
-        def shutdown_handler(signum, frame):
-            self.logger.info("Shutdown signal received", signal=signum)
-            asyncio.create_task(self._emergency_shutdown())
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        asyncio.create_task(self._handle_shutdown())
+    
+    async def _handle_shutdown(self):
+        """Perform emergency backup on shutdown"""
+        try:
+            if self.config.emergency_backup:
+                await self.emergency_backup()
+        finally:
+            self._shutdown_event.set()
+    
+    async def initialize(self):
+        """Initialize handlers and start services"""
+        # Initialize storage handler
+        await self.storage_handler.initialize()
         
-        signal.signal(signal.SIGTERM, shutdown_handler)
-        signal.signal(signal.SIGINT, shutdown_handler)
+        # Initialize database handler when available
+        if self.db_handler:
+            await self.db_handler.initialize()
+        
+        self._is_running = True
     
     async def start(self):
-        """Start preservation services"""
-        try:
-            await self.handler.start()
-            
-            # Start auto-backup task
-            self._auto_backup_task = asyncio.create_task(self._auto_backup_loop())
-            
-            # Log startup
-            await activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.START,
-                source="model_preservation",
-                event_type="preservation_started",
-                title="Model preservation system started",
-                severity=ActivitySeverity.INFO,
-                metadata={
-                    "config": {
-                        "gcs_bucket": self.config.gcs_bucket,
-                        "versioning_enabled": self.config.versioning_enabled,
-                        "emergency_backup_enabled": self.config.emergency_backup_enabled,
-                        "isolate_by_mode": self.config.isolate_by_mode
-                    }
-                }
-            )
-            
-            self.logger.info("Model preservation manager started")
-            
-        except Exception as e:
-            self.logger.error("Failed to start preservation manager", error=str(e))
-            raise
+        """Start background services"""
+        await self.initialize()
+        
+        # Start background backup task if enabled
+        if self.config.auto_backup:
+            self._background_task = asyncio.create_task(self._background_backup_loop())
     
     async def stop(self):
-        """Stop preservation services gracefully"""
-        try:
-            self._is_shutting_down = True
-            
-            # Cancel auto-backup task
-            if self._auto_backup_task:
-                self._auto_backup_task.cancel()
-                try:
-                    await self._auto_backup_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Perform final backup
-            await self._perform_shutdown_backup()
-            
-            # Stop handler
-            await self.handler.stop()
-            
-            self.logger.info("Model preservation manager stopped")
-            
-        except Exception as e:
-            self.logger.error("Error during preservation shutdown", error=str(e))
-    
-    def register_ml_manager(self, ml_manager: ModelManager):
-        """Register ML model manager for preservation"""
-        self._ml_manager = ml_manager
-        self.logger.info("ML manager registered for preservation")
-    
-    def register_rl_agent(self, agent_id: str, agent: DQNTradingAgent):
-        """Register RL agent for preservation"""
-        self._rl_agents[agent_id] = agent
-        self.logger.info("RL agent registered", agent_id=agent_id)
-    
-    async def set_mode(self, mode: str):
-        """Set current operational mode"""
-        if mode not in ["analysis", "simulation", "live"]:
-            raise ValueError(f"Invalid mode: {mode}")
+        """Stop services gracefully"""
+        self._is_running = False
+        self._shutdown_event.set()
         
-        if mode != self._current_mode:
-            # Backup current mode models before switching
-            await self._backup_models_for_mode_change(self._current_mode, mode)
-            
-        self._current_mode = mode
-        self.logger.info("Mode changed", new_mode=mode)
+        # Cancel background task
+        if self._background_task and not self._background_task.done():
+            self._background_task.cancel()
+            try:
+                await self._background_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Perform final backup if configured
+        if self.config.emergency_backup:
+            await self.emergency_backup()
     
-    async def save_ml_model(
+    async def save_model(
         self,
-        model_type: ModelType,
-        model_data: Any,
-        performance_metrics: Optional[Dict[str, Any]] = None,
-        reason: str = "manual_save",
+        model_data: bytes,
+        model_type: str,
+        version: Optional[str] = None,
+        mode: str = "analysis",
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         priority: PreservationPriority = PreservationPriority.NORMAL
     ) -> str:
-        """Save an ML model with versioning"""
+        """
+        Save a model with auto-versioning support
+        
+        Args:
+            model_data: Serialized model data
+            model_type: Type of model (e.g., "lstm", "dqn")
+            version: Optional version string, auto-generated if not provided
+            mode: Operational mode (analysis, simulation, live)
+            tags: Optional tags for the model
+            metadata: Optional additional metadata
+            priority: Preservation priority
+            
+        Returns:
+            model_id: Unique identifier for the saved model
+        """
         try:
-            # Serialize model
-            if isinstance(model_data, torch.nn.Module):
-                # PyTorch model
-                buffer = io.BytesIO()
-                torch.save({
-                    'model_state_dict': model_data.state_dict(),
-                    'model_config': getattr(model_data, 'config', {})
-                }, buffer)
-                serialized_data = buffer.getvalue()
-            else:
-                # Generic Python object
-                serialized_data = pickle.dumps(model_data)
+            # Generate version if not provided
+            if not version:
+                version = await self._generate_next_version(model_type)
             
-            # Get version
-            version = self._get_next_version(model_type)
-            
-            # Create metadata
-            metadata = ModelMetadata(
-                model_id=f"{model_type.value}_{self._current_mode}",
+            # Create metadata object
+            model_metadata = ModelMetadata(
+                model_id=generate_model_id(model_type, version),
                 model_type=model_type,
                 version=version,
-                mode=self._current_mode,
-                created_at=datetime.utcnow(),
-                preserved_at=datetime.utcnow(),
-                checksum="",  # Will be calculated by handler
-                size_bytes=0,  # Will be calculated by handler
-                performance_metrics=performance_metrics or {},
-                preservation_reason=reason,
-                priority=priority,
-                tags=[self._current_mode, reason]
+                created_at=datetime.now(),
+                preserved_at=datetime.now(),
+                file_size_bytes=len(model_data),
+                checksum=calculate_checksum(model_data),
+                preservation_priority=priority,
+                state=ModelState.ACTIVE,
+                mode=mode,
+                tags=tags or [],
+                metadata=metadata or {}
             )
             
-            # Save using handler
-            preservation_id = await self.handler.save_model(
-                serialized_data,
-                metadata,
-                priority
-            )
+            # Save to storage
+            storage_path = await self.storage_handler.save(model_data, model_metadata)
+            model_metadata.file_path = storage_path
             
-            # Log activity
-            await activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.SAVE,
-                source="model_preservation",
-                event_type="ml_model_saved",
-                title=f"ML model saved: {model_type.value}",
-                severity=ActivitySeverity.INFO,
-                metadata={
-                    "preservation_id": preservation_id,
-                    "model_type": model_type.value,
-                    "version": version,
-                    "mode": self._current_mode,
-                    "reason": reason,
-                    "size_mb": len(serialized_data) / 1024 / 1024
-                }
-            )
-            
-            return preservation_id
-            
-        except Exception as e:
-            self.logger.error(
-                "Failed to save ML model",
-                model_type=model_type.value,
-                error=str(e)
-            )
-            raise BackupError(f"Failed to save ML model: {str(e)}")
-    
-    async def save_rl_agent(
-        self,
-        agent_id: str,
-        agent: Optional[DQNTradingAgent] = None,
-        performance_metrics: Optional[Dict[str, Any]] = None,
-        reason: str = "manual_save",
-        priority: PreservationPriority = PreservationPriority.NORMAL
-    ) -> str:
-        """Save an RL agent with versioning"""
-        try:
-            # Get agent if not provided
-            if agent is None:
-                agent = self._rl_agents.get(agent_id)
-                if not agent:
-                    raise ValueError(f"Unknown agent: {agent_id}")
-            
-            # Get agent state
-            agent_state = {
-                'model_state': agent.save_model_state(),
-                'config': agent.config,
-                'training_info': {
-                    'episodes': getattr(agent, 'training_episodes', 0),
-                    'epsilon': getattr(agent, 'epsilon', 0),
-                    'replay_buffer_size': len(getattr(agent, 'replay_buffer', []))
-                }
-            }
-            
-            # Serialize
-            serialized_data = pickle.dumps(agent_state)
-            
-            # Get version
-            version = self._get_next_version(ModelType.DQN)
-            
-            # Create metadata
-            metadata = ModelMetadata(
-                model_id=f"rl_agent_{agent_id}",
-                model_type=ModelType.DQN,
-                version=version,
-                mode=self._current_mode,
-                created_at=datetime.utcnow(),
-                preserved_at=datetime.utcnow(),
-                checksum="",
-                size_bytes=0,
-                performance_metrics=performance_metrics or {},
-                training_info=agent_state['training_info'],
-                preservation_reason=reason,
-                priority=priority,
-                tags=[self._current_mode, reason, agent_id]
-            )
-            
-            # Save using handler
-            preservation_id = await self.handler.save_model(
-                serialized_data,
-                metadata,
-                priority
-            )
-            
-            # Log activity
-            await activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.SAVE,
-                source="model_preservation",
-                event_type="rl_agent_saved",
-                title=f"RL agent saved: {agent_id}",
-                severity=ActivitySeverity.INFO,
-                metadata={
-                    "preservation_id": preservation_id,
-                    "agent_id": agent_id,
-                    "version": version,
-                    "mode": self._current_mode,
-                    "reason": reason,
-                    "training_episodes": agent_state['training_info']['episodes']
-                }
-            )
-            
-            return preservation_id
-            
-        except Exception as e:
-            self.logger.error(
-                "Failed to save RL agent",
-                agent_id=agent_id,
-                error=str(e)
-            )
-            raise BackupError(f"Failed to save RL agent: {str(e)}")
-    
-    async def load_ml_model(
-        self,
-        model_type: ModelType,
-        version: Optional[str] = None,
-        mode: Optional[str] = None
-    ) -> Tuple[Any, ModelMetadata]:
-        """Load an ML model"""
-        try:
-            # Find latest model if version not specified
-            if not version:
-                models = await self.handler.list_models(
-                    model_type=model_type,
-                    mode=mode or self._current_mode,
-                    limit=1
-                )
-                if not models:
-                    raise RestoreError(f"No models found for {model_type.value}")
+            # Save metadata to database if available
+            if self.db_handler:
+                model_id = await self.db_handler.save_metadata(model_metadata)
                 
-                # Use latest model
-                latest_model = models[0]
-                preservation_id = self._generate_preservation_id_from_metadata(latest_model)
+                # Record save event
+                await self.db_handler.record_event(
+                    model_id=model_id,
+                    event_type="saved",
+                    details={"priority": priority.value}
+                )
             else:
-                # Find specific version
-                models = await self.handler.list_models(
+                model_id = model_metadata.model_id
+            
+            # Enforce version limit
+            await self._enforce_version_limit(model_type, mode)
+            
+            return model_id
+            
+        except Exception as e:
+            raise PreservationError(f"Failed to save model: {str(e)}")
+    
+    async def load_model(
+        self,
+        model_type: str,
+        version: Optional[str] = None,
+        mode: str = "analysis",
+        fallback: bool = False
+    ) -> Tuple[bytes, Dict[str, Any]]:
+        """
+        Load a model from storage
+        
+        Args:
+            model_type: Type of model to load
+            version: Specific version to load (latest if not specified)
+            mode: Operational mode
+            fallback: Whether to fallback to previous version if not found
+            
+        Returns:
+            Tuple of (model_data, metadata)
+        """
+        try:
+            # Get metadata from database if available
+            if self.db_handler:
+                metadata = await self.db_handler.get_metadata(
                     model_type=model_type,
-                    mode=mode or self._current_mode,
                     version=version,
-                    limit=1
+                    mode=mode
                 )
-                if not models:
-                    raise RestoreError(
-                        f"Model not found: {model_type.value} v{version}"
-                    )
                 
-                preservation_id = self._generate_preservation_id_from_metadata(models[0])
-            
-            # Load model
-            model_data, metadata = await self.handler.load_model(preservation_id)
-            
-            # Deserialize
-            if model_type == ModelType.LSTM:
-                # PyTorch model
-                buffer = io.BytesIO(model_data)
-                checkpoint = torch.load(buffer, map_location='cpu')
-                model = checkpoint  # Return checkpoint for model manager to handle
+                if not metadata and fallback:
+                    # Try to find previous version
+                    versions = await self.db_handler.get_versions(
+                        model_type=model_type,
+                        mode=mode
+                    )
+                    if versions:
+                        # Use previous version
+                        metadata = await self.db_handler.get_metadata(
+                            model_type=model_type,
+                            version=versions[0]["version"],
+                            mode=mode
+                        )
+                
+                if not metadata:
+                    raise FileNotFoundError(f"Model not found: {model_type} {version or 'latest'}")
+                
+                # Load from storage
+                model_data = await self.storage_handler.load(metadata["storage_path"])
+                
+                # Record load event
+                await self.db_handler.record_event(
+                    model_id=metadata["model_id"],
+                    event_type="loaded",
+                    details={
+                        "source": "fallback" if fallback and metadata["version"] != version else "primary",
+                        "requested_version": version
+                    }
+                )
+                
+                return model_data, metadata
             else:
-                # Generic Python object
-                model = pickle.loads(model_data)
-            
-            self.logger.info(
-                "ML model loaded",
-                model_type=model_type.value,
-                version=metadata.version,
-                mode=metadata.mode
-            )
-            
-            return model, metadata
-            
+                # Direct storage load without database
+                # This is a simplified implementation for when db_handler is not available
+                raise FileNotFoundError("Model not found: database handler not available")
+                
         except Exception as e:
-            self.logger.error(
-                "Failed to load ML model",
-                model_type=model_type.value,
-                error=str(e)
-            )
-            raise RestoreError(f"Failed to load ML model: {str(e)}")
-    
-    async def load_rl_agent(
-        self,
-        agent_id: str,
-        version: Optional[str] = None,
-        mode: Optional[str] = None
-    ) -> Tuple[Dict[str, Any], ModelMetadata]:
-        """Load an RL agent"""
-        try:
-            # Find agent models
-            tags = [agent_id]
-            models = await self.handler.list_models(
-                model_type=ModelType.DQN,
-                mode=mode or self._current_mode,
-                version=version,
-                tags=tags,
-                limit=1
-            )
-            
-            if not models:
-                raise RestoreError(f"No models found for agent: {agent_id}")
-            
-            # Load model
-            preservation_id = self._generate_preservation_id_from_metadata(models[0])
-            model_data, metadata = await self.handler.load_model(preservation_id)
-            
-            # Deserialize
-            agent_state = pickle.loads(model_data)
-            
-            self.logger.info(
-                "RL agent loaded",
-                agent_id=agent_id,
-                version=metadata.version,
-                mode=metadata.mode
-            )
-            
-            return agent_state, metadata
-            
-        except Exception as e:
-            self.logger.error(
-                "Failed to load RL agent",
-                agent_id=agent_id,
-                error=str(e)
-            )
-            raise RestoreError(f"Failed to load RL agent: {str(e)}")
+            if isinstance(e, FileNotFoundError):
+                raise
+            raise PreservationError(f"Failed to load model: {str(e)}")
     
     async def rollback_model(
         self,
-        model_type: ModelType,
-        target_version: Optional[str] = None,
-        target_date: Optional[datetime] = None
-    ) -> Tuple[Any, ModelMetadata]:
-        """Rollback to a previous model version"""
+        model_type: str,
+        target_version: str,
+        mode: str = "analysis"
+    ) -> Dict[str, Any]:
+        """
+        Rollback to a previous model version
+        
+        Args:
+            model_type: Type of model to rollback
+            target_version: Version to rollback to
+            mode: Operational mode
+            
+        Returns:
+            Rollback result information
+        """
         try:
-            # Perform rollback
-            model_data, metadata = await self.handler.rollback_model(
+            # Get current version metadata
+            current_metadata = await self.db_handler.get_metadata(
                 model_type=model_type,
-                target_version=target_version,
-                target_date=target_date
+                mode=mode
             )
             
-            # Deserialize based on type
-            if model_type in [ModelType.LSTM, ModelType.DQN]:
-                model = pickle.loads(model_data)
-            else:
-                model = model_data
+            # Get target version metadata
+            target_metadata = await self.db_handler.get_metadata(
+                model_type=model_type,
+                version=target_version,
+                mode=mode
+            )
             
-            # Log rollback
-            await activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.UPDATE,
-                source="model_preservation",
-                event_type="model_rollback",
-                title=f"Model rolled back: {model_type.value}",
-                severity=ActivitySeverity.WARNING,
-                metadata={
-                    "model_type": model_type.value,
-                    "rolled_back_to": metadata.version,
-                    "target_version": target_version,
-                    "target_date": target_date.isoformat() if target_date else None
+            if not target_metadata:
+                raise VersionError(f"Target version not found: {target_version}")
+            
+            # Load target model
+            model_data = await self.storage_handler.load(target_metadata["storage_path"])
+            
+            # Save as new version
+            new_version = await self._generate_next_version(model_type)
+            new_model_id = await self.save_model(
+                model_data=model_data,
+                model_type=model_type,
+                version=new_version,
+                mode=mode,
+                tags=["rollback", f"from_{current_metadata['version']}"],
+                metadata={"rollback_from": current_metadata["version"], "rollback_to": target_version}
+            )
+            
+            # Record rollback event
+            await self.db_handler.record_event(
+                model_id=new_model_id,
+                event_type="rollback",
+                details={
+                    "from_version": current_metadata["version"],
+                    "to_version": target_version,
+                    "new_version": new_version
                 }
             )
             
-            return model, metadata
+            return {
+                "rolled_back_from": current_metadata["version"],
+                "rolled_back_to": target_version,
+                "new_version": new_version,
+                "model_id": new_model_id
+            }
             
         except Exception as e:
-            self.logger.error(
-                "Failed to rollback model",
-                model_type=model_type.value,
-                error=str(e)
-            )
-            raise
+            raise PreservationError(f"Failed to rollback model: {str(e)}")
     
-    async def list_available_models(
+    async def migrate_model(
         self,
-        model_type: Optional[ModelType] = None,
-        mode: Optional[str] = None,
-        limit: int = 50
-    ) -> List[ModelMetadata]:
-        """List available preserved models"""
-        return await self.handler.list_models(
-            model_type=model_type,
-            mode=mode,
-            limit=limit
-        )
-    
-    async def get_preservation_health(self) -> Dict[str, Any]:
-        """Get preservation system health status"""
-        health = await self.handler.health_check()
+        model_type: str,
+        version: str,
+        from_mode: str,
+        to_mode: str
+    ) -> str:
+        """
+        Migrate a model between operational modes
         
-        # Add manager-specific info
-        health['manager'] = {
-            'current_mode': self._current_mode,
-            'registered_ml_models': self._ml_manager is not None,
-            'registered_rl_agents': len(self._rl_agents),
-            'auto_backup_active': self._auto_backup_task and not self._auto_backup_task.done(),
-            'is_shutting_down': self._is_shutting_down
-        }
-        
-        return health
-    
-    async def _auto_backup_loop(self):
-        """Background task for automatic backups"""
-        while not self._is_shutting_down:
-            try:
-                # Wait for interval
-                await asyncio.sleep(self.config.emergency_backup_interval_minutes * 60)
-                
-                if not self._is_shutting_down:
-                    await self._perform_auto_backup()
-                    
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error("Auto-backup failed", error=str(e))
-    
-    async def _perform_auto_backup(self):
-        """Perform automatic backup of active models"""
+        Args:
+            model_type: Type of model to migrate
+            version: Version to migrate
+            from_mode: Source mode
+            to_mode: Target mode
+            
+        Returns:
+            New model ID in target mode
+        """
         try:
-            backup_count = 0
+            # Get source model metadata
+            source_metadata = await self.db_handler.get_metadata(
+                model_type=model_type,
+                version=version,
+                mode=from_mode
+            )
             
-            # Backup ML models
-            if self._ml_manager:
-                for model_type in [ModelType.LSTM, ModelType.ENSEMBLE]:
-                    try:
-                        # Get model performance
-                        perf = self._ml_manager.get_model_performance()
-                        
-                        # Save if model is trained
-                        if self._ml_manager._models.get(model_type):
-                            await self.save_ml_model(
-                                model_type=model_type,
-                                model_data=self._ml_manager._models[model_type],
-                                performance_metrics=perf.get('performance', {}).get(model_type, {}),
-                                reason="auto_backup",
-                                priority=PreservationPriority.NORMAL
-                            )
-                            backup_count += 1
-                    except Exception as e:
-                        self.logger.error(
-                            "Failed to auto-backup ML model",
-                            model_type=model_type.value,
-                            error=str(e)
-                        )
+            if not source_metadata:
+                raise FileNotFoundError(f"Source model not found: {model_type} {version} in {from_mode}")
             
-            # Backup RL agents
-            for agent_id, agent in self._rl_agents.items():
-                try:
-                    await self.save_rl_agent(
-                        agent_id=agent_id,
-                        agent=agent,
-                        reason="auto_backup",
-                        priority=PreservationPriority.NORMAL
-                    )
-                    backup_count += 1
-                except Exception as e:
-                    self.logger.error(
-                        "Failed to auto-backup RL agent",
-                        agent_id=agent_id,
-                        error=str(e)
-                    )
+            # Load model data
+            model_data = await self.storage_handler.load(source_metadata["storage_path"])
             
-            if backup_count > 0:
-                self.logger.info(
-                    "Auto-backup completed",
-                    models_backed_up=backup_count
-                )
-                
+            # Save to new mode
+            new_model_id = await self.save_model(
+                model_data=model_data,
+                model_type=model_type,
+                version=version,
+                mode=to_mode,
+                tags=[f"migrated_from_{from_mode}"],
+                metadata={"migrated_from": from_mode, "original_model_id": source_metadata["model_id"]}
+            )
+            
+            return new_model_id
+            
         except Exception as e:
-            self.logger.error("Auto-backup failed", error=str(e))
+            raise PreservationError(f"Failed to migrate model: {str(e)}")
     
-    async def _perform_shutdown_backup(self):
-        """Perform emergency backup during shutdown"""
+    async def emergency_backup(self) -> List[str]:
+        """
+        Perform emergency backup of all active models
+        
+        Returns:
+            List of backed up model IDs
+        """
+        backed_up = []
+        
         try:
-            self.logger.info("Performing shutdown backup")
-            
-            # Backup all models with CRITICAL priority
-            if self._ml_manager:
-                for model_type, model in self._ml_manager._models.items():
-                    if model and model.is_model_trained():
-                        await self.save_ml_model(
-                            model_type=model_type,
-                            model_data=model,
-                            reason="shutdown_backup",
+            if self.db_handler:
+                # Get all active models
+                active_models = await self.db_handler.get_active_models()
+                
+                for model in active_models:
+                    try:
+                        # Load model data
+                        model_data = await self.storage_handler.load(model["storage_path"])
+                        
+                        # Save with emergency tag
+                        model_id = await self.save_model(
+                            model_data=model_data,
+                            model_type=model["model_type"],
+                            version=f"{model['version']}-emergency-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                            mode=model["mode"],
+                            tags=["emergency_backup"],
                             priority=PreservationPriority.CRITICAL
                         )
+                        
+                        backed_up.append(model_id)
+                    except Exception as e:
+                        # Log error but continue with other models
+                        pass
             
-            # Backup all RL agents
-            for agent_id, agent in self._rl_agents.items():
-                await self.save_rl_agent(
-                    agent_id=agent_id,
-                    agent=agent,
-                    reason="shutdown_backup",
-                    priority=PreservationPriority.CRITICAL
-                )
-            
-            self.logger.info("Shutdown backup completed")
+            return backed_up
             
         except Exception as e:
-            self.logger.error("Shutdown backup failed", error=str(e))
+            raise PreservationError(f"Emergency backup failed: {str(e)}")
     
-    async def _backup_models_for_mode_change(self, old_mode: str, new_mode: str):
-        """Backup models when changing modes"""
-        try:
-            self.logger.info(
-                "Backing up models for mode change",
-                old_mode=old_mode,
-                new_mode=new_mode
-            )
+    async def get_stats(self) -> PreservationStats:
+        """Get preservation system statistics"""
+        stats = PreservationStats()
+        
+        if self.db_handler:
+            db_stats = await self.db_handler.get_preservation_stats()
+            stats.total_models = db_stats.get("total_models", 0)
+            stats.active_models = db_stats.get("active_models", 0)
+            stats.total_size_mb = db_stats.get("total_size_bytes", 0) / 1024 / 1024
+            stats.models_by_type = db_stats.get("models_by_type", {})
+            stats.models_by_mode = db_stats.get("models_by_mode", {})
+        
+        return stats
+    
+    async def cleanup_old_versions(self, days: int = 30) -> int:
+        """
+        Clean up model versions older than specified days
+        
+        Args:
+            days: Age threshold in days
             
-            # Backup all active models with HIGH priority
-            if self._ml_manager:
-                for model_type, model in self._ml_manager._models.items():
-                    if model and model.is_model_trained():
-                        await self.save_ml_model(
+        Returns:
+            Number of versions deleted
+        """
+        deleted_count = 0
+        
+        if self.db_handler:
+            old_versions = await self.db_handler.get_old_versions(days=days)
+            
+            for version in old_versions:
+                try:
+                    # Delete from storage
+                    await self.storage_handler.delete(version["storage_path"])
+                    
+                    # Update state in database
+                    await self.db_handler.update_state(
+                        model_type=version["model_type"],
+                        version=version["version"],
+                        state=ModelState.DELETED
+                    )
+                    
+                    deleted_count += 1
+                except Exception:
+                    # Log error but continue
+                    pass
+        
+        return deleted_count
+    
+    async def track_performance(self, model_id: str, metrics: Dict[str, Any]):
+        """Track model performance metrics"""
+        if self.db_handler:
+            await self.db_handler.track_performance(model_id=model_id, metrics=metrics)
+    
+    async def _generate_next_version(self, model_type: str) -> str:
+        """Generate next version number for a model type"""
+        if self.db_handler:
+            # Get existing versions from database
+            versions = await self.db_handler.get_versions(model_type=model_type)
+            version_numbers = []
+            
+            for v in versions:
+                # Parse version string (e.g., "v1.0.0" -> [1, 0, 0])
+                match = re.match(r'^v?(\d+)\.(\d+)\.(\d+)', v["version"])
+                if match:
+                    version_numbers.append([int(match.group(1)), int(match.group(2)), int(match.group(3))])
+            
+            if version_numbers:
+                # Find highest version
+                version_numbers.sort(reverse=True)
+                major, minor, patch = version_numbers[0]
+                # Increment patch version
+                return f"v{major}.{minor}.{patch + 1}"
+            else:
+                return "v1.0.0"
+        else:
+            # Simple versioning without database
+            return f"v1.0.0"
+    
+    async def _enforce_version_limit(self, model_type: str, mode: str):
+        """Enforce maximum version limit per model"""
+        if self.db_handler:
+            # Get all versions for this model type and mode
+            versions = await self.db_handler.get_versions(model_type=model_type)
+            
+            # Filter by mode if isolation is enabled
+            if self.config.mode_isolation:
+                versions = [v for v in versions if v.get("mode") == mode]
+            
+            if len(versions) >= self.config.max_versions_per_model:
+                # Sort by creation date and delete oldest
+                versions.sort(key=lambda v: v["created_at"])
+                versions_to_delete = versions[:len(versions) - self.config.max_versions_per_model + 1]
+                
+                for version in versions_to_delete:
+                    try:
+                        # Get full metadata to find storage path
+                        metadata = await self.db_handler.get_metadata(
                             model_type=model_type,
-                            model_data=model,
-                            reason=f"mode_change_{old_mode}_to_{new_mode}",
-                            priority=PreservationPriority.HIGH
+                            version=version["version"],
+                            mode=mode if self.config.mode_isolation else None
                         )
-            
-            # Backup RL agents
-            for agent_id, agent in self._rl_agents.items():
-                await self.save_rl_agent(
-                    agent_id=agent_id,
-                    agent=agent,
-                    reason=f"mode_change_{old_mode}_to_{new_mode}",
-                    priority=PreservationPriority.HIGH
+                        if metadata and "storage_path" in metadata:
+                            # Delete from storage
+                            await self.storage_handler.delete(metadata["storage_path"])
+                            
+                            # Update state in database
+                            await self.db_handler.update_state(
+                                model_type=model_type,
+                                version=version["version"],
+                                state=ModelState.DELETED
+                            )
+                    except Exception:
+                        # Log error but continue
+                        pass
+    
+    async def _background_backup_loop(self):
+        """Background task for automatic backups"""
+        while self._is_running:
+            try:
+                # Wait for backup interval or shutdown
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self.config.backup_interval_hours * 3600
                 )
-            
-        except Exception as e:
-            self.logger.error(
-                "Mode change backup failed",
-                old_mode=old_mode,
-                new_mode=new_mode,
-                error=str(e)
-            )
-    
-    async def _emergency_shutdown(self):
-        """Emergency shutdown handler"""
-        self._is_shutting_down = True
-        
-        try:
-            # Perform critical backup
-            await self._perform_shutdown_backup()
-            
-            # Log emergency shutdown
-            await activity_logger.log_activity(
-                category=ActivityCategory.ML_RL,
-                action=ActivityAction.STOP,
-                source="model_preservation",
-                event_type="emergency_shutdown",
-                title="Emergency model preservation during shutdown",
-                severity=ActivitySeverity.CRITICAL
-            )
-            
-        except Exception as e:
-            self.logger.error("Emergency shutdown failed", error=str(e))
-    
-    def _get_next_version(self, model_type: ModelType) -> str:
-        """Get next version number for a model type"""
-        if not self.config.versioning_enabled:
-            return "latest"
-        
-        # Initialize version tracker if needed
-        if model_type.value not in self._version_tracker:
-            self._version_tracker[model_type.value] = {
-                'major': 1,
-                'minor': 0,
-                'patch': 0
-            }
-        
-        version_info = self._version_tracker[model_type.value]
-        
-        # Auto-increment patch version
-        if self.config.auto_increment_version:
-            version_info['patch'] += 1
-        
-        # Format version
-        version = self.config.version_format.format(**version_info)
-        
-        return version
-    
-    def _generate_preservation_id_from_metadata(self, metadata: ModelMetadata) -> str:
-        """Generate preservation ID from metadata"""
-        components = [
-            metadata.model_type.value,
-            metadata.mode,
-            metadata.version,
-            metadata.preserved_at.isoformat()
-        ]
-        return "_".join(components).replace(":", "-")
+                
+                if self._shutdown_event.is_set():
+                    break
+                    
+            except asyncio.TimeoutError:
+                # Perform backup
+                if self._is_running and self.db_handler:
+                    active_models = await self.db_handler.get_active_models()
+                    
+                    for model in active_models:
+                        try:
+                            # Load and re-save model
+                            model_data = await self.storage_handler.load(model["storage_path"])
+                            
+                            await self.save_model(
+                                model_data=model_data,
+                                model_type=model["model_type"],
+                                version=f"{model['version']}-backup-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                                mode=model["mode"],
+                                tags=["auto_backup"],
+                                priority=PreservationPriority.NORMAL
+                            )
+                        except Exception:
+                            # Log error but continue
+                            pass
