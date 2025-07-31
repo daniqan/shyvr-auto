@@ -227,6 +227,8 @@ class PreservationManager:
             return model_id
             
         except Exception as e:
+            if isinstance(e, ValueError):
+                raise
             raise PreservationError(f"Failed to save model: {str(e)}")
     
     async def load_model(
@@ -319,7 +321,7 @@ class PreservationManager:
                 raise FileNotFoundError("Model not found: database handler not available")
                 
         except Exception as e:
-            if isinstance(e, FileNotFoundError):
+            if isinstance(e, (FileNotFoundError, ValueError)):
                 raise
             raise PreservationError(f"Failed to load model: {str(e)}")
     
@@ -571,6 +573,7 @@ class PreservationManager:
         self,
         model_type: str,
         mode: Optional[str] = None,
+        branch: str = "main",
         include_prerelease: bool = False
     ) -> Optional[str]:
         """
@@ -579,6 +582,7 @@ class PreservationManager:
         Args:
             model_type: Type of model
             mode: Optional mode filter
+            branch: Branch to get latest version from
             include_prerelease: Whether to include prerelease versions
             
         Returns:
@@ -588,7 +592,7 @@ class PreservationManager:
             return None
         
         try:
-            versions = await self.db_handler.get_versions(model_type=model_type)
+            versions = await self.db_handler.get_versions(model_type=model_type, branch=branch)
             
             # Filter by mode if specified
             if mode:
@@ -925,7 +929,8 @@ class PreservationManager:
     async def resolve_tag(
         self,
         model_type: str,
-        tag_name: str
+        tag_name: str,
+        branch: str = "main"
     ) -> Optional[str]:
         """
         Resolve a tag name to its version
@@ -933,6 +938,7 @@ class PreservationManager:
         Args:
             model_type: Type of model
             tag_name: Name of tag to resolve
+            branch: Branch where tag exists
             
         Returns:
             Version string or None if tag not found
@@ -941,7 +947,7 @@ class PreservationManager:
             return None
         
         try:
-            return await self.db_handler.resolve_tag_to_version(model_type, tag_name)
+            return await self.db_handler.resolve_tag_to_version(model_type, tag_name, branch=branch)
         except Exception:
             return None
     

@@ -459,6 +459,7 @@ class TestBranchAwareModelOperations:
         }
         
         mock_manager.db_handler.branch_exists = AsyncMock(return_value=True)
+        mock_manager.db_handler.resolve_tag_to_version = AsyncMock(return_value=None)
         mock_manager.db_handler.get_metadata = AsyncMock(return_value=expected_metadata)
         mock_manager.storage_handler.load = AsyncMock(return_value=expected_data)
         mock_manager.db_handler.record_event = AsyncMock()
@@ -508,6 +509,7 @@ class TestBranchAwareModelOperations:
         }
         
         mock_manager.db_handler.branch_exists = AsyncMock(return_value=True)
+        mock_manager.db_handler.resolve_tag_to_version = AsyncMock(return_value=None)
         mock_manager.db_handler.get_metadata = AsyncMock(return_value=expected_metadata)
         mock_manager.storage_handler.load = AsyncMock(return_value=expected_data)
         mock_manager.db_handler.record_event = AsyncMock()
