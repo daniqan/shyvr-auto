@@ -161,7 +161,9 @@ class CacheMetrics:
     @property
     def miss_rate(self) -> float:
         """Calculate miss rate"""
-        return 1.0 - self.hit_rate if self.total_requests > 0 else 0.0
+        if self.total_requests == 0:
+            return 0.0
+        return self.misses / self.total_requests
     
     @property
     def memory_hit_rate(self) -> float:
