@@ -15,6 +15,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import structlog
+import pickle
 
 from .base import (
     RLAgentBase, TradeAction, MarketState, AgentConfig, ModelType,
@@ -24,6 +25,18 @@ from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
 )
+
+# Import preservation components
+try:
+    from src.model_preservation.manager import PreservationManager, PreservationConfig
+    from src.model_preservation.base import PreservationError, PreservationPriority
+    PRESERVATION_AVAILABLE = True
+except ImportError:
+    PRESERVATION_AVAILABLE = False
+    PreservationManager = None
+    PreservationConfig = None
+    PreservationError = Exception
+    PreservationPriority = None
 
 logger = structlog.get_logger()
 
@@ -367,12 +380,34 @@ class DQNTradingAgent(RLAgentBase):
         self.action_list = list(TradeAction)
         self.action_to_idx = {action: i for i, action in enumerate(self.action_list)}
         
+        # Current operational mode
+        self._current_mode = 'training'
+        
+        # Initialize preservation if available and configured
+        self._preservation_manager = None
+        self._preservation_enabled = False
+        if PRESERVATION_AVAILABLE and hasattr(config, 'preservation') and config.preservation.get('enabled', False):
+            try:
+                pres_config = PreservationConfig(
+                    gcs_bucket=config.preservation.get('gcs_bucket', 'shyvr-models-prod'),
+                    backup_interval_hours=config.preservation.get('backup_interval_hours', 3),
+                    max_versions_per_model=config.preservation.get('max_versions_per_model', 20),
+                    enable_compression=config.preservation.get('enable_compression', True),
+                    mode_isolation=config.preservation.get('mode_isolation', True)
+                )
+                self._preservation_manager = PreservationManager(pres_config)
+                self._preservation_enabled = True
+                self.logger.info("Agent preservation enabled", bucket=pres_config.gcs_bucket)
+            except Exception as e:
+                self.logger.warning("Failed to initialize preservation manager", error=str(e))
+        
         self.logger.info("DQN Trading Agent initialized", 
                         input_size=self.input_size,
                         output_size=self.output_size,
                         hidden_size=config.hidden_size,
                         num_layers=config.num_layers,
-                        model_type=config.model_type.value)
+                        model_type=config.model_type.value,
+                        preservation_enabled=self._preservation_enabled)
     
     def _validate_config(self):
         """Validate configuration for different model types"""
@@ -748,7 +783,7 @@ class DQNTradingAgent(RLAgentBase):
         return q_values.squeeze(0)
     
     def save_model(self, filepath: str) -> bool:
-        """Save the trained model to file"""
+        """Save the trained model to file with preservation support"""
         try:
             checkpoint = {
                 'q_network_state_dict': self.q_network.state_dict(),
@@ -764,14 +799,81 @@ class DQNTradingAgent(RLAgentBase):
             torch.save(checkpoint, filepath)
             
             self.logger.info("Model saved successfully", filepath=filepath)
+            
+            # Trigger preservation if enabled
+            if self._preservation_enabled and self._preservation_manager:
+                try:
+                    # Try to get running event loop
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._preserve_checkpoint(checkpoint, filepath))
+                except RuntimeError:
+                    # No running loop, run synchronously
+                    asyncio.run(self._preserve_checkpoint(checkpoint, filepath))
+            
             return True
             
         except Exception as e:
             self.logger.error("Failed to save model", filepath=filepath, error=str(e))
             return False
     
+    async def _preserve_checkpoint(self, checkpoint: Dict[str, Any], filepath: str):
+        """Preserve checkpoint to cloud storage"""
+        try:
+            # Serialize checkpoint
+            checkpoint_data = pickle.dumps(checkpoint)
+            
+            # Determine model type for preservation
+            model_type_str = self.config.model_type.value.lower().replace('_', '')
+            
+            # Prepare metadata
+            metadata = {
+                'training_episodes': self.training_episodes,
+                'epsilon': self.epsilon,
+                'steps_done': self.steps_done,
+                'performance': {
+                    'total_reward': self.performance_metrics.total_reward,
+                    'win_rate': self.performance_metrics.win_rate,
+                    'sharpe_ratio': self.performance_metrics.sharpe_ratio,
+                    'max_drawdown': self.performance_metrics.max_drawdown,
+                    'profit_factor': self.performance_metrics.profit_factor
+                },
+                'architecture': {
+                    'input_size': self.input_size,
+                    'hidden_size': self.config.hidden_size,
+                    'num_layers': self.config.num_layers,
+                    'output_size': self.output_size
+                },
+                'saved_from': filepath
+            }
+            
+            # Add Rainbow-specific metadata
+            if self.config.model_type == ModelType.RAINBOW:
+                metadata['num_atoms'] = getattr(self.config, 'num_atoms', 51)
+                metadata['v_min'] = getattr(self.config, 'v_min', -10.0)
+                metadata['v_max'] = getattr(self.config, 'v_max', 10.0)
+            
+            # Determine if this is a checkpoint or final save
+            tags = ['dqn_checkpoint' if 'checkpoint' in filepath.lower() else 'dqn_model']
+            tags.append(f'episodes_{self.training_episodes}')
+            
+            # Save to preservation
+            await self._preservation_manager.save_model(
+                model_data=checkpoint_data,
+                model_type=model_type_str,
+                mode=self._current_mode,
+                tags=tags,
+                metadata=metadata,
+                priority=PreservationPriority.HIGH if self._current_mode == 'live_trading' else PreservationPriority.NORMAL
+            )
+            
+            self.logger.info("Model checkpoint preserved", model_type=model_type_str)
+            
+        except Exception as e:
+            # Log error but don't fail the save operation
+            self.logger.error("Checkpoint preservation failed", error=str(e))
+    
     def load_model(self, filepath: str) -> bool:
-        """Load a trained model from file"""
+        """Load a trained model from file with preservation fallback"""
         try:
             checkpoint = torch.load(filepath, map_location='cpu', weights_only=False)
             
@@ -799,8 +901,81 @@ class DQNTradingAgent(RLAgentBase):
                            epsilon=self.epsilon)
             return True
             
+        except FileNotFoundError:
+            # Try preservation fallback if enabled
+            if self._preservation_enabled and self._preservation_manager:
+                self.logger.info("Local model not found, attempting preservation fallback", filepath=filepath)
+                # Create a new event loop if none exists
+                loop = None
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run the async function
+                try:
+                    if asyncio.iscoroutinefunction(self._load_from_preservation):
+                        return loop.run_until_complete(self._load_from_preservation())
+                    else:
+                        return self._load_from_preservation()
+                finally:
+                    # Clean up the loop if we created it
+                    try:
+                        if loop and not asyncio.get_running_loop():
+                            loop.close()
+                    except RuntimeError:
+                        pass
+            else:
+                self.logger.error("Model file not found", filepath=filepath)
+                return False
         except Exception as e:
             self.logger.error("Failed to load model", filepath=filepath, error=str(e))
+            return False
+    
+    async def _load_from_preservation(self) -> bool:
+        """Load model from preserved state"""
+        try:
+            # Determine model type for preservation
+            model_type_str = self.config.model_type.value.lower().replace('_', '')
+            
+            # Load from preservation
+            model_data, metadata = await self._preservation_manager.load_model(
+                model_type=model_type_str,
+                version=None,  # Get latest version
+                mode=self._current_mode,
+                fallback=True
+            )
+            
+            # Deserialize checkpoint
+            checkpoint = pickle.loads(model_data)
+            
+            # Load network states
+            self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
+            self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+            # Load training state
+            self.training_episodes = checkpoint.get('training_episodes', 0)
+            self.epsilon = checkpoint.get('epsilon', self.config.epsilon_end)
+            self.steps_done = checkpoint.get('steps_done', 0)
+            
+            # Load performance metrics if available
+            if 'performance_metrics' in checkpoint:
+                metrics_dict = checkpoint['performance_metrics']
+                for key, value in metrics_dict.items():
+                    setattr(self.performance_metrics, key, value)
+            
+            self.is_trained = True
+            
+            self.logger.info("Model restored from preservation", 
+                           model_type=model_type_str,
+                           version=metadata.get('version'),
+                           training_episodes=self.training_episodes)
+            return True
+            
+        except Exception as e:
+            self.logger.error("Failed to load from preservation", error=str(e), exception_type=type(e).__name__)
             return False
     
     def _state_to_tensor(self, state: MarketState) -> torch.Tensor:
@@ -852,6 +1027,12 @@ class DQNTradingAgent(RLAgentBase):
         base_health.update(dqn_health)
         
         return base_health
+
+
+    def set_mode(self, mode: str):
+        """Set the current operational mode"""
+        self._current_mode = mode
+        self.logger.info("Operational mode changed", mode=mode)
 
 
 class DQNTrainingError(RLTrainingError):
