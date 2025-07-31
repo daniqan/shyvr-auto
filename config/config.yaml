@@ -571,6 +571,15 @@ monitoring:
     slow_query_threshold: 1.0         # Log queries slower than 1s
     monitor_memory_leaks: true
     gc_monitoring: true
+
+# Model Preservation Configuration
+model_preservation:
+  enabled: "${MODEL_PRESERVATION_ENABLED:true}"
+  gcs_bucket: "${GCS_MODEL_BUCKET:shyvr-models-prod}"
+  backup_interval_hours: ${MODEL_BACKUP_INTERVAL:6}
+  max_versions_per_model: ${MODEL_MAX_VERSIONS:10}
+  enable_compression: "${MODEL_COMPRESSION_ENABLED:true}"
+  mode_isolation: "${MODEL_MODE_ISOLATION:true}"
       
 logging:
   level: "${LOG_LEVEL:INFO}"
