@@ -149,6 +149,7 @@ apply_lifecycle_policies() {
 # Set up IAM permissions
 setup_iam_permissions() {
     log_info "Setting up IAM permissions..."
+    CLOUD_RUN_SERVICE_ACCOUNT="${CLOUD_RUN_SA:-shyvr-rlte@${PROJECT_ID}.iam.gserviceaccount.com}"
     
     # Check if service account exists
     if gcloud iam service-accounts describe "$CLOUD_RUN_SERVICE_ACCOUNT" &> /dev/null; then
@@ -167,11 +168,14 @@ setup_iam_permissions() {
         --role="roles/storage.objectAdmin" \
         --condition="expression=resource.name.startsWith('projects/_/buckets/$PROD_BUCKET') || resource.name.startsWith('projects/_/buckets/$STAGING_BUCKET'),title=Model Storage Access"
     
-    # Grant Storage Legacy Bucket Reader for listing
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT" \
-        --role="roles/storage.legacyBucketReader" \
-        --condition="expression=resource.name.startsWith('projects/_/buckets/$PROD_BUCKET') || resource.name.startsWith('projects/_/buckets/$STAGING_BUCKET'),title=Model Bucket Access"
+    # Grant bucket-level permissions for listing
+    log_info "Granting bucket-level permissions for listing..."
+    
+    # For production bucket
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectViewer" "gs://$PROD_BUCKET"
+    
+    # For staging bucket
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectViewer" "gs://$STAGING_BUCKET"
     
     log_success "IAM permissions configured"
 }
