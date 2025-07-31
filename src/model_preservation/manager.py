@@ -21,6 +21,7 @@ from .base import (
     generate_model_id,
     calculate_checksum
 )
+from .versioning import SemanticVersion, find_latest_version
 from .gcs_handler import GCSHandler
 from .db_handler import DatabaseHandler
 
@@ -148,10 +149,11 @@ class PreservationManager:
         mode: str = "analysis",
         tags: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        priority: PreservationPriority = PreservationPriority.NORMAL
+        priority: PreservationPriority = PreservationPriority.NORMAL,
+        increment_type: str = "patch"
     ) -> str:
         """
-        Save a model with auto-versioning support
+        Save a model with auto-versioning support using semantic versioning.
         
         Args:
             model_data: Serialized model data
@@ -161,6 +163,7 @@ class PreservationManager:
             tags: Optional tags for the model
             metadata: Optional additional metadata
             priority: Preservation priority
+            increment_type: Type of version increment ("patch", "minor", "major")
             
         Returns:
             model_id: Unique identifier for the saved model
@@ -168,7 +171,7 @@ class PreservationManager:
         try:
             # Generate version if not provided
             if not version:
-                version = await self._generate_next_version(model_type)
+                version = await self._generate_next_version(model_type, increment_type)
             
             # Create metadata object
             model_metadata = ModelMetadata(
@@ -497,30 +500,248 @@ class PreservationManager:
         if self.db_handler:
             await self.db_handler.track_performance(model_id=model_id, metrics=metrics)
     
-    async def _generate_next_version(self, model_type: str) -> str:
-        """Generate next version number for a model type"""
+    async def save_model_with_version_bump(
+        self,
+        model_data: bytes,
+        model_type: str,
+        bump_type: str,
+        mode: str = "analysis",
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        priority: PreservationPriority = PreservationPriority.NORMAL
+    ) -> str:
+        """
+        Save a model with explicit version bump type.
+        
+        Args:
+            model_data: Serialized model data
+            model_type: Type of model
+            bump_type: Version bump type ("patch", "minor", "major")
+            mode: Operational mode
+            tags: Optional tags
+            metadata: Optional metadata
+            priority: Preservation priority
+            
+        Returns:
+            model_id: Unique identifier for the saved model
+        """
+        return await self.save_model(
+            model_data=model_data,
+            model_type=model_type,
+            mode=mode,
+            tags=tags,
+            metadata=metadata,
+            priority=priority,
+            increment_type=bump_type
+        )
+    
+    async def get_latest_version(
+        self,
+        model_type: str,
+        mode: Optional[str] = None,
+        include_prerelease: bool = False
+    ) -> Optional[str]:
+        """
+        Get the latest version for a model type.
+        
+        Args:
+            model_type: Type of model
+            mode: Optional mode filter
+            include_prerelease: Whether to include prerelease versions
+            
+        Returns:
+            Latest version string or None if no versions exist
+        """
+        if not self.db_handler:
+            return None
+        
+        try:
+            versions = await self.db_handler.get_versions(model_type=model_type)
+            
+            # Filter by mode if specified
+            if mode:
+                versions = [v for v in versions if v.get("mode") == mode]
+            
+            version_strings = [v["version"] for v in versions]
+            
+            if version_strings:
+                latest = find_latest_version(version_strings, include_prerelease=include_prerelease)
+                return str(latest) if latest else None
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    async def get_stable_versions(
+        self,
+        model_type: str,
+        mode: Optional[str] = None
+    ) -> List[str]:
+        """
+        Get all stable versions for a model type.
+        
+        Args:
+            model_type: Type of model
+            mode: Optional mode filter
+            
+        Returns:
+            List of stable version strings sorted in descending order
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            versions = await self.db_handler.get_versions(model_type=model_type)
+            
+            # Filter by mode if specified
+            if mode:
+                versions = [v for v in versions if v.get("mode") == mode]
+            
+            stable_versions = []
+            for v in versions:
+                try:
+                    semantic_ver = SemanticVersion(v["version"])
+                    if semantic_ver.is_stable():
+                        stable_versions.append(semantic_ver)
+                except Exception:
+                    continue  # Skip invalid versions
+            
+            # Sort in descending order (newest first)
+            stable_versions.sort(reverse=True)
+            return [str(v) for v in stable_versions]
+            
+        except Exception:
+            return []
+    
+    async def compare_model_versions(
+        self,
+        model_type: str,
+        version1: str,
+        version2: str
+    ) -> int:
+        """
+        Compare two model versions.
+        
+        Args:
+            model_type: Type of model (for context)
+            version1: First version to compare
+            version2: Second version to compare
+            
+        Returns:
+            -1 if version1 < version2, 0 if equal, 1 if version1 > version2
+        """
+        try:
+            v1 = SemanticVersion(version1)
+            v2 = SemanticVersion(version2)
+            
+            if v1 < v2:
+                return -1
+            elif v1 > v2:
+                return 1
+            else:
+                return 0
+                
+        except Exception as e:
+            raise VersionError(f"Failed to compare versions {version1} and {version2}: {str(e)}")
+    
+    async def get_version_history(
+        self,
+        model_type: str,
+        mode: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Get version history for a model type.
+        
+        Args:
+            model_type: Type of model
+            mode: Optional mode filter
+            limit: Maximum number of versions to return
+            
+        Returns:
+            List of version information sorted by version (newest first)
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            versions = await self.db_handler.get_versions(model_type=model_type)
+            
+            # Filter by mode if specified
+            if mode:
+                versions = [v for v in versions if v.get("mode") == mode]
+            
+            # Add semantic version objects for sorting
+            version_data = []
+            for v in versions:
+                try:
+                    semantic_ver = SemanticVersion(v["version"])
+                    version_data.append({
+                        **v,
+                        "_semantic_version": semantic_ver
+                    })
+                except Exception:
+                    continue  # Skip invalid versions
+            
+            # Sort by semantic version (newest first)
+            version_data.sort(key=lambda x: x["_semantic_version"], reverse=True)
+            
+            # Remove internal semantic version and apply limit
+            result = []
+            for v in version_data[:limit]:
+                v_copy = dict(v)
+                del v_copy["_semantic_version"]
+                result.append(v_copy)
+            
+            return result
+            
+        except Exception:
+            return []
+    
+    async def _generate_next_version(
+        self, 
+        model_type: str, 
+        increment_type: str = "patch"
+    ) -> str:
+        """
+        Generate next semantic version number for a model type.
+        
+        Args:
+            model_type: Type of model to generate version for
+            increment_type: Type of increment ("patch", "minor", "major")
+            
+        Returns:
+            Next semantic version string
+        """
         if self.db_handler:
             # Get existing versions from database
             versions = await self.db_handler.get_versions(model_type=model_type)
-            version_numbers = []
+            version_strings = [v["version"] for v in versions]
             
-            for v in versions:
-                # Parse version string (e.g., "v1.0.0" -> [1, 0, 0])
-                match = re.match(r'^v?(\d+)\.(\d+)\.(\d+)', v["version"])
-                if match:
-                    version_numbers.append([int(match.group(1)), int(match.group(2)), int(match.group(3))])
-            
-            if version_numbers:
-                # Find highest version
-                version_numbers.sort(reverse=True)
-                major, minor, patch = version_numbers[0]
-                # Increment patch version
-                return f"v{major}.{minor}.{patch + 1}"
+            if version_strings:
+                # Find latest version using semantic versioning
+                latest_version = find_latest_version(version_strings, include_prerelease=False)
+                
+                if latest_version:
+                    # Increment based on type
+                    if increment_type == "major":
+                        next_version = latest_version.bump_major()
+                    elif increment_type == "minor":
+                        next_version = latest_version.bump_minor()
+                    else:  # patch (default)
+                        next_version = latest_version.bump_patch()
+                    
+                    return f"v{str(next_version)}"
+                else:
+                    # No valid semantic versions found, start fresh
+                    return "v1.0.0"
             else:
+                # No versions exist, start with 1.0.0
                 return "v1.0.0"
         else:
             # Simple versioning without database
-            return f"v1.0.0"
+            return "v1.0.0"
     
     async def _enforce_version_limit(self, model_type: str, mode: str):
         """Enforce maximum version limit per model"""
