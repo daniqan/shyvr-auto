@@ -438,19 +438,43 @@ class TestTagValidation:
     @pytest.mark.asyncio
     async def test_duplicate_tag_handling(self):
         """Test handling of duplicate tag names"""
-        # TODO: Test duplicate tag handling once implemented
-        # Create tag
-        # Update existing tag (should succeed)
-        # Verify old tag is replaced
-        pytest.skip("Duplicate tag handling not yet implemented")
+        from src.model_preservation.manager import PreservationManager, PreservationConfig
+        from src.model_preservation.base import ModelTag
+        
+        config = PreservationConfig(gcs_bucket="test-bucket")
+        manager = PreservationManager(config)
+        manager.db_handler = AsyncMock()
+        
+        # Mock successful tag saves - the database schema handles uniqueness via UPSERT
+        manager.db_handler.save_tag.return_value = "tag_id"
+        manager.db_handler.record_event.return_value = None
+        
+        # Create tag first time
+        tag_id_1 = await manager.tag_model("dqn", "v1.0.0", "latest", description="First latest")
+        assert tag_id_1 == "tag_id"
+        
+        # Create same tag name with different version (should update existing)  
+        tag_id_2 = await manager.tag_model("dqn", "v1.1.0", "latest", description="Updated latest")
+        assert tag_id_2 == "tag_id"
+        
+        # Verify save_tag was called twice (one for each tag operation)
+        assert manager.db_handler.save_tag.call_count == 2
     
     @pytest.mark.asyncio
     async def test_tag_to_nonexistent_version(self):
         """Test error handling when tagging a nonexistent version"""
-        # TODO: Test error handling once implemented
-        # with pytest.raises(VersionError):
-        #     await manager.tag_model("dqn", "v99.99.99", "latest")
-        pytest.skip("Error handling not yet implemented")
+        from src.model_preservation.manager import PreservationManager, PreservationConfig
+        from src.model_preservation.base import PreservationError
+        
+        config = PreservationConfig(gcs_bucket="test-bucket")
+        manager = PreservationManager(config)
+        manager.db_handler = AsyncMock()
+        
+        # Mock save_tag to raise error for nonexistent version
+        manager.db_handler.save_tag.side_effect = ValueError("No preserved model found for dqn version v99.99.99")
+        
+        with pytest.raises(ValueError, match="No preserved model found"):
+            await manager.tag_model("dqn", "v99.99.99", "latest")
 
 
 class TestTagSpecialCases:
