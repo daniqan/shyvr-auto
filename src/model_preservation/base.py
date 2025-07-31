@@ -32,6 +32,23 @@ class ModelState(Enum):
     DELETED = "deleted"
 
 
+class StandardTags:
+    """Standard tag names for model preservation"""
+    LATEST = "latest"
+    STABLE = "stable"
+    EXPERIMENTAL = "experimental"
+    
+    @classmethod
+    def get_all(cls) -> List[str]:
+        """Get all standard tag names"""
+        return [cls.LATEST, cls.STABLE, cls.EXPERIMENTAL]
+    
+    @classmethod
+    def is_standard_tag(cls, tag_name: str) -> bool:
+        """Check if a tag name is a standard tag"""
+        return tag_name in cls.get_all()
+
+
 # Dataclasses
 @dataclass
 class ModelMetadata:
@@ -111,6 +128,43 @@ class ModelMetadata:
             return 1
         else:
             return 0
+
+
+@dataclass
+class ModelTag:
+    """
+    Model tag for version tagging system.
+    
+    Tags provide friendly names for specific model versions, enabling
+    easy reference to commonly used versions like "latest", "stable", etc.
+    """
+    tag_name: str
+    model_type: str
+    version: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    description: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate tag on initialization"""
+        if not is_valid_tag_name(self.tag_name):
+            raise ValueError(f"Invalid tag name: {self.tag_name}")
+        
+        # Import here to avoid circular imports
+        from .versioning import is_valid_semantic_version
+        if not is_valid_semantic_version(self.version):
+            raise ValueError(f"Invalid version format: {self.version}")
+    
+    @property
+    def is_standard_tag(self) -> bool:
+        """Check if this is a standard tag"""
+        return StandardTags.is_standard_tag(self.tag_name)
+    
+    @property
+    def tag_id(self) -> str:
+        """Generate unique tag identifier"""
+        return f"{self.model_type}-{self.tag_name}"
 
 
 # Abstract Base Classes
@@ -222,3 +276,52 @@ def validate_semantic_version_format(version: str) -> bool:
         # Fallback to regex if versioning module not available
         pattern = r'^[vV]?\d+\.\d+\.\d+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?(\+[a-zA-Z0-9\-]+(\.[a-zA-Z0-9\-]+)*)?$'
         return bool(re.match(pattern, version))
+
+
+def is_valid_tag_name(tag_name: str) -> bool:
+    """
+    Validate tag name format.
+    
+    Tag names must:
+    - Be non-empty strings
+    - Contain only alphanumeric characters, hyphens, and underscores
+    - Start and end with alphanumeric characters
+    - Be between 1 and 50 characters long
+    - Not contain consecutive special characters
+    
+    Args:
+        tag_name: Tag name to validate
+        
+    Returns:
+        True if valid tag name format
+    """
+    if not isinstance(tag_name, str) or not tag_name:
+        return False
+    
+    # Length check
+    if len(tag_name) > 50:
+        return False
+    
+    # Pattern check: alphanumeric + hyphens/underscores, no consecutive specials
+    pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$'
+    if not re.match(pattern, tag_name):
+        return False
+    
+    # No consecutive special characters
+    if '--' in tag_name or '__' in tag_name or '-_' in tag_name or '_-' in tag_name:
+        return False
+    
+    return True
+
+
+def is_reserved_tag_name(tag_name: str) -> bool:
+    """
+    Check if a tag name is reserved (standard tag).
+    
+    Args:
+        tag_name: Tag name to check
+        
+    Returns:
+        True if tag name is reserved
+    """
+    return StandardTags.is_standard_tag(tag_name)
