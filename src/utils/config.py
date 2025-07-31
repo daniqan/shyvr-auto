@@ -174,6 +174,31 @@ class RLConfig(BaseModel):
     experience_storage: RLExperienceStorageConfig = field(default_factory=RLExperienceStorageConfig)
 
 
+class ModelPreservationConfig(BaseModel):
+    """Model preservation configuration"""
+    
+    enabled: bool = True
+    gcs_bucket: str
+    backup_interval_hours: int = 6
+    max_versions_per_model: int = 10
+    enable_compression: bool = True
+    mode_isolation: bool = True
+    
+    @model_validator(mode='after')
+    def validate_preservation_config(self):
+        """Validate model preservation configuration"""
+        if self.enabled and not self.gcs_bucket:
+            raise ValueError("GCS bucket is required when model preservation is enabled")
+        
+        if self.backup_interval_hours <= 0:
+            raise ValueError("Backup interval must be positive")
+            
+        if self.max_versions_per_model <= 0:
+            raise ValueError("Max versions per model must be positive")
+            
+        return self
+
+
 class AppConfig(BaseModel):
     """Application configuration"""
 
@@ -195,6 +220,7 @@ class RLTEConfig(BaseModel):
     ml: MLConfig = field(default_factory=MLConfig)
     rl: RLConfig = field(default_factory=RLConfig)
     apis: dict[str, APIConfig] = field(default_factory=dict)
+    model_preservation: ModelPreservationConfig | None = None
 
     model_config = ConfigDict(
         validate_assignment=True,
@@ -344,6 +370,9 @@ class ConfigManager:
 
             # Validate RL experience storage
             self._validate_rl_experience_config(config)
+            
+            # Validate model preservation
+            self._validate_model_preservation_config(config)
 
             return True
 
@@ -370,6 +399,32 @@ class ConfigManager:
             
         if exp_config.storage_backend not in ["database", "memory"]:
             logger.warning(f"Unknown storage backend: {exp_config.storage_backend}")
+
+    def _validate_model_preservation_config(self, config: 'RLTEConfig') -> None:
+        """Validate model preservation configuration"""
+        if config.model_preservation is None:
+            logger.info("Model preservation is not configured")
+            return
+            
+        preservation_config = config.model_preservation
+        
+        if preservation_config.enabled:
+            if not preservation_config.gcs_bucket:
+                logger.error("GCS bucket is required when model preservation is enabled")
+            else:
+                logger.info(f"Model preservation enabled with bucket: {preservation_config.gcs_bucket}")
+                
+            if preservation_config.backup_interval_hours < 1:
+                logger.warning("Very frequent backup interval (<1 hour) may impact performance")
+            elif preservation_config.backup_interval_hours > 24:
+                logger.warning("Very infrequent backup interval (>24 hours) may increase data loss risk")
+                
+            if preservation_config.max_versions_per_model > 50:
+                logger.warning("Very high max versions (>50) may increase storage costs")
+            elif preservation_config.max_versions_per_model < 3:
+                logger.warning("Very low max versions (<3) may limit rollback options")
+        else:
+            logger.info("Model preservation is disabled")
 
 
 # Global configuration instance
