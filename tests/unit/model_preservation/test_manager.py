@@ -105,7 +105,7 @@ class TestPreservationManager:
         
         assert manager.config == config
         assert manager.storage_handler is not None  # Should be initialized with GCSHandler
-        assert manager.db_handler is None  # Will be initialized later
+        assert manager.db_handler is not None  # Should be initialized with DatabaseHandler
         assert manager._background_task is None
         assert manager._shutdown_event is not None
         assert manager._is_running is False
