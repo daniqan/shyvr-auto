@@ -837,9 +837,9 @@ class TestBranchAwareVersioning:
         hotfix_next = await mock_manager._generate_next_version("dqn", branch="hotfix")
         
         # Each branch should have its own version sequence
-        assert main_next == "v1.3.0"  # Next after v1.2.0
-        assert exp_next == "v1.2.0"   # Next after v1.1.0
-        assert hotfix_next == "v1.1.0"  # Next after v1.0.0
+        assert main_next == "v1.2.1"  # Next patch after v1.2.0
+        assert exp_next == "v1.1.1"   # Next patch after v1.1.0
+        assert hotfix_next == "v1.0.1"  # Next patch after v1.0.0
     
     @pytest.mark.asyncio
     async def test_branch_specific_tags(self, mock_manager):
