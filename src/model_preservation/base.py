@@ -10,7 +10,7 @@ import hashlib
 from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from abc import ABC, abstractmethod
 
 
@@ -35,7 +35,7 @@ class ModelState(Enum):
 # Dataclasses
 @dataclass
 class ModelMetadata:
-    """Metadata for preserved models"""
+    """Metadata for preserved models with semantic versioning support"""
     model_id: str
     model_type: str  # e.g., "lstm", "dqn", "transformer"
     version: str
@@ -53,6 +53,64 @@ class ModelMetadata:
     description: Optional[str] = None
     parent_version: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate version format on initialization"""
+        if not validate_semantic_version_format(self.version):
+            raise VersionError(f"Invalid semantic version format: {self.version}")
+    
+    @property
+    def semantic_version(self) -> 'SemanticVersion':
+        """
+        Get semantic version object for advanced version operations.
+        
+        Returns:
+            SemanticVersion object for this model's version
+            
+        Raises:
+            VersionError: If version string is invalid
+        """
+        # Import here to avoid circular imports
+        from .versioning import SemanticVersion
+        return SemanticVersion(self.version)
+    
+    def is_prerelease(self) -> bool:
+        """Check if this model version is a prerelease"""
+        return self.semantic_version.is_prerelease()
+    
+    def is_stable(self) -> bool:
+        """Check if this model version is stable"""
+        return self.semantic_version.is_stable()
+    
+    def compare_version(self, other: Union[str, 'ModelMetadata']) -> int:
+        """
+        Compare this model's version with another version.
+        
+        Args:
+            other: Another version string or ModelMetadata object
+            
+        Returns:
+            -1 if this version is older, 0 if equal, 1 if newer
+        """
+        if isinstance(other, str):
+            other_version = other
+        elif isinstance(other, ModelMetadata):
+            other_version = other.version
+        else:
+            raise TypeError(f"Cannot compare version with {type(other)}")
+        
+        # Import here to avoid circular imports
+        from .versioning import SemanticVersion
+        
+        this_version = self.semantic_version
+        other_semantic = SemanticVersion(other_version)
+        
+        if this_version < other_semantic:
+            return -1
+        elif this_version > other_semantic:
+            return 1
+        else:
+            return 0
 
 
 # Abstract Base Classes
@@ -132,7 +190,35 @@ def format_file_size(size_bytes: int) -> str:
 
 
 def validate_version_format(version: str) -> bool:
-    """Validate semantic version format"""
-    # Updated regex to support formats like v1.0.0-alpha.1
-    pattern = r'^v?\d+\.\d+\.\d+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'
-    return bool(re.match(pattern, version))
+    """
+    Validate semantic version format (legacy function for backward compatibility).
+    
+    Args:
+        version: Version string to validate
+        
+    Returns:
+        True if valid semantic version format
+        
+    Note:
+        This function is deprecated. Use validate_semantic_version_format instead.
+    """
+    return validate_semantic_version_format(version)
+
+
+def validate_semantic_version_format(version: str) -> bool:
+    """
+    Validate semantic version format using the new semantic versioning system.
+    
+    Args:
+        version: Version string to validate
+        
+    Returns:
+        True if valid semantic version format
+    """
+    try:
+        from .versioning import is_valid_semantic_version
+        return is_valid_semantic_version(version)
+    except ImportError:
+        # Fallback to regex if versioning module not available
+        pattern = r'^[vV]?\d+\.\d+\.\d+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?(\+[a-zA-Z0-9\-]+(\.[a-zA-Z0-9\-]+)*)?$'
+        return bool(re.match(pattern, version))

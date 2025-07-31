@@ -451,3 +451,206 @@ class TestHelperFunctions:
         assert validate_version_format("v1.0") is False
         assert validate_version_format("1.0.0.0") is False
         assert validate_version_format("version1") is False
+
+
+class TestModelMetadataSemanticVersioning:
+    """Test semantic versioning functionality in ModelMetadata"""
+    
+    def test_semantic_version_property(self):
+        """Test that semantic_version property returns proper SemanticVersion object"""
+        metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.2.3",
+            created_at=datetime.now()
+        )
+        
+        semantic_ver = metadata.semantic_version
+        assert semantic_ver.major == 1
+        assert semantic_ver.minor == 2
+        assert semantic_ver.patch == 3
+        assert not semantic_ver.is_prerelease()
+    
+    def test_semantic_version_with_prerelease(self):
+        """Test semantic version with prerelease identifiers"""
+        metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="dqn",
+            version="2.0.0-beta.1",
+            created_at=datetime.now()
+        )
+        
+        semantic_ver = metadata.semantic_version
+        assert semantic_ver.major == 2
+        assert semantic_ver.minor == 0
+        assert semantic_ver.patch == 0
+        assert semantic_ver.prerelease == "beta.1"
+        assert semantic_ver.is_prerelease()
+    
+    def test_is_prerelease_method(self):
+        """Test is_prerelease method"""
+        stable_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0",
+            created_at=datetime.now()
+        )
+        assert not stable_metadata.is_prerelease()
+        
+        prerelease_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0-alpha",
+            created_at=datetime.now()
+        )
+        assert prerelease_metadata.is_prerelease()
+    
+    def test_is_stable_method(self):
+        """Test is_stable method"""
+        stable_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0",
+            created_at=datetime.now()
+        )
+        assert stable_metadata.is_stable()
+        
+        prerelease_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0-alpha",
+            created_at=datetime.now()
+        )
+        assert not prerelease_metadata.is_stable()
+        
+        early_version = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="0.9.0",
+            created_at=datetime.now()
+        )
+        assert not early_version.is_stable()  # Major version 0 is not stable
+    
+    def test_compare_version_with_string(self):
+        """Test version comparison with string"""
+        metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.2.0",
+            created_at=datetime.now()
+        )
+        
+        # Compare with older version
+        assert metadata.compare_version("1.1.0") == 1
+        
+        # Compare with same version
+        assert metadata.compare_version("1.2.0") == 0
+        
+        # Compare with newer version
+        assert metadata.compare_version("1.3.0") == -1
+    
+    def test_compare_version_with_metadata(self):
+        """Test version comparison with another ModelMetadata"""
+        metadata1 = ModelMetadata(
+            model_id="test-id-1",
+            model_type="lstm",
+            version="1.2.0",
+            created_at=datetime.now()
+        )
+        
+        metadata2 = ModelMetadata(
+            model_id="test-id-2",
+            model_type="lstm",
+            version="1.1.0",
+            created_at=datetime.now()
+        )
+        
+        metadata3 = ModelMetadata(
+            model_id="test-id-3", 
+            model_type="lstm",
+            version="1.2.0",
+            created_at=datetime.now()
+        )
+        
+        assert metadata1.compare_version(metadata2) == 1  # metadata1 > metadata2
+        assert metadata1.compare_version(metadata3) == 0  # metadata1 == metadata3
+        assert metadata2.compare_version(metadata1) == -1  # metadata2 < metadata1
+    
+    def test_compare_version_with_prerelease(self):
+        """Test version comparison with prerelease versions"""
+        stable_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0",
+            created_at=datetime.now()
+        )
+        
+        prerelease_metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0-alpha",
+            created_at=datetime.now()
+        )
+        
+        # Stable version should be greater than prerelease
+        assert stable_metadata.compare_version(prerelease_metadata) == 1
+        assert prerelease_metadata.compare_version(stable_metadata) == -1
+    
+    def test_invalid_version_in_post_init(self):
+        """Test that invalid versions raise VersionError in __post_init__"""
+        with pytest.raises(VersionError, match="Invalid semantic version format"):
+            ModelMetadata(
+                model_id="test-id",
+                model_type="lstm",
+                version="1.0",  # Invalid - missing patch
+                created_at=datetime.now()
+            )
+        
+        with pytest.raises(VersionError, match="Invalid semantic version format"):
+            ModelMetadata(
+                model_id="test-id",
+                model_type="lstm",
+                version="a.b.c",  # Invalid - non-numeric
+                created_at=datetime.now()
+            )
+    
+    def test_version_validation_with_various_formats(self):
+        """Test version validation with various valid formats"""
+        valid_versions = [
+            "1.0.0",
+            "v2.1.3",
+            "V3.0.0",
+            "1.0.0-alpha",
+            "1.0.0-beta.1",
+            "1.0.0-rc.1.2.3",
+            "1.0.0+build.1",
+            "1.0.0-alpha.1+build.123"
+        ]
+        
+        for version in valid_versions:
+            # Should not raise any exception
+            metadata = ModelMetadata(
+                model_id="test-id",
+                model_type="lstm",
+                version=version,
+                created_at=datetime.now()
+            )
+            
+            # Should be able to get semantic version
+            semantic_ver = metadata.semantic_version
+            assert semantic_ver is not None
+    
+    def test_compare_version_invalid_type(self):
+        """Test that compare_version raises TypeError for invalid types"""
+        metadata = ModelMetadata(
+            model_id="test-id",
+            model_type="lstm",
+            version="1.0.0",
+            created_at=datetime.now()
+        )
+        
+        with pytest.raises(TypeError, match="Cannot compare version with"):
+            metadata.compare_version(123)
+        
+        with pytest.raises(TypeError, match="Cannot compare version with"):
+            metadata.compare_version(None)
