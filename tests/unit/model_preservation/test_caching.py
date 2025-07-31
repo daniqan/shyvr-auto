@@ -413,9 +413,11 @@ class TestDiskCache:
         await cache.put("expire", b"expire this", {})
         
         # Manually mark one as expired by modifying file time
+        import os
         expire_file = cache.cache_dir / "expire.cache"
         old_time = time.time() - (24 * 3600)  # 24 hours ago
-        expire_file.touch(times=(old_time, old_time))
+        expire_file.touch()  # Create the file first
+        os.utime(expire_file, (old_time, old_time))
         
         # Run cleanup
         await cache.cleanup_expired(ttl_seconds=3600)  # 1 hour TTL
