@@ -274,6 +274,142 @@ class TestConfigValidation:
         assert rl_config.batch_size > 0
 
 
+class TestModelPreservationConfig:
+    """Test model preservation configuration"""
+
+    def test_model_preservation_config_missing(self, temp_config_file: Path):
+        """Test that configuration loads without model_preservation section"""
+        config_manager = ConfigManager(temp_config_file)
+        config = config_manager.load()
+        
+        # Should have model_preservation attribute but set to None by default
+        assert hasattr(config, 'model_preservation')
+        assert config.model_preservation is None
+
+    def test_model_preservation_config_with_defaults(self):
+        """Test model preservation config with default values"""
+        config_content = """
+app:
+  name: "test-rlte"
+  environment: "test"
+
+database:
+  password: "test_password"
+
+telegram:
+  token: "test_token"
+
+model_preservation:
+  enabled: true
+  gcs_bucket: "test-bucket"
+"""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            temp_path = Path(f.name)
+
+        try:
+            config_manager = ConfigManager(temp_path)
+            config = config_manager.load()
+
+            # Should have model_preservation with defaults
+            assert hasattr(config, 'model_preservation')
+            assert config.model_preservation.enabled is True
+            assert config.model_preservation.gcs_bucket == "test-bucket"
+            assert config.model_preservation.backup_interval_hours == 6
+            assert config.model_preservation.max_versions_per_model == 10
+            assert config.model_preservation.enable_compression is True
+            assert config.model_preservation.mode_isolation is True
+
+        finally:
+            temp_path.unlink()
+
+    def test_model_preservation_config_with_env_vars(self):
+        """Test model preservation config with environment variable substitution"""
+        config_content = """
+app:
+  name: "test-rlte"
+  environment: "test"
+
+database:
+  password: "test_password"
+
+telegram:
+  token: "test_token"
+
+model_preservation:
+  enabled: "${MODEL_PRESERVATION_ENABLED:true}"
+  gcs_bucket: "${GCS_MODEL_BUCKET:shyvr-models-prod}"
+  backup_interval_hours: "${MODEL_BACKUP_INTERVAL:6}"
+  max_versions_per_model: "${MODEL_MAX_VERSIONS:10}"
+  enable_compression: "${MODEL_COMPRESSION_ENABLED:true}"
+  mode_isolation: "${MODEL_MODE_ISOLATION:true}"
+"""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            temp_path = Path(f.name)
+
+        try:
+            # Set environment variables
+            os.environ["MODEL_PRESERVATION_ENABLED"] = "false"
+            os.environ["GCS_MODEL_BUCKET"] = "test-models-bucket"
+            os.environ["MODEL_BACKUP_INTERVAL"] = "12"
+            os.environ["MODEL_MAX_VERSIONS"] = "5"
+            os.environ["MODEL_COMPRESSION_ENABLED"] = "false"
+            os.environ["MODEL_MODE_ISOLATION"] = "false"
+
+            config_manager = ConfigManager(temp_path)
+            config = config_manager.load()
+
+            # Should use environment variable values
+            assert config.model_preservation.enabled is False
+            assert config.model_preservation.gcs_bucket == "test-models-bucket"
+            assert config.model_preservation.backup_interval_hours == 12
+            assert config.model_preservation.max_versions_per_model == 5
+            assert config.model_preservation.enable_compression is False
+            assert config.model_preservation.mode_isolation is False
+
+        finally:
+            temp_path.unlink()
+            for var in ["MODEL_PRESERVATION_ENABLED", "GCS_MODEL_BUCKET", "MODEL_BACKUP_INTERVAL", 
+                       "MODEL_MAX_VERSIONS", "MODEL_COMPRESSION_ENABLED", "MODEL_MODE_ISOLATION"]:
+                os.environ.pop(var, None)
+
+    def test_model_preservation_config_validation(self):
+        """Test model preservation configuration validation"""
+        config_content = """
+app:
+  name: "test-rlte"
+  environment: "test"
+
+database:
+  password: "test_password"
+
+telegram:
+  token: "test_token"
+
+model_preservation:
+  enabled: true
+  gcs_bucket: "test-bucket"
+  backup_interval_hours: 0
+  max_versions_per_model: -1
+"""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(config_content)
+            temp_path = Path(f.name)
+
+        try:
+            config_manager = ConfigManager(temp_path)
+            # This should currently fail because ModelPreservationConfig doesn't exist yet
+            with pytest.raises(Exception):
+                config_manager.load()
+
+        finally:
+            temp_path.unlink()
+
+
 class TestConfigTypes:
     """Test configuration type handling"""
 
