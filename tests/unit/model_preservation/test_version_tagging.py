@@ -329,64 +329,81 @@ class TestAutomaticTagging:
     @pytest.mark.asyncio
     async def test_auto_tag_latest_on_save(self, mock_preservation_manager):
         """Test that 'latest' tag is automatically updated when saving a new model"""
-        # TODO: Test automatic latest tagging once implemented
-        # with patch.object(mock_preservation_manager, 'save_model') as mock_save:
-        #     mock_save.return_value = "model_id"
-        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
-        #         mock_tag.return_value = "tag_id"
-        #         
-        #         model_id = await mock_preservation_manager.save_model(
-        #             model_data=b"test_data",
-        #             model_type="dqn",
-        #             version="v1.3.0"
-        #         )
-        #         
-        #         # Verify latest tag was updated
-        #         mock_tag.assert_called_with("dqn", "v1.3.0", "latest")
-        pytest.skip("Auto-tagging on save not yet implemented")
+        # Mock all required dependencies
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.branch_exists.return_value = True
+        mock_preservation_manager.db_handler.save_metadata.return_value = "dqn-v1.3.0-12345678"
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        mock_preservation_manager.db_handler.update_standard_tags.return_value = None
+        
+        mock_preservation_manager.storage_handler = AsyncMock()
+        mock_preservation_manager.storage_handler.save.return_value = "gs://bucket/dqn-v1.3.0.pkl"
+        
+        model_id = await mock_preservation_manager.save_model(
+            model_data=b"test_data",
+            model_type="dqn",
+            version="v1.3.0"
+        )
+        
+        # Verify update_standard_tags was called (this updates latest and stable automatically)
+        mock_preservation_manager.db_handler.update_standard_tags.assert_called_once()
+        
+        # Get the call args to verify the parameters
+        call_args = mock_preservation_manager.db_handler.update_standard_tags.call_args
+        assert call_args[1]["model_type"] == "dqn"
+        assert call_args[1]["new_version"] == "v1.3.0"
     
     @pytest.mark.asyncio
     async def test_auto_tag_stable(self, mock_preservation_manager):
         """Test that 'stable' tag points to newest non-prerelease version"""
-        # TODO: Test automatic stable tagging once implemented
-        # # Mock versions in database
-        # versions = [
-        #     {"version": "v1.2.0"},      # stable
-        #     {"version": "v1.3.0-alpha"}, # prerelease
-        #     {"version": "v1.2.1"},      # stable, newest
-        #     {"version": "v1.3.0-beta"}  # prerelease
-        # ]
-        # 
-        # with patch.object(mock_preservation_manager.db_handler, 'get_versions') as mock_versions:
-        #     mock_versions.return_value = versions
-        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
-        #         mock_tag.return_value = "tag_id"
-        #         
-        #         await mock_preservation_manager.update_stable_tag("dqn")
-        #         
-        #         # Verify stable tag points to v1.2.1 (newest stable)
-        #         mock_tag.assert_called_with("dqn", "v1.2.1", "stable")
-        pytest.skip("Auto-stable tagging not yet implemented")
+        # Mock db_handler
+        mock_preservation_manager.db_handler = AsyncMock()
+        
+        # Mock get_stable_versions to return stable versions in descending order
+        mock_preservation_manager.get_stable_versions = AsyncMock()
+        mock_preservation_manager.get_stable_versions.return_value = [
+            "v1.2.1",  # Latest stable (will be used for stable tag)
+            "v1.2.0"   # Older stable
+        ]
+        
+        # Mock move_tag method
+        mock_preservation_manager.db_handler.update_tag.return_value = None
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        
+        latest_stable = await mock_preservation_manager.update_stable_tag("dqn")
+        
+        # Verify stable tag was updated to latest stable version
+        assert latest_stable == "v1.2.1"
+        mock_preservation_manager.get_stable_versions.assert_called_once_with("dqn", "analysis")
     
     @pytest.mark.asyncio
     async def test_experimental_tag_manual_only(self, mock_preservation_manager):
         """Test that 'experimental' tag is only set manually, not automatically"""
-        # TODO: Test experimental tag behavior once implemented
-        # # Save a prerelease version
-        # with patch.object(mock_preservation_manager, 'save_model') as mock_save:
-        #     mock_save.return_value = "model_id"
-        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
-        #         
-        #         model_id = await mock_preservation_manager.save_model(
-        #             model_data=b"test_data",
-        #             model_type="dqn",
-        #             version="v1.3.0-alpha"
-        #         )
-        #         
-        #         # Verify experimental tag was NOT automatically set
-        #         calls = [call for call in mock_tag.call_args_list if call[0][2] == "experimental"]
-        #         assert len(calls) == 0, "Experimental tag should not be set automatically"
-        pytest.skip("Experimental tag logic not yet implemented")
+        # Mock all required dependencies for save_model
+        mock_preservation_manager.db_handler = AsyncMock()
+        mock_preservation_manager.db_handler.branch_exists.return_value = True
+        mock_preservation_manager.db_handler.save_metadata.return_value = "dqn-v1.3.0-alpha-12345678"
+        mock_preservation_manager.db_handler.record_event.return_value = None
+        mock_preservation_manager.db_handler.update_standard_tags.return_value = None
+        
+        mock_preservation_manager.storage_handler = AsyncMock()
+        mock_preservation_manager.storage_handler.save.return_value = "gs://bucket/dqn-v1.3.0-alpha.pkl"
+        
+        # Mock tag_model to track calls
+        mock_preservation_manager.tag_model = AsyncMock()
+        
+        model_id = await mock_preservation_manager.save_model(
+            model_data=b"test_data",
+            model_type="dqn",
+            version="v1.3.0-alpha"  # Prerelease version
+        )
+        
+        # Verify update_standard_tags was called (handles latest/stable automatically)
+        mock_preservation_manager.db_handler.update_standard_tags.assert_called_once()
+        
+        # Verify tag_model was NOT called for experimental tag
+        # (experimental tags must be set manually)
+        mock_preservation_manager.tag_model.assert_not_called()
 
 
 class TestTagValidation:

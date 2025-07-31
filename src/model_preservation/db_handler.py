@@ -982,7 +982,7 @@ class DatabaseHandler:
         Args:
             model_type: Type of model
             tag_name: Name of tag to resolve
-            branch: Branch where tag exists
+            branch: Branch where tag exists (currently not used - tags are per model_type only)
             
         Returns:
             Version string or None if tag not found
@@ -994,8 +994,8 @@ class DatabaseHandler:
             async with get_database_connection() as conn:
                 version = await conn.fetchval("""
                     SELECT version FROM model_tags
-                    WHERE model_type = $1 AND tag_name = $2 AND branch = $3
-                """, model_type, tag_name, branch)
+                    WHERE model_type = $1 AND tag_name = $2
+                """, model_type, tag_name)
                 
                 return version
                 
