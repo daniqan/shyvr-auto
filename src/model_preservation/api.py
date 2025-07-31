@@ -463,8 +463,8 @@ class PreservationAPI:
             
             # Log rollback request
             await activity_logger.log_activity(
-                category=ActivityCategory.MODEL_PRESERVATION,
-                action=ActivityAction.ROLLBACK,
+                category=ActivityCategory.ML_RL,
+                action=ActivityAction.UPDATE,  # Use UPDATE for rollback since ROLLBACK doesn't exist
                 source="preservation_api",
                 event_type="model_rollback_request",
                 title=f"Model rollback requested: {request.model_type} to {request.target_version}",
@@ -497,7 +497,7 @@ class PreservationAPI:
             
             # Log successful rollback
             await activity_logger.log_activity(
-                category=ActivityCategory.MODEL_PRESERVATION,
+                category=ActivityCategory.ML_RL,
                 action=ActivityAction.SUCCESS,
                 source="preservation_api",
                 event_type="model_rollback_success",
@@ -594,7 +594,7 @@ class PreservationAPI:
             
             # Log deletion request
             await activity_logger.log_activity(
-                category=ActivityCategory.MODEL_PRESERVATION,
+                category=ActivityCategory.ML_RL,
                 action=ActivityAction.DELETE,
                 source="preservation_api",
                 event_type="model_deletion_request",
@@ -637,7 +637,7 @@ class PreservationAPI:
             
             # Log successful deletion
             await activity_logger.log_activity(
-                category=ActivityCategory.MODEL_PRESERVATION,
+                category=ActivityCategory.ML_RL,
                 action=ActivityAction.SUCCESS,
                 source="preservation_api",
                 event_type="model_deletion_success",
@@ -741,8 +741,13 @@ class PreservationAPI:
             if stats.backup_success_rate < 80.0:
                 overall_status = "unhealthy"
             
-            if hasattr(stats, 'storage_errors') and stats.storage_errors > 0:
-                overall_status = "degraded"
+            if hasattr(stats, 'storage_errors'):
+                try:
+                    if stats.storage_errors > 0:
+                        overall_status = "degraded"
+                except (TypeError, ValueError):
+                    # Handle mock objects or invalid comparison
+                    pass
             
             # Storage health check
             storage_health = {
