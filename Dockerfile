@@ -121,10 +121,13 @@ RUN groupadd --gid 1000 rlte \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash rlte \
     # Create application directories with proper permissions
     && mkdir -p /app/data /app/logs /app/models /app/cache /app/tmp \
+    # Create model preservation specific directories
+    && mkdir -p /app/models/cache /app/models/temp /app/models/preserved \
     && chown -R rlte:rlte /app \
     # Set secure permissions
     && chmod 750 /app \
-    && chmod 770 /app/data /app/logs /app/models /app/cache /app/tmp
+    && chmod 770 /app/data /app/logs /app/models /app/cache /app/tmp \
+    && chmod 770 /app/models/cache /app/models/temp /app/models/preserved
 
 # Copy Python environment from builder (optimized transfer)
 COPY --from=builder --chown=rlte:rlte /app/.venv /app/.venv
@@ -155,7 +158,9 @@ RUN python -c "import sys; print(f'Python version: {sys.version}')" \
     && python -c "import torch; print(f'PyTorch version: {torch.__version__}')" \
     && python -c "import fastapi; print(f'FastAPI version: {fastapi.__version__}')" \
     && python -c "import asyncpg; print('PostgreSQL client: OK')" \
-    && python -c "import talib; print('TA-Lib: OK')"
+    && python -c "import talib; print('TA-Lib: OK')" \
+    && python -c "from google.cloud import storage; print('GCS client: OK')" \
+    && python -c "import signal; print('Signal handling: OK')"
 
 # Advanced health check with timeout and comprehensive checks
 HEALTHCHECK --interval=30s \
