@@ -70,6 +70,8 @@ dependencies = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
+    "brotli>=1.1.0",
+    "lz4>=4.4.4",
 ]
 
 [project.optional-dependencies]

@@ -260,6 +260,16 @@ def generate_model_id(model_type: str, version: str) -> str:
     return f"{model_type}-{version}-{uuid.uuid4().hex[:8]}"
 
 
+def generate_cache_key(model_type: str, version: str, mode: Optional[str] = None, branch: str = DEFAULT_BRANCH) -> str:
+    """Generate cache key for model"""
+    parts = [model_type, version]
+    if mode:
+        parts.append(mode)
+    if branch != DEFAULT_BRANCH:
+        parts.append(f"branch-{branch}")
+    return "-".join(parts)
+
+
 def calculate_checksum(data: bytes) -> str:
     """Calculate SHA256 checksum"""
     return f"sha256:{hashlib.sha256(data).hexdigest()}"

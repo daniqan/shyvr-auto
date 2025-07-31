@@ -19,11 +19,20 @@ from .base import (
     PreservationError,
     VersionError,
     generate_model_id,
+    generate_cache_key,
     calculate_checksum
 )
 from .versioning import SemanticVersion, find_latest_version
 from .gcs_handler import GCSHandler
 from .db_handler import DatabaseHandler
+from .caching import (
+    CacheConfig,
+    CacheManager,
+    CacheWarmer,
+    LRUCache,
+    DiskCache,
+    GCSCache
+)
 
 
 @dataclass
@@ -37,12 +46,22 @@ class PreservationConfig:
     auto_backup: bool = True
     emergency_backup: bool = True
     
+    # Caching configuration
+    enable_caching: bool = True
+    cache_memory_limit_gb: float = 2.0
+    cache_disk_dir: str = "/tmp/models"
+    cache_warmup_enabled: bool = True
+    cache_prefetch_enabled: bool = True
+    cache_metrics_enabled: bool = True
+    
     def __post_init__(self):
         """Validate configuration"""
         if self.backup_interval_hours <= 0:
             raise ValueError("Backup interval must be positive")
         if self.max_versions_per_model < 1:
             raise ValueError("Max versions must be at least 1")
+        if self.enable_caching and self.cache_memory_limit_gb <= 0:
+            raise ValueError("Cache memory limit must be positive")
 
 
 @dataclass
@@ -79,6 +98,12 @@ class PreservationManager:
         # Initialize database handler
         self.db_handler = DatabaseHandler()
         
+        # Initialize caching system if enabled
+        self.cache_manager = None
+        self.cache_warmer = None
+        if config.enable_caching:
+            self._initialize_caching()
+        
         # Internal state
         self._shutdown_event = asyncio.Event()
         self._background_task = None
@@ -87,6 +112,60 @@ class PreservationManager:
         
         # Register signal handlers
         self._register_signal_handlers()
+    
+    def _initialize_caching(self):
+        """Initialize the caching system"""
+        try:
+            # Create cache configuration
+            cache_config = CacheConfig(
+                memory_limit_gb=self.config.cache_memory_limit_gb,
+                disk_cache_dir=self.config.cache_disk_dir,
+                gcs_bucket=self.config.gcs_bucket,
+                cache_warmup_enabled=self.config.cache_warmup_enabled,
+                prefetch_enabled=self.config.cache_prefetch_enabled,
+                metrics_enabled=self.config.cache_metrics_enabled,
+                compression_enabled=self.config.enable_compression
+            )
+            
+            # Initialize cache layers
+            memory_cache = LRUCache(
+                max_size_bytes=int(cache_config.memory_limit_gb * 1024 * 1024 * 1024)
+            )
+            
+            disk_cache = DiskCache(
+                cache_dir=cache_config.disk_cache_dir,
+                compression_enabled=cache_config.compression_enabled
+            )
+            
+            # GCS cache uses the same client as storage handler
+            gcs_cache = None
+            if hasattr(self.storage_handler, 'client'):
+                gcs_cache = GCSCache(
+                    gcs_client=self.storage_handler.client,
+                    bucket_name=cache_config.gcs_bucket,
+                    cache_prefix="cache/"
+                )
+            
+            # Create cache manager
+            self.cache_manager = CacheManager(
+                config=cache_config,
+                memory_cache=memory_cache,
+                disk_cache=disk_cache,
+                gcs_cache=gcs_cache
+            )
+            
+            # Create cache warmer
+            if cache_config.cache_warmup_enabled:
+                self.cache_warmer = CacheWarmer(
+                    cache_manager=self.cache_manager,
+                    preservation_manager=self
+                )
+                
+        except Exception as e:
+            # Log error but don't fail initialization
+            print(f"Warning: Failed to initialize caching system: {e}")
+            self.cache_manager = None
+            self.cache_warmer = None
     
     def _register_signal_handlers(self):
         """Register signal handlers for graceful shutdown"""
@@ -119,6 +198,13 @@ class PreservationManager:
     async def start(self):
         """Start background services"""
         await self.initialize()
+        
+        # Warm cache if enabled
+        if self.cache_warmer and self.config.cache_warmup_enabled:
+            try:
+                await self.cache_warmer.warm_latest_models(count=10)
+            except Exception as e:
+                print(f"Warning: Cache warming failed: {e}")
         
         # Start background backup task if enabled
         if self.config.auto_backup:
@@ -240,7 +326,7 @@ class PreservationManager:
         fallback: bool = False
     ) -> Tuple[bytes, Dict[str, Any]]:
         """
-        Load a model from storage
+        Load a model from storage with caching support
         
         Args:
             model_type: Type of model to load
@@ -264,6 +350,13 @@ class PreservationManager:
                 tag_version = await self.db_handler.resolve_tag_to_version(model_type, version, branch=branch)
                 if tag_version:
                     resolved_version = tag_version
+            
+            # Try cache first if caching is enabled
+            if self.cache_manager and resolved_version:
+                cache_key = generate_cache_key(model_type, resolved_version, mode, branch)
+                cached_entry = await self.cache_manager.get(cache_key)
+                if cached_entry:
+                    return cached_entry.data, cached_entry.metadata
             
             # Get metadata from database if available
             if self.db_handler:
@@ -291,6 +384,7 @@ class PreservationManager:
                                 branch=branch
                             )
                             if metadata:
+                                resolved_version = prev_version["version"]
                                 break
                 
                 if not metadata:
@@ -299,8 +393,13 @@ class PreservationManager:
                 # Load from storage
                 model_data = await self.storage_handler.load(metadata["storage_path"])
                 
+                # Cache the loaded model if caching is enabled
+                if self.cache_manager and resolved_version:
+                    cache_key = generate_cache_key(model_type, resolved_version, mode, branch)
+                    await self.cache_manager.put(cache_key, model_data, metadata)
+                
                 # Record load event
-                event_details = {"source": "primary"}
+                event_details = {"source": "storage"}
                 if version:
                     event_details["requested_version"] = version
                     
