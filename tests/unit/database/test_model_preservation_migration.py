@@ -248,15 +248,19 @@ class ModelPreservationMigrationHelper:
     def get_foreign_key_constraints(query):
         """Mock foreign key constraints"""
         constraints = []
-        if "model_preservation_metadata" in query:
-            constraints.append({
-                'constraint_name': 'fk_model_preservation_user_id',
-                'column_name': 'user_id',
-                'foreign_table_name': 'users',
-                'foreign_column_name': 'telegram_user_id'
-            })
-        elif "model_version_history" in query:
+        
+        # Check if query is looking for foreign keys across multiple tables
+        if "tc.table_name IN" in query:
+            # Return all foreign key constraints for all tables
             constraints.extend([
+                # model_preservation_metadata foreign keys
+                {
+                    'constraint_name': 'fk_model_preservation_user_id',
+                    'column_name': 'user_id',
+                    'foreign_table_name': 'users',
+                    'foreign_column_name': 'telegram_user_id'
+                },
+                # model_version_history foreign keys
                 {
                     'constraint_name': 'fk_version_history_current_preservation',
                     'column_name': 'current_preservation_id',
@@ -268,22 +272,75 @@ class ModelPreservationMigrationHelper:
                     'column_name': 'previous_preservation_id',
                     'foreign_table_name': 'model_preservation_metadata',
                     'foreign_column_name': 'preservation_id'
+                },
+                # model_preservation_events foreign keys
+                {
+                    'constraint_name': 'fk_preservation_events_preservation_id',
+                    'column_name': 'preservation_id',
+                    'foreign_table_name': 'model_preservation_metadata',
+                    'foreign_column_name': 'preservation_id'
+                },
+                {
+                    'constraint_name': 'fk_preservation_events_user_id',
+                    'column_name': 'user_id',
+                    'foreign_table_name': 'users',
+                    'foreign_column_name': 'telegram_user_id'
+                },
+                # model_performance_tracking foreign keys
+                {
+                    'constraint_name': 'fk_performance_tracking_preservation_id',
+                    'column_name': 'preservation_id',
+                    'foreign_table_name': 'model_preservation_metadata',
+                    'foreign_column_name': 'preservation_id'
                 }
             ])
-        elif "model_preservation_events" in query:
-            constraints.append({
-                'constraint_name': 'fk_preservation_events_preservation_id',
-                'column_name': 'preservation_id',
-                'foreign_table_name': 'model_preservation_metadata',
-                'foreign_column_name': 'preservation_id'
-            })
-        elif "model_performance_tracking" in query:
-            constraints.append({
-                'constraint_name': 'fk_performance_tracking_preservation_id',
-                'column_name': 'preservation_id',
-                'foreign_table_name': 'model_preservation_metadata',
-                'foreign_column_name': 'preservation_id'
-            })
+        else:
+            # Handle individual table queries
+            if "model_preservation_metadata" in query:
+                constraints.append({
+                    'constraint_name': 'fk_model_preservation_user_id',
+                    'column_name': 'user_id',
+                    'foreign_table_name': 'users',
+                    'foreign_column_name': 'telegram_user_id'
+                })
+            if "model_version_history" in query:
+                constraints.extend([
+                    {
+                        'constraint_name': 'fk_version_history_current_preservation',
+                        'column_name': 'current_preservation_id',
+                        'foreign_table_name': 'model_preservation_metadata',
+                        'foreign_column_name': 'preservation_id'
+                    },
+                    {
+                        'constraint_name': 'fk_version_history_previous_preservation',
+                        'column_name': 'previous_preservation_id',
+                        'foreign_table_name': 'model_preservation_metadata',
+                        'foreign_column_name': 'preservation_id'
+                    }
+                ])
+            if "model_preservation_events" in query:
+                constraints.extend([
+                    {
+                        'constraint_name': 'fk_preservation_events_preservation_id',
+                        'column_name': 'preservation_id',
+                        'foreign_table_name': 'model_preservation_metadata',
+                        'foreign_column_name': 'preservation_id'
+                    },
+                    {
+                        'constraint_name': 'fk_preservation_events_user_id',
+                        'column_name': 'user_id',
+                        'foreign_table_name': 'users',
+                        'foreign_column_name': 'telegram_user_id'
+                    }
+                ])
+            if "model_performance_tracking" in query:
+                constraints.append({
+                    'constraint_name': 'fk_performance_tracking_preservation_id',
+                    'column_name': 'preservation_id',
+                    'foreign_table_name': 'model_preservation_metadata',
+                    'foreign_column_name': 'preservation_id'
+                })
+        
         return constraints
     
     @staticmethod
