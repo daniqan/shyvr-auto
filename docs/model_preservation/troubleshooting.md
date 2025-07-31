@@ -379,7 +379,7 @@ else:
 1. **Re-upload corrupted models**:
    ```python
 await manager.repair_model("dqn_agent", "1.2.3")
-   ```
+```
 
 2. **Enable integrity checks**:
    ```python
