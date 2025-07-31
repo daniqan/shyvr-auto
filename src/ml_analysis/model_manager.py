@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 import structlog
+import pickle
 
 from src.discovery.base import DiscoveredToken
 from .base import (
@@ -21,6 +22,18 @@ from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
 )
+
+# Import preservation components
+try:
+    from src.model_preservation.manager import PreservationManager, PreservationConfig
+    from src.model_preservation.base import PreservationError, PreservationPriority
+    PRESERVATION_AVAILABLE = True
+except ImportError:
+    PRESERVATION_AVAILABLE = False
+    PreservationManager = None
+    PreservationConfig = None
+    PreservationError = Exception
+    PreservationPriority = None
 
 
 logger = structlog.get_logger()
@@ -46,6 +59,26 @@ class ModelManager:
         # Model file paths
         self.model_dir = Path(self.config.get('model_dir', 'models'))
         self.model_dir.mkdir(exist_ok=True)
+        
+        # Current operational mode
+        self._current_mode = 'analysis'
+        
+        # Initialize preservation manager if enabled
+        self._preservation_manager = None
+        preservation_config = self.config.get('preservation', {})
+        if PRESERVATION_AVAILABLE and preservation_config.get('enabled', False):
+            try:
+                pres_config = PreservationConfig(
+                    gcs_bucket=preservation_config.get('gcs_bucket', 'shyvr-models-prod'),
+                    backup_interval_hours=preservation_config.get('backup_interval_hours', 6),
+                    max_versions_per_model=preservation_config.get('max_versions_per_model', 10),
+                    enable_compression=preservation_config.get('enable_compression', True),
+                    mode_isolation=preservation_config.get('mode_isolation', True)
+                )
+                self._preservation_manager = PreservationManager(pres_config)
+                self.logger.info("Model preservation enabled", bucket=pres_config.gcs_bucket)
+            except Exception as e:
+                self.logger.warning("Failed to initialize preservation manager", error=str(e))
         
         # Initialize models
         self._initialize_models()
@@ -536,7 +569,7 @@ class ModelManager:
             self.logger.error("Model weight update failed", error=str(e))
     
     async def _save_model(self, model_type: ModelType):
-        """Save a trained model to disk"""
+        """Save a trained model to disk with preservation support"""
         try:
             model = self._models[model_type]
             if not hasattr(model, 'save_model'):
@@ -548,14 +581,67 @@ class ModelManager:
             
             if success:
                 self.logger.info("Model saved", model_type=model_type.value, filepath=str(filepath))
+                
+                # Trigger preservation if enabled
+                if self._preservation_manager:
+                    try:
+                        # Serialize model state
+                        model_data = self._serialize_model(model_type)
+                        
+                        # Prepare metadata
+                        metadata = {
+                            'performance': self._model_performance.get(model_type, {}),
+                            'weights': self._model_weights.get(model_type, 1.0),
+                            'saved_from': str(filepath),
+                            'feature_engineer_version': getattr(self._feature_engineer, 'version', '1.0')
+                        }
+                        
+                        # Save to preservation
+                        await self._preservation_manager.save_model(
+                            model_data=model_data,
+                            model_type=model_type.value,
+                            mode=self._current_mode,
+                            tags=['model_manager', 'training_checkpoint'],
+                            metadata=metadata,
+                            priority=PreservationPriority.HIGH if self._current_mode == 'live_trading' else PreservationPriority.NORMAL
+                        )
+                        
+                        self.logger.info("Model preserved", model_type=model_type.value)
+                        
+                    except Exception as e:
+                        # Log error but don't fail the save operation
+                        self.logger.error("Model preservation failed", 
+                                        model_type=model_type.value, 
+                                        error=str(e))
             else:
                 self.logger.error("Model save failed", model_type=model_type.value)
                 
         except Exception as e:
             self.logger.error("Model save exception", model_type=model_type.value, error=str(e))
     
+    def _serialize_model(self, model_type: ModelType) -> bytes:
+        """Serialize model to bytes for preservation"""
+        model = self._models[model_type]
+        
+        # Get model state
+        if hasattr(model, 'model') and hasattr(model.model, 'state_dict'):
+            # PyTorch model
+            state = model.model.state_dict()
+        elif hasattr(model, 'get_state'):
+            # Custom state method
+            state = model.get_state()
+        else:
+            # Fallback to entire model object
+            state = {
+                'model_type': model_type.value,
+                'model_class': model.__class__.__name__
+            }
+        
+        # Serialize with pickle
+        return pickle.dumps(state)
+    
     async def load_models(self, model_types: Optional[List[ModelType]] = None) -> Dict[ModelType, bool]:
-        """Load saved models from disk"""
+        """Load saved models from disk with preservation fallback"""
         if model_types is None:
             model_types = list(self._models.keys())
         
@@ -570,17 +656,47 @@ class ModelManager:
                     continue
                 
                 filepath = self.model_dir / f"{model_type.value}_model.pt"
-                if not filepath.exists():
-                    self.logger.info("Model file not found", model_type=model_type.value)
-                    load_results[model_type] = False
-                    continue
+                success = False
                 
-                success = model.load_model(str(filepath))
+                # Try local load first
+                if filepath.exists():
+                    success = model.load_model(str(filepath))
+                    if success:
+                        self.logger.info("Model loaded from disk", model_type=model_type.value)
+                
+                # If local load failed, try preservation fallback
+                if not success and self._preservation_manager:
+                    try:
+                        self.logger.info("Attempting preservation fallback", model_type=model_type.value)
+                        
+                        # Load from preservation
+                        model_data, metadata = await self._preservation_manager.load_model(
+                            model_type=model_type.value,
+                            version=None,  # Get latest version
+                            mode=self._current_mode,
+                            fallback=True
+                        )
+                        
+                        # Restore model state
+                        success = self._restore_model(model_type, model_data)
+                        
+                        if success:
+                            self.logger.info("Model restored from preservation", 
+                                           model_type=model_type.value,
+                                           version=metadata.get('version'))
+                            
+                            # Update performance metrics if available
+                            if 'performance' in metadata.get('metadata', {}):
+                                self._model_performance[model_type] = metadata['metadata']['performance']
+                        
+                    except Exception as e:
+                        self.logger.error("Preservation fallback failed", 
+                                        model_type=model_type.value, 
+                                        error=str(e))
+                
                 load_results[model_type] = success
                 
-                if success:
-                    self.logger.info("Model loaded", model_type=model_type.value)
-                else:
+                if not success:
                     self.logger.error("Model load failed", model_type=model_type.value)
                     
             except Exception as e:
@@ -590,6 +706,36 @@ class ModelManager:
                 load_results[model_type] = False
         
         return load_results
+    
+    def _restore_model(self, model_type: ModelType, model_data: bytes) -> bool:
+        """Restore model from preserved data"""
+        try:
+            model = self._models[model_type]
+            
+            # Deserialize state
+            state = pickle.loads(model_data)
+            
+            # Restore based on model type
+            if hasattr(model, 'model') and hasattr(model.model, 'load_state_dict'):
+                # PyTorch model
+                model.model.load_state_dict(state)
+                if hasattr(model, 'is_trained'):
+                    model.is_trained = True
+            elif hasattr(model, 'load_state'):
+                # Custom load method
+                model.load_state(state)
+            else:
+                self.logger.warning("Model does not support state restoration", 
+                                  model_type=model_type.value)
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error("Model restoration failed", 
+                            model_type=model_type.value, 
+                            error=str(e))
+            return False
     
     async def health_check(self) -> Dict[str, Any]:
         """Check health of all models and return status"""
@@ -640,3 +786,8 @@ class ModelManager:
         """Clear prediction cache"""
         self._ensemble_cache.clear()
         self.logger.info("Prediction cache cleared")
+    
+    def set_mode(self, mode: str):
+        """Set the current operational mode"""
+        self._current_mode = mode
+        self.logger.info("Operational mode changed", mode=mode)
