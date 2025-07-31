@@ -33,6 +33,7 @@ from .caching import (
     DiskCache,
     GCSCache
 )
+from .monitoring import PreservationMetricsCollector, StructuredLogger
 
 
 @dataclass
@@ -48,6 +49,10 @@ class PreservationConfig:
     
     # Caching configuration
     enable_caching: bool = True
+    
+    # Monitoring configuration
+    enable_metrics: bool = True
+    enable_structured_logging: bool = True
     cache_memory_limit_gb: float = 2.0
     cache_disk_dir: str = "/tmp/models"
     cache_warmup_enabled: bool = True
@@ -103,6 +108,14 @@ class PreservationManager:
         self.cache_warmer = None
         if config.enable_caching:
             self._initialize_caching()
+        
+        # Initialize monitoring if enabled
+        self.metrics_collector = None
+        self.logger = None
+        if config.enable_metrics:
+            self.metrics_collector = PreservationMetricsCollector()
+        if config.enable_structured_logging:
+            self.logger = StructuredLogger(component="model_preservation")
         
         # Internal state
         self._shutdown_event = asyncio.Event()
@@ -256,6 +269,11 @@ class PreservationManager:
         Returns:
             model_id: Unique identifier for the saved model
         """
+        import time
+        start_time = time.time()
+        success = False
+        actual_version = version
+        
         try:
             # Validate branch exists
             if self.db_handler and not await self.db_handler.branch_exists(branch):
@@ -310,12 +328,59 @@ class PreservationManager:
             # Enforce version limit
             await self._enforce_version_limit(model_type, mode)
             
+            # Mark success for monitoring
+            success = True
+            actual_version = version
+            
             return model_id
             
         except Exception as e:
+            # Record error for monitoring
+            if self.metrics_collector:
+                self.metrics_collector.record_error(
+                    operation="save",
+                    model_type=model_type,
+                    error_type=type(e).__name__
+                )
+            
+            if self.logger:
+                self.logger.log_error(
+                    operation="save",
+                    model_type=model_type,
+                    version=actual_version or "unknown",
+                    error_type=type(e).__name__,
+                    error_message=str(e)
+                )
+            
             if isinstance(e, ValueError):
                 raise
             raise PreservationError(f"Failed to save model: {str(e)}")
+        
+        finally:
+            # Record metrics and logging
+            duration = time.time() - start_time
+            
+            if self.metrics_collector and success:
+                self.metrics_collector.record_save_duration(
+                    model_type=model_type,
+                    duration=duration,
+                    model_size=len(model_data),
+                    success=success,
+                    priority=priority.value,
+                    mode=mode
+                )
+            
+            if self.logger and success:
+                self.logger.log_save_operation(
+                    model_type=model_type,
+                    version=actual_version,
+                    duration=duration,
+                    size_bytes=len(model_data),
+                    success=success,
+                    storage_path=getattr(model_metadata, 'file_path', 'unknown') if 'model_metadata' in locals() else 'unknown',
+                    mode=mode,
+                    priority=priority.value
+                )
     
     async def load_model(
         self,
@@ -338,6 +403,12 @@ class PreservationManager:
         Returns:
             Tuple of (model_data, metadata)
         """
+        import time
+        start_time = time.time()
+        success = False
+        cache_hit = False
+        actual_version = version
+        
         try:
             # Validate branch exists
             if self.db_handler and not await self.db_handler.branch_exists(branch):
@@ -356,6 +427,9 @@ class PreservationManager:
                 cache_key = generate_cache_key(model_type, resolved_version, mode, branch)
                 cached_entry = await self.cache_manager.get(cache_key)
                 if cached_entry:
+                    cache_hit = True
+                    success = True
+                    actual_version = resolved_version
                     return cached_entry.data, cached_entry.metadata
             
             # Get metadata from database if available
@@ -413,6 +487,8 @@ class PreservationManager:
                     details=event_details
                 )
                 
+                success = True
+                actual_version = metadata.get("version", resolved_version)
                 return model_data, metadata
             else:
                 # Direct storage load without database
@@ -420,9 +496,55 @@ class PreservationManager:
                 raise FileNotFoundError("Model not found: database handler not available")
                 
         except Exception as e:
+            # Record error for monitoring
+            if self.metrics_collector:
+                self.metrics_collector.record_error(
+                    operation="load",
+                    model_type=model_type,
+                    error_type=type(e).__name__
+                )
+            
+            if self.logger:
+                self.logger.log_error(
+                    operation="load",
+                    model_type=model_type,
+                    version=actual_version or "unknown",
+                    error_type=type(e).__name__,
+                    error_message=str(e)
+                )
+            
             if isinstance(e, (FileNotFoundError, ValueError)):
                 raise
             raise PreservationError(f"Failed to load model: {str(e)}")
+        
+        finally:
+            # Record metrics and logging for load operation
+            duration = time.time() - start_time
+            
+            if self.metrics_collector:
+                # Record cache metrics
+                if cache_hit:
+                    self.metrics_collector.record_cache_hit(model_type)
+                elif not success:  # Only record miss if we actually tried (success False but no error)
+                    self.metrics_collector.record_cache_miss(model_type)
+                
+                # Record load duration
+                self.metrics_collector.record_load_duration(
+                    model_type=model_type,
+                    duration=duration,
+                    cache_hit=cache_hit,
+                    success=success
+                )
+            
+            if self.logger and success:
+                self.logger.log_load_operation(
+                    model_type=model_type,
+                    version=actual_version or "unknown",
+                    duration=duration,
+                    cache_hit=cache_hit,
+                    success=success,
+                    mode=mode
+                )
     
     async def rollback_model(
         self,

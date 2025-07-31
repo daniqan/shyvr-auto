@@ -1,0 +1,394 @@
+{
+  "dashboard": {
+    "title": "Model Preservation Metrics",
+    "tags": ["model-preservation", "shyvr-rlte"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Model Save Duration",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "rate(model_save_duration_seconds_sum[5m]) / rate(model_save_duration_seconds_count[5m])",
+            "refId": "A",
+            "legendFormat": "Average Save Duration - {{model_type}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(model_save_duration_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "95th Percentile - {{model_type}}"
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "show": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "alert": {
+          "enabled": true,
+          "conditions": [
+            {
+              "query": {
+                "refId": "A"
+              },
+              "reducer": {
+                "type": "avg"
+              },
+              "evaluator": {
+                "params": [10.0],
+                "type": "gt"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "title": "Model Load Duration",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "rate(model_load_duration_seconds_sum[5m]) / rate(model_load_duration_seconds_count[5m])",
+            "refId": "A",
+            "legendFormat": "Average Load Duration - {{model_type}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(model_load_duration_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "95th Percentile - {{model_type}}"
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "show": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "alert": {
+          "enabled": true,
+          "conditions": [
+            {
+              "query": {
+                "refId": "A"
+              },
+              "reducer": {
+                "type": "avg"
+              },
+              "evaluator": {
+                "params": [5.0],
+                "type": "gt"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "title": "Cache Hit Rate",
+        "type": "stat",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "model_cache_hit_rate",
+            "refId": "A",
+            "legendFormat": "{{model_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.5
+                },
+                {
+                  "color": "green",
+                  "value": 0.8
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Models Preserved Total",
+        "type": "stat",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "increase(models_preserved_total[1h])",
+            "refId": "A",
+            "legendFormat": "{{model_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Preservation Errors",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "targets": [
+          {
+            "expr": "rate(preservation_errors_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{operation}} - {{error_type}}"
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Errors/sec",
+            "show": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        },
+        "alert": {
+          "enabled": true,
+          "conditions": [
+            {
+              "query": {
+                "refId": "A"
+              },
+              "reducer": {
+                "type": "avg"
+              },
+              "evaluator": {
+                "params": [1.0],
+                "type": "gt"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": 6,
+        "title": "Model Sizes",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "targets": [
+          {
+            "expr": "model_size_bytes",
+            "refId": "A",
+            "legendFormat": "{{model_type}} - {{version}}"
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Bytes",
+            "show": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Storage Operations",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "targets": [
+          {
+            "expr": "rate(storage_operations_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{operation}} - Success: {{success}}"
+          }
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Operations/sec",
+            "show": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Cache Evictions",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "increase(cache_evictions_total[1h])",
+            "refId": "A",
+            "legendFormat": "{{cache_level}} - {{model_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Operation Success Rate",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "rate(models_preserved_total[5m]) / (rate(models_preserved_total[5m]) + rate(preservation_errors_total{operation=\"save\"}[5m]))",
+            "refId": "A",
+            "legendFormat": "Save Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.9
+                },
+                {
+                  "color": "green",
+                  "value": 0.99
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1,
+    "uid": "model-preservation-dashboard",
+    "editable": true,
+    "gnetId": null,
+    "graphTooltip": 0,
+    "links": [],
+    "hideControls": false,
+    "description": "Comprehensive monitoring dashboard for Model Preservation system in Shyvr RLTE. Tracks save/load performance, cache efficiency, error rates, and storage operations."
+  },
+  "meta": {
+    "type": "db",
+    "canSave": true,
+    "canEdit": true,
+    "canAdmin": true,
+    "canStar": true,
+    "slug": "model-preservation-metrics",
+    "url": "/d/model-preservation-dashboard/model-preservation-metrics",
+    "expires": "0001-01-01T00:00:00Z",
+    "created": "2025-07-31T00:00:00Z",
+    "updated": "2025-07-31T00:00:00Z",
+    "updatedBy": "admin",
+    "createdBy": "admin",
+    "version": 1,
+    "hasAcl": false,
+    "isFolder": false,
+    "folderId": 0,
+    "folderTitle": "General",
+    "folderUrl": "",
+    "provisioned": false,
+    "provisionedExternalId": ""
+  }
+}
