@@ -159,6 +159,37 @@ validate_prerequisites
 validate_database_schema
 get_current_revision
 
+# Configure Cloud Storage permissions for model preservation
+configure_gcs_permissions() {
+    log_info "🔐 Configuring Cloud Storage permissions for model preservation..."
+    
+    # Grant Storage Object Admin role to service account for model bucket
+    GCS_BUCKET="shyvr-models-prod"
+    
+    if ! gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:$SERVICE_ACCOUNT" \
+        --role="roles/storage.objectAdmin" \
+        --condition="expression=resource.name.startsWith('projects/_/buckets/$GCS_BUCKET/')" \
+        2>/dev/null; then
+        log_warning "Failed to add bucket-specific IAM binding, trying general role..."
+        
+        # Fallback: grant general storage admin role (more permissive)
+        gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="serviceAccount:$SERVICE_ACCOUNT" \
+            --role="roles/storage.admin"
+    fi
+    
+    # Verify service account exists
+    if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT" --project="$PROJECT_ID" &>/dev/null; then
+        log_error "Service account not found: $SERVICE_ACCOUNT"
+        exit 1
+    fi
+    
+    log_success "Cloud Storage permissions configured"
+}
+
+configure_gcs_permissions
+
 # Get current time for tagging
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 TAG="latest"
@@ -465,6 +496,7 @@ deployment_start_time=$(date +%s)
 
 # Deploy with comprehensive ML/RL optimized configuration
 log_info "🚀 Executing Cloud Run deployment..."
+log_info "💾 Memory configured for model preservation: 6Gi (supports in-memory model caching)"
 
 if ! gcloud run deploy "$SERVICE" \
   --image="$IMAGE_NAME:$TAG" \
@@ -479,7 +511,7 @@ if ! gcloud run deploy "$SERVICE" \
   --min-instances=1 \
   --allow-unauthenticated \
   --service-account="$SERVICE_ACCOUNT" \
-  --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,DEPLOYMENT_ID=$DEPLOYMENT_ID,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true" \
+  --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,DEPLOYMENT_ID=$DEPLOYMENT_ID,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,GCS_MODEL_BUCKET=shyvr-models-prod,MODEL_CACHE_DIR=/app/models/cache,MODEL_PRESERVATION_ENABLED=true" \
   --add-cloudsql-instances="$CLOUD_SQL_INSTANCE" \
   --cpu-boost \
   --execution-environment=gen2 \
