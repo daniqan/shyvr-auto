@@ -25,6 +25,17 @@ from src.discovery.base import DiscoveredToken
 
 logger = structlog.get_logger()
 
+# Import preservation components (lazy import to avoid circular dependencies)
+try:
+    from src.model_preservation.manager import PreservationManager
+    from src.model_preservation.base import PreservationPriority, ModelMetadata
+    PRESERVATION_AVAILABLE = True
+except ImportError:
+    PreservationManager = None
+    PreservationPriority = None
+    ModelMetadata = None
+    PRESERVATION_AVAILABLE = False
+
 
 class BacktestEngine:
     """Engine for running strategy backtests."""
@@ -200,11 +211,346 @@ class ModeBase(ABC):
         self.metrics: Dict[str, Any] = {}
         self.metadata: Dict[str, Any] = {}
         
+        # Initialize preservation manager (will be set up in _initialize_preservation_manager)
+        self.preservation_manager: Optional[Any] = None
+        self._ml_models: Dict[str, Any] = {}
+        self._required_model_types: List[str] = []
+        
         # Configure logger
         self.logger = logger.bind(
             mode_id=str(mode_id),
             mode_type=config.mode_type.value
         )
+    
+    # Preservation methods
+    async def _initialize_preservation_manager(self) -> None:
+        """Initialize preservation manager if enabled in configuration."""
+        if not PRESERVATION_AVAILABLE:
+            self.logger.warning("Preservation system not available")
+            return
+        
+        preservation_config = self.config.parameters.get('preservation', {})
+        if not preservation_config.get('enabled', False):
+            self.logger.debug("Preservation disabled in configuration")
+            return
+        
+        try:
+            # Create preservation manager with mode-specific configuration
+            from src.model_preservation.manager import PreservationConfig
+            
+            config = PreservationConfig(
+                gcs_bucket=preservation_config.get('gcs_bucket', 'shyvr-models-dev'),
+                backup_interval_hours=preservation_config.get('backup_interval_hours', 6.0),
+                max_versions_per_model=preservation_config.get('max_versions_per_model', 10),
+                enable_compression=preservation_config.get('enable_compression', True),
+                mode_isolation=preservation_config.get('mode_isolation', True),
+                auto_backup=preservation_config.get('auto_backup_on_change', True),
+                emergency_backup=preservation_config.get('emergency_backup', True)
+            )
+            
+            self.preservation_manager = PreservationManager(config)
+            self.logger.info("Preservation manager initialized", mode=self.config.mode_type.value)
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize preservation manager", error=str(e))
+            self.preservation_manager = None
+    
+    async def _backup_models_on_mode_change(self) -> List[str]:
+        """Backup all ML models when mode is changing."""
+        if not self.preservation_manager or not self._ml_models:
+            return []
+        
+        backup_ids = []
+        start_time = datetime.now()
+        
+        try:
+            # Get preservation priority based on mode type
+            priority = self._get_preservation_priority()
+            
+            for model_name, model in self._ml_models.items():
+                try:
+                    # Create metadata for the model backup
+                    from src.model_preservation.base import generate_model_id
+                    model_type_str = f"mode_{self.config.mode_type.value}_{model_name}"
+                    version_str = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    model_id = generate_model_id(model_type_str, version_str)
+                    
+                    metadata = ModelMetadata(
+                        model_id=model_id,
+                        model_type=model_type_str,
+                        version=version_str,
+                        created_at=datetime.now(),
+                        preservation_priority=priority,
+                        tags=["mode_change", "backup", self.config.mode_type.value],
+                        mode=self.config.mode_type.value
+                    )
+                    
+                    # Save the model with mode context
+                    model_id = await self.preservation_manager.save_model(
+                        model_type=f"mode_{self.config.mode_type.value}_{model_name}",
+                        model_data=self._serialize_model(model),
+                        metadata=metadata,
+                        mode=self.config.mode_type.value,
+                        priority=priority,
+                        tags=["mode_change", "backup"]
+                    )
+                    
+                    backup_ids.append(model_id)
+                    self.logger.debug("Model backed up", model_name=model_name, model_id=model_id)
+                    
+                except Exception as e:
+                    self.logger.error("Failed to backup model", model_name=model_name, error=str(e))
+        
+        except Exception as e:
+            self.logger.error("Failed to backup models on mode change", error=str(e))
+            return []
+        
+        # Record performance metrics
+        duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+        self._record_metric("preservation_backup_count", len(backup_ids))
+        self._record_metric("preservation_backup_duration_ms", duration_ms)
+        self._record_metric("preservation_last_backup", datetime.now().isoformat())
+        
+        return backup_ids
+    
+    async def _load_mode_specific_models(self, mode_filter: Optional[str] = None) -> Dict[str, Any]:
+        """Load models specific to this mode from preservation storage."""
+        if not self.preservation_manager:
+            return {}
+        
+        # Apply mode isolation if enabled
+        target_mode = mode_filter or self.config.mode_type.value
+        if self.config.parameters.get('preservation', {}).get('mode_isolation', True):
+            if mode_filter and mode_filter != self.config.mode_type.value:
+                from src.model_preservation.base import PreservationError
+                raise PreservationError("Access denied: Mode isolation prevents cross-mode access")
+        
+        loaded_models = {}
+        
+        try:
+            for model_type in self._required_model_types:
+                try:
+                    model_key = f"mode_{target_mode}_{model_type}"
+                    
+                    # Try to load the model with fallback
+                    try:
+                        model_data, metadata = await self.preservation_manager.load_model(
+                            model_type=model_key,
+                            mode=target_mode,
+                            tags=["resume"] if mode_filter else ["startup"]
+                        )
+                    except Exception as primary_error:
+                        # Fallback attempt
+                        self.logger.warning("Primary model load failed, trying fallback", 
+                                          model_type=model_type, error=str(primary_error))
+                        model_data, metadata = await self.preservation_manager.load_model(
+                            model_type=model_key,
+                            mode=target_mode,
+                            fallback=True,
+                            tags=["resume"] if mode_filter else ["startup"]
+                        )
+                    
+                    # Deserialize the model
+                    model = self._deserialize_model(model_data)
+                    loaded_models[model_type] = model
+                    
+                    self.logger.debug("Model loaded", model_type=model_type, 
+                                    model_id=metadata.get('model_id'))
+                    
+                except Exception as e:
+                    self.logger.warning("Failed to load model", model_type=model_type, error=str(e))
+                    # Continue loading other models
+        
+        except Exception as e:
+            self.logger.error("Failed to load mode-specific models", error=str(e))
+        
+        return loaded_models
+    
+    def _get_preservation_priority(self) -> Any:
+        """Get preservation priority based on mode type and configuration."""
+        if not PRESERVATION_AVAILABLE:
+            return None
+        
+        # Check if mode-specific priority is configured
+        preservation_config = self.config.parameters.get('preservation', {})
+        priority_str = preservation_config.get('priority', '').lower()
+        
+        # Map string priorities to enum values
+        priority_mapping = {
+            'critical': PreservationPriority.CRITICAL,
+            'high': PreservationPriority.HIGH,
+            'normal': PreservationPriority.NORMAL,
+            'low': PreservationPriority.LOW
+        }
+        
+        # Live trading modes should use critical priority by default
+        if self.config.mode_type == ModeType.LIVE_TRADING:
+            return priority_mapping.get(priority_str, PreservationPriority.CRITICAL)
+        elif self.config.mode_type == ModeType.SIMULATION:
+            return priority_mapping.get(priority_str, PreservationPriority.HIGH)
+        else:
+            return priority_mapping.get(priority_str, PreservationPriority.NORMAL)
+    
+    def _serialize_model(self, model: Any) -> bytes:
+        """Serialize a model for storage."""
+        import pickle
+        try:
+            return pickle.dumps(model)
+        except Exception as e:
+            self.logger.error("Failed to serialize model", error=str(e))
+            # Return a placeholder for failed serialization
+            return pickle.dumps({"error": "serialization_failed", "timestamp": datetime.now()})
+    
+    def _deserialize_model(self, model_data: bytes) -> Any:
+        """Deserialize a model from storage."""
+        import pickle
+        try:
+            return pickle.loads(model_data)
+        except Exception as e:
+            self.logger.error("Failed to deserialize model", error=str(e))
+            return None
+    
+    # Additional preservation utility methods
+    async def backup_on_mode_change(self, new_mode_type: ModeType) -> None:
+        """Public method to backup models when changing modes."""
+        self.logger.info("Backing up models for mode change", 
+                        from_mode=self.config.mode_type.value, 
+                        to_mode=new_mode_type.value)
+        
+        backup_ids = await self._backup_models_on_mode_change()
+        self.logger.info("Mode change backup completed", backup_count=len(backup_ids))
+    
+    async def load_mode_models(self) -> Dict[str, Any]:
+        """Public method to load mode-specific models."""
+        return await self._load_mode_specific_models()
+    
+    async def _migrate_model_to_mode(self, model_type: str, version: str, 
+                                   from_mode: str, to_mode: str) -> str:
+        """Migrate a model from one mode to another."""
+        if not self.preservation_manager:
+            raise RuntimeError("Preservation manager not available")
+        
+        return await self.preservation_manager.migrate_model(
+            model_type=model_type,
+            version=version,
+            from_mode=from_mode,
+            to_mode=to_mode
+        )
+    
+    async def _validate_migration_compatibility(self, model_type: str, 
+                                              from_mode: str, to_mode: str) -> bool:
+        """Validate if a model migration is compatible."""
+        # Define incompatible migration patterns
+        incompatible_migrations = [
+            ('live_trading', 'analysis'),  # Don't migrate live models to analysis
+        ]
+        
+        return (from_mode, to_mode) not in incompatible_migrations
+    
+    async def _migrate_models_bulk(self, models: List[Dict[str, str]], 
+                                 from_mode: str, to_mode: str,
+                                 rollback_on_failure: bool = False) -> List[Dict[str, Any]]:
+        """Migrate multiple models between modes."""
+        if not self.preservation_manager:
+            raise RuntimeError("Preservation manager not available")
+        
+        migration_results = []
+        successful_migrations = []
+        
+        try:
+            for model_info in models:
+                model_type = model_info['model_type']
+                version = model_info['version']
+                
+                # Validate migration compatibility
+                if not await self._validate_migration_compatibility(model_type, from_mode, to_mode):
+                    raise Exception(f"Migration not compatible: {model_type} from {from_mode} to {to_mode}")
+                
+                migrated_id = await self.preservation_manager.migrate_model(
+                    model_type=model_type,
+                    version=version,
+                    from_mode=from_mode,
+                    to_mode=to_mode
+                )
+                
+                result = {
+                    'model_type': model_type,
+                    'version': version,
+                    'migrated_id': migrated_id,
+                    'status': 'success'
+                }
+                
+                migration_results.append(result)
+                successful_migrations.append(result)
+        
+        except Exception as e:
+            if rollback_on_failure and successful_migrations:
+                # Implement rollback logic here
+                self.logger.error("Migration failed, rollback required", error=str(e))
+            raise
+        
+        return migration_results
+    
+    async def _handle_error(self, error_message: str) -> None:
+        """Handle critical errors with emergency backup."""
+        self.logger.error("Critical error occurred", error=error_message)
+        self._set_status(ModeStatus.ERROR, error_message)
+        
+        # Trigger emergency backup if preservation manager is available
+        if self.preservation_manager and self._ml_models:
+            try:
+                await self.preservation_manager.emergency_backup(
+                    models=self._ml_models,
+                    context=f"emergency_{self.config.mode_type.value}",
+                    error_context=error_message
+                )
+                self.logger.info("Emergency backup completed")
+            except Exception as backup_error:
+                self.logger.error("Emergency backup failed", error=str(backup_error))
+    
+    def _get_effective_preservation_config(self) -> Dict[str, Any]:
+        """Get effective preservation configuration with mode-specific overrides."""
+        base_config = self.config.parameters.get('preservation', {})
+        
+        # Apply mode-specific overrides
+        if self.config.mode_type == ModeType.LIVE_TRADING:
+            base_config = {
+                **base_config,
+                'priority': 'critical',
+                'mode_isolation': True
+            }
+        elif self.config.mode_type == ModeType.SIMULATION:
+            base_config = {
+                **base_config,
+                'priority': base_config.get('priority', 'high'),
+                'mode_isolation': True
+            }
+        
+        return base_config
+    
+    async def _validate_isolation_boundary(self, requested_mode: str, operation: str) -> bool:
+        """Validate isolation boundary access."""
+        if not self.config.parameters.get('preservation', {}).get('mode_isolation', True):
+            return True  # No isolation enforced
+        
+        # Allow same mode access
+        if requested_mode == self.config.mode_type.value:
+            return True
+        
+        # Strict isolation for live trading
+        if (self.config.mode_type == ModeType.LIVE_TRADING and 
+            self.config.parameters.get('preservation', {}).get('strict_isolation', False)):
+            return False
+        
+        return True
+    
+    async def emergency_backup(self) -> None:
+        """Perform emergency backup of current models."""
+        if self.preservation_manager and self._ml_models:
+            await self.preservation_manager.emergency_backup(
+                models=self._ml_models,
+                context=f"emergency_{self.config.mode_type.value}"
+            )
     
     @abstractmethod
     async def initialize(self) -> None:
@@ -279,21 +625,46 @@ class TradingMode(ModeBase):
     Executes real trades using the RL agent and portfolio management.
     """
     
+    def __init__(self, mode_id: UUID, config: ModeConfig, portfolio: Portfolio):
+        """Initialize trading mode with required models."""
+        super().__init__(mode_id, config, portfolio)
+        
+        # Define required model types for live trading
+        self._required_model_types = ['dqn', 'risk_model', 'portfolio_optimizer']
+    
     async def initialize(self) -> None:
         """Initialize trading mode resources."""
         self.logger.info("Initializing trading mode")
+        
+        # Initialize preservation manager first
+        await self._initialize_preservation_manager()
+        
+        # Load mode-specific models
+        if self.preservation_manager:
+            self._ml_models = await self._load_mode_specific_models()
+        
         # Initialize any trading-specific resources
         self._set_status(ModeStatus.INACTIVE)
     
     async def start(self) -> None:
         """Start live trading mode."""
         self.logger.info("Starting trading mode")
+        
+        # Load models if not already loaded
+        if self.preservation_manager and not self._ml_models:
+            self._ml_models = await self._load_mode_specific_models()
+        
         self.start_time = datetime.now()
         self._set_status(ModeStatus.ACTIVE)
     
     async def stop(self) -> None:
         """Stop live trading mode."""
         self.logger.info("Stopping trading mode")
+        
+        # Backup models before stopping
+        if self.preservation_manager and self._ml_models:
+            await self._backup_models_on_mode_change()
+        
         self._set_status(ModeStatus.STOPPING)
     
     async def pause(self) -> None:
@@ -339,20 +710,45 @@ class AnalysisMode(ModeBase):
     Performs market analysis without executing trades.
     """
     
+    def __init__(self, mode_id: UUID, config: ModeConfig, portfolio: Portfolio):
+        """Initialize analysis mode with required models."""
+        super().__init__(mode_id, config, portfolio)
+        
+        # Define required model types for analysis
+        self._required_model_types = ['lstm', 'transformer', 'technical_analyzer']
+    
     async def initialize(self) -> None:
         """Initialize analysis mode resources."""
         self.logger.info("Initializing analysis mode")
+        
+        # Initialize preservation manager first
+        await self._initialize_preservation_manager()
+        
+        # Load mode-specific models
+        if self.preservation_manager:
+            self._ml_models = await self._load_mode_specific_models()
+        
         self._set_status(ModeStatus.INACTIVE)
     
     async def start(self) -> None:
         """Start analysis mode."""
         self.logger.info("Starting analysis mode")
+        
+        # Load models if not already loaded
+        if self.preservation_manager and not self._ml_models:
+            self._ml_models = await self._load_mode_specific_models()
+        
         self.start_time = datetime.now()
         self._set_status(ModeStatus.ACTIVE)
     
     async def stop(self) -> None:
         """Stop analysis mode."""
         self.logger.info("Stopping analysis mode")
+        
+        # Backup models before stopping
+        if self.preservation_manager and self._ml_models:
+            await self._backup_models_on_mode_change()
+        
         self._set_status(ModeStatus.STOPPING)
     
     async def pause(self) -> None:
@@ -605,31 +1001,117 @@ class SimulationMode(ModeBase):
         self.virtual_balance = config.parameters.get("initial_balance", 10000)
         self.enable_fees = config.parameters.get("enable_fees", True)
         self.slippage_bps = config.parameters.get("slippage_bps", 10)
+        
+        # Define required model types for simulation
+        self._required_model_types = ['dqn', 'lstm', 'simulator']
+        
+        # Initialize simulation metrics
+        self._simulation_metrics = {}
     
     async def initialize(self) -> None:
         """Initialize simulation mode resources."""
         self.logger.info("Initializing simulation mode")
+        
+        # Initialize preservation manager first
+        await self._initialize_preservation_manager()
+        
+        # Load mode-specific models
+        if self.preservation_manager:
+            self._ml_models = await self._load_mode_specific_models()
+        
         self._set_status(ModeStatus.INACTIVE)
     
     async def start(self) -> None:
         """Start simulation mode."""
         self.logger.info("Starting simulation mode")
+        
+        # Load models if not already loaded
+        if self.preservation_manager and not self._ml_models:
+            self._ml_models = await self._load_mode_specific_models()
+        
         self.start_time = datetime.now()
         self._set_status(ModeStatus.ACTIVE)
     
     async def stop(self) -> None:
         """Stop simulation mode."""
         self.logger.info("Stopping simulation mode")
+        
+        # Backup models before stopping
+        if self.preservation_manager and self._ml_models:
+            await self._backup_models_on_mode_change()
+        
         self._set_status(ModeStatus.STOPPING)
     
     async def pause(self) -> None:
         """Pause simulation mode."""
         self.logger.info("Pausing simulation mode")
+        
+        # Save current state when pausing
+        if self.preservation_manager:
+            try:
+                # Create state metadata
+                state_data = {
+                    'virtual_balance': self.virtual_balance,
+                    'simulation_metrics': self._simulation_metrics,
+                    'enable_fees': self.enable_fees,
+                    'slippage_bps': self.slippage_bps
+                }
+                
+                from src.model_preservation.base import generate_model_id
+                state_type_str = f"mode_state_{self.config.mode_type.value}"
+                state_version_str = f"pause_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                state_model_id = generate_model_id(state_type_str, state_version_str)
+                
+                metadata = ModelMetadata(
+                    model_id=state_model_id,
+                    model_type=state_type_str,
+                    version=state_version_str,
+                    created_at=datetime.now(),
+                    preservation_priority=self._get_preservation_priority(),
+                    tags=["pause", "state_save", self.config.mode_type.value],
+                    mode=self.config.mode_type.value
+                )
+                
+                await self.preservation_manager.save_model(
+                    model_type=f"mode_state_{self.config.mode_type.value}",
+                    model_data=self._serialize_model(state_data),
+                    metadata=metadata,
+                    mode=self.config.mode_type.value,
+                    tags=["pause"]
+                )
+                
+                self.logger.debug("Simulation state saved during pause")
+            except Exception as e:
+                self.logger.error("Failed to save state during pause", error=str(e))
+        
         self._set_status(ModeStatus.PAUSED)
     
     async def resume(self) -> None:
         """Resume simulation mode."""
         self.logger.info("Resuming simulation mode")
+        
+        # Restore state when resuming
+        if self.preservation_manager:
+            try:
+                model_data, metadata = await self.preservation_manager.load_model(
+                    model_type=f"mode_state_{self.config.mode_type.value}",
+                    mode=self.config.mode_type.value,
+                    tags=["resume"]
+                )
+                
+                state_data = self._deserialize_model(model_data)
+                if state_data and isinstance(state_data, dict):
+                    self.virtual_balance = state_data.get('virtual_balance', self.virtual_balance)
+                    self._simulation_metrics = state_data.get('simulation_metrics', {})
+                    self.enable_fees = state_data.get('enable_fees', self.enable_fees)
+                    self.slippage_bps = state_data.get('slippage_bps', self.slippage_bps)
+                    
+                    self.logger.debug("Simulation state restored from pause")
+                
+            except Exception as e:
+                self.logger.warning("Failed to restore state during resume", error=str(e))
+                # Continue with current state
+        
         self._set_status(ModeStatus.ACTIVE)
     
     async def process_tick(self, market_state: MarketState) -> Optional[TradeAction]:
