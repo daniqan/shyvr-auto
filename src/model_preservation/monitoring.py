@@ -128,13 +128,23 @@ class PreservationMetricsCollector:
         """Initialize metrics collector with Prometheus metrics.
         
         Args:
-            registry: Prometheus registry to use. If None, uses default registry.
+            registry: Prometheus registry to use. If None, creates a new registry.
         """
-        self.registry = registry or REGISTRY
+        # Use a new registry by default to avoid conflicts during testing
+        self.registry = registry or CollectorRegistry()
         self._lock = threading.Lock()
         
         # Initialize all metrics
-        self._init_metrics()
+        try:
+            self._init_metrics()
+        except ValueError as e:
+            # Handle metric registration conflicts gracefully
+            if "Duplicated timeseries" in str(e) or "already exists" in str(e):
+                # Use a fresh registry to avoid conflicts
+                self.registry = CollectorRegistry()
+                self._init_metrics()
+            else:
+                raise
         
         # Track cache statistics
         self._cache_hits = 0
