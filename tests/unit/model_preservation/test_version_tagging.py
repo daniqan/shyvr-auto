@@ -1,0 +1,464 @@
+"""
+Comprehensive tests for version tagging functionality in model preservation system
+
+Tests the tagging system that supports tags like "latest", "stable", "experimental", etc.
+Following TDD methodology - these tests are written first before implementation.
+"""
+
+import pytest
+import asyncio
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional
+from unittest.mock import AsyncMock, Mock, patch
+
+from src.model_preservation.base import (
+    ModelMetadata,
+    PreservationPriority,
+    ModelState,
+    PreservationError,
+    VersionError
+)
+from src.model_preservation.versioning import SemanticVersion
+
+
+class TestModelTag:
+    """Test ModelTag dataclass and basic functionality"""
+    
+    def test_model_tag_creation(self):
+        """Test creating a ModelTag with valid data"""
+        from src.model_preservation.base import ModelTag
+        
+        tag = ModelTag(
+            tag_name="latest",
+            model_type="dqn",
+            version="v1.2.3",
+            created_at=datetime.now(timezone.utc),
+            description="Latest stable version"
+        )
+        assert tag.tag_name == "latest"
+        assert tag.model_type == "dqn"
+        assert tag.version == "v1.2.3"
+        assert tag.is_standard_tag is True
+        assert tag.tag_id == "dqn-latest"
+    
+    def test_model_tag_validation(self):
+        """Test ModelTag validation for invalid inputs"""
+        from src.model_preservation.base import ModelTag
+        
+        # Test invalid tag name
+        with pytest.raises(ValueError, match="Invalid tag name"):
+            ModelTag(
+                tag_name="invalid tag name",  # Spaces not allowed
+                model_type="dqn",
+                version="v1.2.3",
+                created_at=datetime.now(timezone.utc)
+            )
+        
+        # Test invalid version
+        with pytest.raises(ValueError, match="Invalid version format"):
+            ModelTag(
+                tag_name="latest",
+                model_type="dqn",
+                version="invalid_version",
+                created_at=datetime.now(timezone.utc)
+            )
+    
+    def test_standard_tag_constants(self):
+        """Test that standard tag constants are defined"""
+        from src.model_preservation.base import StandardTags
+        
+        assert StandardTags.LATEST == "latest"
+        assert StandardTags.STABLE == "stable"
+        assert StandardTags.EXPERIMENTAL == "experimental"
+        
+        all_tags = StandardTags.get_all()
+        assert "latest" in all_tags
+        assert "stable" in all_tags
+        assert "experimental" in all_tags
+        
+        assert StandardTags.is_standard_tag("latest") is True
+        assert StandardTags.is_standard_tag("custom") is False
+
+
+class TestDatabaseTagOperations:
+    """Test database operations for version tagging"""
+    
+    @pytest.fixture
+    def mock_db_handler(self):
+        """Mock database handler for testing"""
+        from src.model_preservation.db_handler import DatabaseHandler
+        handler = DatabaseHandler()
+        handler._initialized = True
+        return handler
+    
+    @pytest.mark.asyncio
+    async def test_save_tag(self, mock_db_handler):
+        """Test saving a tag to database"""
+        # TODO: Test save_tag method once implemented
+        # tag = ModelTag(
+        #     tag_name="latest",
+        #     model_type="dqn", 
+        #     version="v1.2.3",
+        #     created_at=datetime.now(timezone.utc)
+        # )
+        # 
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "tag_id"
+        #     
+        #     result = await mock_db_handler.save_tag(tag)
+        #     assert result == "tag_id"
+        pytest.skip("save_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_get_tag(self, mock_db_handler):
+        """Test retrieving a tag from database"""
+        # TODO: Test get_tag method once implemented
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_row = {
+        #         'tag_name': 'latest',
+        #         'model_type': 'dqn',
+        #         'version': 'v1.2.3',
+        #         'created_at': datetime.now(timezone.utc)
+        #     }
+        #     mock_conn.return_value.__aenter__.return_value.fetchrow.return_value = mock_row
+        #     
+        #     tag = await mock_db_handler.get_tag("dqn", "latest")
+        #     assert tag["tag_name"] == "latest"
+        #     assert tag["version"] == "v1.2.3"
+        pytest.skip("get_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_update_tag(self, mock_db_handler):
+        """Test updating a tag to point to new version"""
+        # TODO: Test update_tag method once implemented
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_conn.return_value.__aenter__.return_value.execute.return_value = None
+        #     
+        #     await mock_db_handler.update_tag("dqn", "latest", "v1.3.0")
+        #     # Verify database update was called
+        pytest.skip("update_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_delete_tag(self, mock_db_handler):
+        """Test deleting a tag from database"""
+        # TODO: Test delete_tag method once implemented
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_conn.return_value.__aenter__.return_value.execute.return_value = None
+        #     
+        #     await mock_db_handler.delete_tag("dqn", "experimental")
+        #     # Verify database deletion was called
+        pytest.skip("delete_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_list_tags_for_model_type(self, mock_db_handler):
+        """Test listing all tags for a model type"""
+        # TODO: Test list_tags method once implemented
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_rows = [
+        #         {'tag_name': 'latest', 'version': 'v1.2.3'},
+        #         {'tag_name': 'stable', 'version': 'v1.2.0'},
+        #         {'tag_name': 'experimental', 'version': 'v1.3.0-alpha'}
+        #     ]
+        #     mock_conn.return_value.__aenter__.return_value.fetch.return_value = mock_rows
+        #     
+        #     tags = await mock_db_handler.list_tags("dqn")
+        #     assert len(tags) == 3
+        #     assert tags[0]["tag_name"] == "latest"
+        pytest.skip("list_tags method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_resolve_tag_to_version(self, mock_db_handler):
+        """Test resolving a tag name to its version"""
+        # TODO: Test resolve_tag_to_version method once implemented
+        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+        #     mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "v1.2.3"
+        #     
+        #     version = await mock_db_handler.resolve_tag_to_version("dqn", "latest")
+        #     assert version == "v1.2.3"
+        pytest.skip("resolve_tag_to_version method not yet implemented")
+
+
+class TestPreservationManagerTagging:
+    """Test tagging functionality in PreservationManager"""
+    
+    @pytest.fixture
+    def mock_preservation_manager(self):
+        """Mock preservation manager for testing"""
+        from src.model_preservation.manager import PreservationManager, PreservationConfig
+        config = PreservationConfig(gcs_bucket="test-bucket")
+        manager = PreservationManager(config)
+        manager._is_running = True
+        return manager
+    
+    @pytest.mark.asyncio
+    async def test_tag_model(self, mock_preservation_manager):
+        """Test tagging a model with a specific tag"""
+        # TODO: Test tag_model method once implemented
+        # with patch.object(mock_preservation_manager.db_handler, 'save_tag') as mock_save:
+        #     mock_save.return_value = "tag_id"
+        #     
+        #     result = await mock_preservation_manager.tag_model(
+        #         model_type="dqn",
+        #         version="v1.2.3",
+        #         tag_name="stable",
+        #         description="Stable release"
+        #     )
+        #     assert result == "tag_id"
+        pytest.skip("tag_model method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_resolve_tag(self, mock_preservation_manager):
+        """Test resolving a tag to get version"""
+        # TODO: Test resolve_tag method once implemented
+        # with patch.object(mock_preservation_manager.db_handler, 'resolve_tag_to_version') as mock_resolve:
+        #     mock_resolve.return_value = "v1.2.3"
+        #     
+        #     version = await mock_preservation_manager.resolve_tag("dqn", "latest")
+        #     assert version == "v1.2.3"
+        pytest.skip("resolve_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_load_model_by_tag(self, mock_preservation_manager):
+        """Test loading a model using a tag instead of version"""
+        # TODO: Test loading model by tag once implemented
+        # with patch.object(mock_preservation_manager, 'resolve_tag') as mock_resolve:
+        #     mock_resolve.return_value = "v1.2.3"
+        #     with patch.object(mock_preservation_manager, 'load_model') as mock_load:
+        #         mock_load.return_value = (b"model_data", {"version": "v1.2.3"})
+        #         
+        #         data, metadata = await mock_preservation_manager.load_model(
+        #             model_type="dqn",
+        #             version="latest"  # This should resolve to v1.2.3
+        #         )
+        #         assert metadata["version"] == "v1.2.3"
+        pytest.skip("load_model by tag not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_move_tag(self, mock_preservation_manager):
+        """Test moving a tag from one version to another"""
+        # TODO: Test move_tag method once implemented
+        # with patch.object(mock_preservation_manager.db_handler, 'update_tag') as mock_update:
+        #     mock_update.return_value = None
+        #     
+        #     await mock_preservation_manager.move_tag("dqn", "latest", "v1.3.0")
+        #     mock_update.assert_called_once_with("dqn", "latest", "v1.3.0")
+        pytest.skip("move_tag method not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_list_model_tags(self, mock_preservation_manager):
+        """Test listing all tags for a model type"""
+        # TODO: Test list_model_tags method once implemented
+        # with patch.object(mock_preservation_manager.db_handler, 'list_tags') as mock_list:
+        #     mock_list.return_value = [
+        #         {"tag_name": "latest", "version": "v1.2.3"},
+        #         {"tag_name": "stable", "version": "v1.2.0"}
+        #     ]
+        #     
+        #     tags = await mock_preservation_manager.list_model_tags("dqn")
+        #     assert len(tags) == 2
+        #     assert tags[0]["tag_name"] == "latest"
+        pytest.skip("list_model_tags method not yet implemented")
+
+
+class TestAutomaticTagging:
+    """Test automatic tagging logic"""
+    
+    @pytest.fixture
+    def mock_preservation_manager(self):
+        """Mock preservation manager for testing"""
+        from src.model_preservation.manager import PreservationManager, PreservationConfig
+        config = PreservationConfig(gcs_bucket="test-bucket")
+        manager = PreservationManager(config)
+        manager._is_running = True
+        return manager
+    
+    @pytest.mark.asyncio
+    async def test_auto_tag_latest_on_save(self, mock_preservation_manager):
+        """Test that 'latest' tag is automatically updated when saving a new model"""
+        # TODO: Test automatic latest tagging once implemented
+        # with patch.object(mock_preservation_manager, 'save_model') as mock_save:
+        #     mock_save.return_value = "model_id"
+        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
+        #         mock_tag.return_value = "tag_id"
+        #         
+        #         model_id = await mock_preservation_manager.save_model(
+        #             model_data=b"test_data",
+        #             model_type="dqn",
+        #             version="v1.3.0"
+        #         )
+        #         
+        #         # Verify latest tag was updated
+        #         mock_tag.assert_called_with("dqn", "v1.3.0", "latest")
+        pytest.skip("Auto-tagging on save not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_auto_tag_stable(self, mock_preservation_manager):
+        """Test that 'stable' tag points to newest non-prerelease version"""
+        # TODO: Test automatic stable tagging once implemented
+        # # Mock versions in database
+        # versions = [
+        #     {"version": "v1.2.0"},      # stable
+        #     {"version": "v1.3.0-alpha"}, # prerelease
+        #     {"version": "v1.2.1"},      # stable, newest
+        #     {"version": "v1.3.0-beta"}  # prerelease
+        # ]
+        # 
+        # with patch.object(mock_preservation_manager.db_handler, 'get_versions') as mock_versions:
+        #     mock_versions.return_value = versions
+        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
+        #         mock_tag.return_value = "tag_id"
+        #         
+        #         await mock_preservation_manager.update_stable_tag("dqn")
+        #         
+        #         # Verify stable tag points to v1.2.1 (newest stable)
+        #         mock_tag.assert_called_with("dqn", "v1.2.1", "stable")
+        pytest.skip("Auto-stable tagging not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_experimental_tag_manual_only(self, mock_preservation_manager):
+        """Test that 'experimental' tag is only set manually, not automatically"""
+        # TODO: Test experimental tag behavior once implemented
+        # # Save a prerelease version
+        # with patch.object(mock_preservation_manager, 'save_model') as mock_save:
+        #     mock_save.return_value = "model_id"
+        #     with patch.object(mock_preservation_manager, 'tag_model') as mock_tag:
+        #         
+        #         model_id = await mock_preservation_manager.save_model(
+        #             model_data=b"test_data",
+        #             model_type="dqn",
+        #             version="v1.3.0-alpha"
+        #         )
+        #         
+        #         # Verify experimental tag was NOT automatically set
+        #         calls = [call for call in mock_tag.call_args_list if call[0][2] == "experimental"]
+        #         assert len(calls) == 0, "Experimental tag should not be set automatically"
+        pytest.skip("Experimental tag logic not yet implemented")
+
+
+class TestTagValidation:
+    """Test tag validation and error handling"""
+    
+    def test_tag_name_validation(self):
+        """Test tag name validation rules"""
+        from src.model_preservation.base import is_valid_tag_name
+        
+        # Valid tag names
+        valid_names = ["latest", "stable", "experimental", "release-1", "feature_branch", "v1-prod", "a", "test123"]
+        for name in valid_names:
+            assert is_valid_tag_name(name), f"'{name}' should be valid"
+        
+        # Invalid tag names
+        invalid_names = ["", " ", "latest ", " stable", "tag with spaces", "tag@special", "tag!invalid", "--invalid", "a" * 51]
+        for name in invalid_names:
+            assert not is_valid_tag_name(name), f"'{name}' should be invalid"
+    
+    def test_reserved_tag_names(self):
+        """Test that reserved tag names are properly handled"""
+        from src.model_preservation.base import is_reserved_tag_name
+        
+        reserved_names = ["latest", "stable", "experimental"]
+        for name in reserved_names:
+            assert is_reserved_tag_name(name), f"'{name}' should be reserved"
+        
+        custom_names = ["feature-1", "release-candidate", "custom"]
+        for name in custom_names:
+            assert not is_reserved_tag_name(name), f"'{name}' should not be reserved"
+    
+    @pytest.mark.asyncio
+    async def test_duplicate_tag_handling(self):
+        """Test handling of duplicate tag names"""
+        # TODO: Test duplicate tag handling once implemented
+        # Create tag
+        # Update existing tag (should succeed)
+        # Verify old tag is replaced
+        pytest.skip("Duplicate tag handling not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_tag_to_nonexistent_version(self):
+        """Test error handling when tagging a nonexistent version"""
+        # TODO: Test error handling once implemented
+        # with pytest.raises(VersionError):
+        #     await manager.tag_model("dqn", "v99.99.99", "latest")
+        pytest.skip("Error handling not yet implemented")
+
+
+class TestTagSpecialCases:
+    """Test special cases and edge conditions for tagging"""
+    
+    @pytest.mark.asyncio
+    async def test_tag_with_same_version(self):
+        """Test creating multiple tags pointing to same version"""
+        # TODO: Test multiple tags per version once implemented
+        pytest.skip("Multiple tags per version not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_tag_across_modes(self):
+        """Test tagging behavior across different operational modes"""
+        # TODO: Test cross-mode tagging once implemented
+        # Tags should be mode-specific if mode_isolation is enabled
+        pytest.skip("Cross-mode tagging not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_tag_cleanup_on_version_deletion(self):
+        """Test that tags are cleaned up when versions are deleted"""
+        # TODO: Test tag cleanup once implemented
+        pytest.skip("Tag cleanup not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_tag_history_tracking(self):
+        """Test tracking of tag changes over time"""
+        # TODO: Test tag history once implemented
+        # This might be a future enhancement
+        pytest.skip("Tag history not yet implemented")
+
+
+class TestTagPerformance:
+    """Test performance characteristics of tagging operations"""
+    
+    @pytest.mark.asyncio
+    async def test_tag_resolution_performance(self):
+        """Test that tag resolution is fast enough"""
+        # TODO: Test performance once implemented
+        # Resolution should be <10ms for cached tags
+        pytest.skip("Performance testing not yet implemented")
+    
+    @pytest.mark.asyncio
+    async def test_batch_tag_operations(self):
+        """Test batch operations for multiple tags"""
+        # TODO: Test batch operations once implemented
+        # Useful for updating multiple tags efficiently
+        pytest.skip("Batch operations not yet implemented")
+
+
+# Integration test fixtures
+@pytest.fixture
+def sample_model_data():
+    """Sample model data for testing"""
+    return b"fake_model_data_for_testing"
+
+
+@pytest.fixture
+def sample_versions():
+    """Sample version list for testing"""
+    return [
+        "v1.0.0",
+        "v1.1.0", 
+        "v1.1.1",
+        "v1.2.0-alpha",
+        "v1.2.0-beta.1",
+        "v1.2.0",
+        "v2.0.0-rc.1"
+    ]
+
+
+# Test utilities
+def assert_tag_points_to_version(tag_data: Dict[str, Any], expected_version: str):
+    """Utility to assert tag points to expected version"""
+    assert tag_data["version"] == expected_version, f"Tag should point to {expected_version}, got {tag_data['version']}"
+
+
+def assert_semantic_version_order(versions: List[str]):
+    """Utility to assert versions are in semantic order"""
+    semantic_versions = [SemanticVersion(v) for v in versions]
+    sorted_versions = sorted(semantic_versions)
+    assert semantic_versions == sorted_versions, "Versions should be in semantic order"
