@@ -172,6 +172,7 @@ class ModelTag:
     model_type: str
     version: str
     created_at: datetime
+    branch: str = DEFAULT_BRANCH  # Branch where the tag exists
     updated_at: Optional[datetime] = None
     description: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)

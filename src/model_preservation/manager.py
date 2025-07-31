@@ -147,6 +147,7 @@ class PreservationManager:
         model_type: str,
         version: Optional[str] = None,
         mode: str = "analysis",
+        branch: str = "main",
         tags: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         priority: PreservationPriority = PreservationPriority.NORMAL,
@@ -160,6 +161,7 @@ class PreservationManager:
             model_type: Type of model (e.g., "lstm", "dqn")
             version: Optional version string, auto-generated if not provided
             mode: Operational mode (analysis, simulation, live)
+            branch: Branch to save to (default: main)
             tags: Optional tags for the model
             metadata: Optional additional metadata
             priority: Preservation priority
@@ -169,9 +171,13 @@ class PreservationManager:
             model_id: Unique identifier for the saved model
         """
         try:
+            # Validate branch exists
+            if self.db_handler and not await self.db_handler.branch_exists(branch):
+                raise ValueError(f"Branch '{branch}' does not exist")
+            
             # Generate version if not provided
             if not version:
-                version = await self._generate_next_version(model_type, increment_type)
+                version = await self._generate_next_version(model_type, increment_type, branch=branch)
             
             # Create metadata object
             model_metadata = ModelMetadata(
@@ -185,6 +191,7 @@ class PreservationManager:
                 preservation_priority=priority,
                 state=ModelState.ACTIVE,
                 mode=mode,
+                branch=branch,
                 tags=tags or [],
                 metadata=metadata or {}
             )
@@ -227,6 +234,7 @@ class PreservationManager:
         model_type: str,
         version: Optional[str] = None,
         mode: str = "analysis",
+        branch: str = "main",
         fallback: bool = False
     ) -> Tuple[bytes, Dict[str, Any]]:
         """
@@ -236,17 +244,22 @@ class PreservationManager:
             model_type: Type of model to load
             version: Specific version to load (latest if not specified, can be a tag name)
             mode: Operational mode
+            branch: Branch to load from (default: main)
             fallback: Whether to fallback to previous version if not found
             
         Returns:
             Tuple of (model_data, metadata)
         """
         try:
+            # Validate branch exists
+            if self.db_handler and not await self.db_handler.branch_exists(branch):
+                raise ValueError(f"Branch '{branch}' does not exist")
+            
             # Resolve tag to version if version looks like a tag
             resolved_version = version
             if version and self.db_handler:
                 # Check if version is a tag name
-                tag_version = await self.db_handler.resolve_tag_to_version(model_type, version)
+                tag_version = await self.db_handler.resolve_tag_to_version(model_type, version, branch=branch)
                 if tag_version:
                     resolved_version = tag_version
             
@@ -255,14 +268,16 @@ class PreservationManager:
                 metadata = await self.db_handler.get_metadata(
                     model_type=model_type,
                     version=resolved_version,
-                    mode=mode
+                    mode=mode,
+                    branch=branch
                 )
                 
                 if not metadata and fallback:
                     # Try to find previous version
                     versions = await self.db_handler.get_versions(
                         model_type=model_type,
-                        mode=mode
+                        mode=mode,
+                        branch=branch
                     )
                     if versions:
                         # Use previous version
@@ -270,7 +285,8 @@ class PreservationManager:
                             metadata = await self.db_handler.get_metadata(
                                 model_type=model_type,
                                 version=prev_version["version"],
-                                mode=mode
+                                mode=mode,
+                                branch=branch
                             )
                             if metadata:
                                 break
@@ -718,7 +734,8 @@ class PreservationManager:
     async def _generate_next_version(
         self, 
         model_type: str, 
-        increment_type: str = "patch"
+        increment_type: str = "patch",
+        branch: str = "main"
     ) -> str:
         """
         Generate next semantic version number for a model type.
@@ -726,13 +743,14 @@ class PreservationManager:
         Args:
             model_type: Type of model to generate version for
             increment_type: Type of increment ("patch", "minor", "major")
+            branch: Branch to generate version for
             
         Returns:
             Next semantic version string
         """
         if self.db_handler:
-            # Get existing versions from database
-            versions = await self.db_handler.get_versions(model_type=model_type)
+            # Get existing versions from database for the specific branch
+            versions = await self.db_handler.get_versions(model_type=model_type, branch=branch)
             version_strings = [v["version"] for v in versions]
             
             if version_strings:
@@ -840,6 +858,7 @@ class PreservationManager:
         model_type: str,
         version: str,
         tag_name: str,
+        branch: str = "main",
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -850,6 +869,7 @@ class PreservationManager:
             model_type: Type of model to tag
             version: Version to tag
             tag_name: Name of the tag
+            branch: Branch where the model exists
             description: Optional description
             metadata: Optional additional metadata
             
@@ -876,6 +896,7 @@ class PreservationManager:
                 tag_name=tag_name,
                 model_type=model_type,
                 version=version,
+                branch=branch,
                 created_at=datetime.now(),
                 description=description,
                 metadata=metadata or {}
@@ -1130,3 +1151,227 @@ class PreservationManager:
             
         except Exception:
             return None
+    
+    # =============================================================================
+    # BRANCH SUPPORT METHODS
+    # =============================================================================
+    
+    async def create_branch(
+        self,
+        branch_name: str,
+        source_branch: str = "main",
+        description: Optional[str] = None
+    ) -> str:
+        """
+        Create a new branch for experimental model development
+        
+        Args:
+            branch_name: Name of the new branch
+            source_branch: Source branch to copy from (default: main)
+            description: Optional description of the branch
+            
+        Returns:
+            Branch ID from database
+            
+        Raises:
+            ValueError: If branch name is invalid or already exists
+        """
+        from .base import validate_branch_name
+        
+        # Validate branch name
+        if not validate_branch_name(branch_name):
+            raise ValueError(f"Invalid branch name: {branch_name}")
+        
+        if not self.db_handler:
+            raise PreservationError("Database handler not initialized")
+        
+        try:
+            # Check if branch already exists
+            if await self.db_handler.branch_exists(branch_name):
+                raise ValueError(f"Branch '{branch_name}' already exists")
+            
+            # Create branch in database
+            branch_id = await self.db_handler.create_branch(
+                branch_name=branch_name,
+                source_branch=source_branch,
+                description=description
+            )
+            
+            # Record branch creation event
+            await self.db_handler.record_event(
+                model_id=f"branch-{branch_name}",
+                event_type="branch_created",
+                details={
+                    "branch_name": branch_name,
+                    "source_branch": source_branch,
+                    "description": description
+                }
+            )
+            
+            return branch_id
+            
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            raise PreservationError(f"Failed to create branch: {str(e)}")
+    
+    async def list_branches(self) -> List[Dict[str, Any]]:
+        """
+        List all branches with their metadata
+        
+        Returns:
+            List of branch information dictionaries
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            return await self.db_handler.list_branches()
+        except Exception:
+            return []
+    
+    async def delete_branch(
+        self,
+        branch_name: str,
+        force: bool = False
+    ) -> None:
+        """
+        Delete a branch
+        
+        Args:
+            branch_name: Name of branch to delete
+            force: Force deletion even if branch contains models
+            
+        Raises:
+            ValueError: If branch doesn't exist or cannot be deleted
+        """
+        if branch_name == "main":
+            raise ValueError("Cannot delete main branch")
+        
+        if not self.db_handler:
+            raise PreservationError("Database handler not initialized")
+        
+        try:
+            # Check if branch exists
+            if not await self.db_handler.branch_exists(branch_name):
+                raise ValueError(f"Branch '{branch_name}' does not exist")
+            
+            # Check if branch has models
+            model_count = await self.db_handler.get_branch_model_count(branch_name)
+            if model_count > 0 and not force:
+                raise ValueError(f"Cannot delete branch '{branch_name}' containing {model_count} models. Use force=True to override.")
+            
+            # Delete branch
+            await self.db_handler.delete_branch(branch_name)
+            
+            # Record deletion event
+            await self.db_handler.record_event(
+                model_id=f"branch-{branch_name}",
+                event_type="branch_deleted",
+                details={
+                    "branch_name": branch_name,
+                    "forced": force,
+                    "model_count": model_count
+                }
+            )
+            
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            raise PreservationError(f"Failed to delete branch: {str(e)}")
+    
+    async def promote_model(
+        self,
+        model_type: str,
+        version: str,
+        source_branch: str,
+        target_branch: str,
+        mode: Optional[str] = None
+    ) -> str:
+        """
+        Promote a model from one branch to another
+        
+        Args:
+            model_type: Type of model
+            version: Version to promote
+            source_branch: Source branch
+            target_branch: Target branch
+            mode: Optional mode context
+            
+        Returns:
+            New model ID in target branch
+            
+        Raises:
+            ValueError: If model or branches don't exist
+        """
+        if not self.db_handler:
+            raise PreservationError("Database handler not initialized")
+        
+        try:
+            # Validate branches exist
+            if not await self.db_handler.branch_exists(source_branch):
+                raise ValueError(f"Source branch '{source_branch}' does not exist")
+            
+            if not await self.db_handler.branch_exists(target_branch):
+                raise ValueError(f"Target branch '{target_branch}' does not exist")
+            
+            # Load model from source branch
+            source_metadata = await self.db_handler.get_metadata(
+                model_type=model_type,
+                version=version,
+                branch=source_branch,
+                mode=mode
+            )
+            
+            if not source_metadata:
+                raise ValueError(f"Model {model_type} {version} not found in branch {source_branch}")
+            
+            # Load model data
+            model_data = await self.storage_handler.load(source_metadata["storage_path"])
+            
+            # Save to target branch with same version
+            new_model_id = await self.save_model(
+                model_data=model_data,
+                model_type=model_type,
+                version=version,
+                branch=target_branch,
+                mode=mode,
+                tags=source_metadata.get("tags", []),
+                metadata=source_metadata.get("metadata", {})
+            )
+            
+            # Record promotion event
+            await self.db_handler.record_event(
+                model_id=new_model_id,
+                event_type="model_promoted",
+                details={
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "original_model_id": source_metadata["model_id"]
+                }
+            )
+            
+            return new_model_id
+            
+        except Exception as e:
+            if isinstance(e, (ValueError, PreservationError)):
+                raise
+            raise PreservationError(f"Failed to promote model: {str(e)}")
+    
+    async def list_models(self, branch: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List models, optionally filtered by branch
+        
+        Args:
+            branch: Optional branch to filter by
+            
+        Returns:
+            List of model metadata
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            return await self.db_handler.list_models(branch=branch)
+        except Exception:
+            return []

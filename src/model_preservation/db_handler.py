@@ -180,7 +180,8 @@ class DatabaseHandler:
         self,
         model_type: str,
         version: Optional[str] = None,
-        mode: str = "analysis"
+        mode: str = "analysis",
+        branch: str = "main"
     ) -> Optional[Dict[str, Any]]:
         """
         Get model metadata from database
@@ -189,6 +190,7 @@ class DatabaseHandler:
             model_type: Type of model to retrieve
             version: Specific version (latest if not specified)
             mode: Operational mode
+            branch: Branch to get model from
             
         Returns:
             Metadata dictionary or None if not found
@@ -202,32 +204,32 @@ class DatabaseHandler:
                     # Get specific version
                     query = """
                         SELECT 
-                            preservation_id, model_id, model_type, version, mode,
+                            preservation_id, model_id, model_type, version, mode, branch,
                             created_at, preserved_at, checksum, size_bytes, gcs_path,
                             performance_metrics, training_info, preservation_reason,
                             priority, tags, metadata, state, updated_at
                         FROM model_preservation_metadata
-                        WHERE model_type = $1 AND version = $2 AND mode = $3
+                        WHERE model_type = $1 AND version = $2 AND mode = $3 AND branch = $4
                         AND state != 'deleted'
                         ORDER BY preserved_at DESC
                         LIMIT 1
                     """
-                    row = await conn.fetchrow(query, model_type, version, mode)
+                    row = await conn.fetchrow(query, model_type, version, mode, branch)
                 else:
                     # Get latest version
                     query = """
                         SELECT 
-                            preservation_id, model_id, model_type, version, mode,
+                            preservation_id, model_id, model_type, version, mode, branch,
                             created_at, preserved_at, checksum, size_bytes, gcs_path,
                             performance_metrics, training_info, preservation_reason,
                             priority, tags, metadata, state, updated_at
                         FROM model_preservation_metadata
-                        WHERE model_type = $1 AND mode = $2
+                        WHERE model_type = $1 AND mode = $2 AND branch = $3
                         AND state != 'deleted'
                         ORDER BY preserved_at DESC
                         LIMIT 1
                     """
-                    row = await conn.fetchrow(query, model_type, mode)
+                    row = await conn.fetchrow(query, model_type, mode, branch)
                 
                 if not row:
                     return None
@@ -261,7 +263,8 @@ class DatabaseHandler:
     async def get_versions(
         self,
         model_type: str,
-        mode: Optional[str] = None
+        mode: Optional[str] = None,
+        branch: str = "main"
     ) -> List[Dict[str, Any]]:
         """
         Get all versions for a model type
@@ -269,6 +272,7 @@ class DatabaseHandler:
         Args:
             model_type: Type of model
             mode: Optional mode filter
+            branch: Branch to get versions from
             
         Returns:
             List of version information dictionaries
@@ -280,27 +284,28 @@ class DatabaseHandler:
             async with get_database_connection() as conn:
                 if mode:
                     query = """
-                        SELECT version, mode, preserved_at, state, priority
+                        SELECT version, mode, branch, preserved_at, state, priority
                         FROM model_preservation_metadata
-                        WHERE model_type = $1 AND mode = $2
+                        WHERE model_type = $1 AND mode = $2 AND branch = $3
                         AND state != 'deleted'
                         ORDER BY preserved_at DESC
                     """
-                    rows = await conn.fetch(query, model_type, mode)
+                    rows = await conn.fetch(query, model_type, mode, branch)
                 else:
                     query = """
-                        SELECT version, mode, preserved_at, state, priority
+                        SELECT version, mode, branch, preserved_at, state, priority
                         FROM model_preservation_metadata
-                        WHERE model_type = $1
+                        WHERE model_type = $1 AND branch = $2
                         AND state != 'deleted'
                         ORDER BY preserved_at DESC
                     """
-                    rows = await conn.fetch(query, model_type)
+                    rows = await conn.fetch(query, model_type, branch)
                 
                 return [
                     {
                         "version": row["version"],
                         "mode": row["mode"],
+                        "branch": row["branch"],
                         "created_at": row["preserved_at"],
                         "state": row["state"],
                         "priority": row["priority"]
@@ -968,7 +973,8 @@ class DatabaseHandler:
     async def resolve_tag_to_version(
         self,
         model_type: str,
-        tag_name: str
+        tag_name: str,
+        branch: str = "main"
     ) -> Optional[str]:
         """
         Resolve a tag name to its version
@@ -976,6 +982,7 @@ class DatabaseHandler:
         Args:
             model_type: Type of model
             tag_name: Name of tag to resolve
+            branch: Branch where tag exists
             
         Returns:
             Version string or None if tag not found
@@ -987,8 +994,8 @@ class DatabaseHandler:
             async with get_database_connection() as conn:
                 version = await conn.fetchval("""
                     SELECT version FROM model_tags
-                    WHERE model_type = $1 AND tag_name = $2
-                """, model_type, tag_name)
+                    WHERE model_type = $1 AND tag_name = $2 AND branch = $3
+                """, model_type, tag_name, branch)
                 
                 return version
                 
@@ -1095,3 +1102,202 @@ class DatabaseHandler:
         except Exception as e:
             logger.error(f"Failed to update standard tags: {e}")
             # Don't raise error - this is not critical for the main operation
+    
+    # =============================================================================
+    # BRANCH OPERATIONS
+    # =============================================================================
+    
+    async def branch_exists(self, branch_name: str) -> bool:
+        """
+        Check if a branch exists
+        
+        Args:
+            branch_name: Name of the branch to check
+            
+        Returns:
+            True if branch exists and is active
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                result = await conn.fetchval("""
+                    SELECT branch_exists($1)
+                """, branch_name)
+                
+                return bool(result)
+                
+        except Exception as e:
+            logger.error(f"Failed to check branch existence: {e}")
+            # Default to true for main branch
+            return branch_name == "main"
+    
+    async def create_branch(
+        self,
+        branch_name: str,
+        source_branch: str = "main",
+        description: Optional[str] = None
+    ) -> str:
+        """
+        Create a new branch
+        
+        Args:
+            branch_name: Name of the new branch
+            source_branch: Source branch to copy from
+            description: Optional description
+            
+        Returns:
+            Branch ID
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                branch_id = await conn.fetchval("""
+                    SELECT create_branch($1, $2, $3, $4)
+                """, branch_name, source_branch, description, "system")
+                
+                logger.info(f"Created branch '{branch_name}' from '{source_branch}'")
+                return str(branch_id)
+                
+        except Exception as e:
+            logger.error(f"Failed to create branch: {e}")
+            raise PreservationError(f"Failed to create branch: {str(e)}")
+    
+    async def list_branches(self) -> List[Dict[str, Any]]:
+        """
+        List all active branches
+        
+        Returns:
+            List of branch information
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                rows = await conn.fetch("""
+                    SELECT 
+                        branch_name as name,
+                        description,
+                        created_at,
+                        created_by,
+                        model_count
+                    FROM model_branches
+                    WHERE is_active = true
+                    ORDER BY 
+                        CASE WHEN branch_name = 'main' THEN 0 ELSE 1 END,
+                        created_at DESC
+                """)
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Failed to list branches: {e}")
+            return []
+    
+    async def get_branch_model_count(self, branch_name: str) -> int:
+        """
+        Get count of models in a branch
+        
+        Args:
+            branch_name: Name of the branch
+            
+        Returns:
+            Number of active models in the branch
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                count = await conn.fetchval("""
+                    SELECT get_branch_model_count($1)
+                """, branch_name)
+                
+                return int(count or 0)
+                
+        except Exception as e:
+            logger.error(f"Failed to get branch model count: {e}")
+            return 0
+    
+    async def delete_branch(self, branch_name: str, force: bool = False) -> None:
+        """
+        Delete a branch
+        
+        Args:
+            branch_name: Name of branch to delete
+            force: Force deletion even if branch has models
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                await conn.execute("""
+                    SELECT delete_branch($1, $2)
+                """, branch_name, force)
+                
+                logger.info(f"Deleted branch '{branch_name}' (force={force})")
+                
+        except Exception as e:
+            logger.error(f"Failed to delete branch: {e}")
+            raise PreservationError(f"Failed to delete branch: {str(e)}")
+    
+    async def list_models(self, branch: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List models, optionally filtered by branch
+        
+        Args:
+            branch: Optional branch to filter by
+            
+        Returns:
+            List of model metadata
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                if branch:
+                    query = """
+                        SELECT 
+                            model_id,
+                            model_type,
+                            version,
+                            branch,
+                            mode,
+                            state,
+                            created_at,
+                            file_size_bytes,
+                            tags
+                        FROM model_preservation_metadata
+                        WHERE branch = $1 AND state != 'deleted'
+                        ORDER BY created_at DESC
+                    """
+                    rows = await conn.fetch(query, branch)
+                else:
+                    query = """
+                        SELECT 
+                            model_id,
+                            model_type,
+                            version,
+                            branch,
+                            mode,
+                            state,
+                            created_at,
+                            file_size_bytes,
+                            tags
+                        FROM model_preservation_metadata
+                        WHERE state != 'deleted'
+                        ORDER BY created_at DESC
+                    """
+                    rows = await conn.fetch(query)
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Failed to list models: {e}")
+            return []

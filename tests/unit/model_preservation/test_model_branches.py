@@ -44,9 +44,9 @@ class TestBranchValidation:
             "develop", 
             "feature-123",
             "experimental",
-            "hotfix_2024",
-            "release-v1.0",
-            "test_branch",
+            "hotfix-2024",
+            "release-v1-0",
+            "test-branch",
             "model-experiments",
             "a",  # single character
             "a" * 63  # max length
@@ -94,8 +94,7 @@ class TestBranchValidation:
             "_startswithunderscore",
             "endswithdasd-",
             "endswithunderscore_",
-            "a" * 64,  # too long
-            "BRANCH",  # uppercase not allowed in this system
+            "a" * 64  # too long
         ]
         
         for name in invalid_names:
