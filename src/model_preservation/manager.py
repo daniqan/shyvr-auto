@@ -22,6 +22,7 @@ from .base import (
     calculate_checksum
 )
 from .gcs_handler import GCSHandler
+from .db_handler import DatabaseHandler
 
 
 @dataclass
@@ -74,8 +75,8 @@ class PreservationManager:
         # Initialize storage handler
         self.storage_handler = GCSHandler(bucket_name=config.gcs_bucket)
         
-        # Database handler will be initialized later
-        self.db_handler = None
+        # Initialize database handler
+        self.db_handler = DatabaseHandler()
         
         # Internal state
         self._shutdown_event = asyncio.Event()
