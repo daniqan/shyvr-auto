@@ -14,6 +14,21 @@ from typing import Dict, Any, Optional, List, Union
 from abc import ABC, abstractmethod
 
 
+# =============================================================================
+# BRANCH SUPPORT CONSTANTS AND VALIDATION
+# =============================================================================
+
+# Default branch for model preservation
+DEFAULT_BRANCH = "main"
+
+# Reserved branch names that cannot be used
+RESERVED_BRANCH_NAMES = {
+    "HEAD", "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD",
+    "head", "orig_head", "fetch_head", "merge_head",
+    "Head", "Orig_Head", "Fetch_Head", "Merge_Head"
+}
+
+
 # Enums
 class PreservationPriority(Enum):
     """Priority levels for model preservation"""
@@ -52,11 +67,12 @@ class StandardTags:
 # Dataclasses
 @dataclass
 class ModelMetadata:
-    """Metadata for preserved models with semantic versioning support"""
+    """Metadata for preserved models with semantic versioning and branch support"""
     model_id: str
     model_type: str  # e.g., "lstm", "dqn", "transformer"
     version: str
     created_at: datetime
+    branch: str = DEFAULT_BRANCH  # Branch name for model isolation
     preserved_at: Optional[datetime] = None
     file_path: str = ""
     file_size_bytes: int = 0
@@ -72,9 +88,12 @@ class ModelMetadata:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Validate version format on initialization"""
+        """Validate version format and branch name on initialization"""
         if not validate_semantic_version_format(self.version):
             raise VersionError(f"Invalid semantic version format: {self.version}")
+        
+        if not validate_branch_name(self.branch):
+            raise ValueError(f"Invalid branch name: {self.branch}")
     
     @property
     def semantic_version(self) -> 'SemanticVersion':
@@ -128,6 +147,17 @@ class ModelMetadata:
             return 1
         else:
             return 0
+    
+    def get_uniqueness_key(self) -> str:
+        """
+        Get uniqueness key for model identification.
+        
+        Models are unique by the combination of model_type, version, mode, and branch.
+        
+        Returns:
+            Uniqueness key string
+        """
+        return f"{self.model_type}-{self.version}-{self.mode or 'none'}-{self.branch}"
 
 
 @dataclass
@@ -325,3 +355,61 @@ def is_reserved_tag_name(tag_name: str) -> bool:
         True if tag name is reserved
     """
     return StandardTags.is_standard_tag(tag_name)
+
+
+# =============================================================================
+# BRANCH VALIDATION FUNCTIONS
+# =============================================================================
+
+def validate_branch_name(branch_name: str) -> bool:
+    """
+    Validate branch name format.
+    
+    Branch names must:
+    - Be non-empty strings
+    - Contain only lowercase alphanumeric characters, hyphens, and underscores
+    - Start and end with alphanumeric characters
+    - Be between 1 and 63 characters long
+    - Not be reserved names
+    - Not contain consecutive special characters
+    
+    Args:
+        branch_name: Branch name to validate
+        
+    Returns:
+        True if valid branch name format
+    """
+    if not isinstance(branch_name, str) or not branch_name:
+        return False
+    
+    # Check if reserved
+    if is_reserved_branch_name(branch_name):
+        return False
+    
+    # Length check
+    if len(branch_name) > 63:
+        return False
+    
+    # Pattern check: lowercase alphanumeric + hyphens/underscores, no consecutive specials
+    pattern = r'^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$'
+    if not re.match(pattern, branch_name):
+        return False
+    
+    # No consecutive special characters
+    if '--' in branch_name or '__' in branch_name or '-_' in branch_name or '_-' in branch_name:
+        return False
+    
+    return True
+
+
+def is_reserved_branch_name(branch_name: str) -> bool:
+    """
+    Check if a branch name is reserved.
+    
+    Args:
+        branch_name: Branch name to check
+        
+    Returns:
+        True if branch name is reserved
+    """
+    return branch_name in RESERVED_BRANCH_NAMES
