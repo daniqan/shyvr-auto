@@ -698,3 +698,400 @@ class DatabaseHandler:
         except Exception as e:
             logger.error(f"Failed to update version history: {e}")
             # Don't raise error - this is not critical for the main operation
+    
+    # =============================================================================
+    # TAG OPERATIONS
+    # =============================================================================
+    
+    async def save_tag(self, tag: 'ModelTag') -> str:
+        """
+        Save a model tag to database
+        
+        Args:
+            tag: ModelTag object to save
+            
+        Returns:
+            Tag ID of saved tag
+            
+        Raises:
+            PreservationError: If save operation fails
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            # Import here to avoid circular imports
+            from .base import ModelTag
+            
+            if not isinstance(tag, ModelTag):
+                raise ValueError(f"Expected ModelTag object, got {type(tag)}")
+            
+            async with get_database_connection() as conn:
+                # Check if preservation_id exists
+                preservation_exists = await conn.fetchval("""
+                    SELECT preservation_id FROM model_preservation_metadata
+                    WHERE model_type = $1 AND version = $2
+                    LIMIT 1
+                """, tag.model_type, tag.version)
+                
+                if not preservation_exists:
+                    raise ValueError(f"No preserved model found for {tag.model_type} version {tag.version}")
+                
+                # Insert or update tag
+                query = """
+                    INSERT INTO model_tags (
+                        tag_id, tag_name, model_type, version, preservation_id,
+                        created_at, updated_at, description, metadata
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9
+                    )
+                    ON CONFLICT (tag_name, model_type)
+                    DO UPDATE SET
+                        version = EXCLUDED.version,
+                        preservation_id = EXCLUDED.preservation_id,
+                        updated_at = EXCLUDED.updated_at,
+                        description = EXCLUDED.description,
+                        metadata = EXCLUDED.metadata
+                    RETURNING tag_id
+                """
+                
+                result = await conn.fetchval(
+                    query,
+                    tag.tag_id,
+                    tag.tag_name,
+                    tag.model_type,
+                    tag.version,
+                    preservation_exists,
+                    tag.created_at,
+                    tag.updated_at or tag.created_at,
+                    tag.description,
+                    json.dumps(tag.metadata) if tag.metadata else None
+                )
+                
+                logger.info(f"Saved tag: {tag.tag_name} -> {tag.model_type} {tag.version}")
+                return result
+                
+        except Exception as e:
+            logger.error(f"Failed to save tag: {e}")
+            if isinstance(e, (ValueError, PreservationError)):
+                raise
+            raise PreservationError(f"Tag save failed: {e}")
+    
+    async def get_tag(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get tag information from database
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to retrieve
+            
+        Returns:
+            Tag information dictionary or None if not found
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                query = """
+                    SELECT 
+                        tag_id, tag_name, model_type, version, preservation_id,
+                        created_at, updated_at, description, metadata
+                    FROM model_tags
+                    WHERE model_type = $1 AND tag_name = $2
+                """
+                
+                row = await conn.fetchrow(query, model_type, tag_name)
+                
+                if not row:
+                    return None
+                
+                return {
+                    "tag_id": row["tag_id"],
+                    "tag_name": row["tag_name"],
+                    "model_type": row["model_type"],
+                    "version": row["version"],
+                    "preservation_id": row["preservation_id"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "description": row["description"],
+                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {}
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to get tag: {e}")
+            raise PreservationError(f"Tag query failed: {e}")
+    
+    async def update_tag(
+        self,
+        model_type: str,
+        tag_name: str,
+        new_version: str,
+        description: Optional[str] = None
+    ) -> None:
+        """
+        Update a tag to point to a new version
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to update
+            new_version: New version to point to
+            description: Optional new description
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                # Get preservation_id for new version
+                preservation_id = await conn.fetchval("""
+                    SELECT preservation_id FROM model_preservation_metadata
+                    WHERE model_type = $1 AND version = $2
+                    LIMIT 1
+                """, model_type, new_version)
+                
+                if not preservation_id:
+                    raise ValueError(f"No preserved model found for {model_type} version {new_version}")
+                
+                # Update tag
+                query = """
+                    UPDATE model_tags
+                    SET version = $1, preservation_id = $2, updated_at = NOW()
+                """
+                params = [new_version, preservation_id]
+                
+                if description is not None:
+                    query += ", description = $3"
+                    params.append(description)
+                
+                query += " WHERE model_type = $" + str(len(params) + 1) + " AND tag_name = $" + str(len(params) + 2)
+                params.extend([model_type, tag_name])
+                
+                result = await conn.execute(query, *params)
+                
+                if result == "UPDATE 0":
+                    raise ValueError(f"Tag {tag_name} not found for model type {model_type}")
+                
+                logger.info(f"Updated tag: {tag_name} -> {model_type} {new_version}")
+                
+        except Exception as e:
+            logger.error(f"Failed to update tag: {e}")
+            if isinstance(e, ValueError):
+                raise
+            raise PreservationError(f"Tag update failed: {e}")
+    
+    async def delete_tag(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> None:
+        """
+        Delete a tag from database
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to delete
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                result = await conn.execute("""
+                    DELETE FROM model_tags
+                    WHERE model_type = $1 AND tag_name = $2
+                """, model_type, tag_name)
+                
+                if result == "DELETE 0":
+                    raise ValueError(f"Tag {tag_name} not found for model type {model_type}")
+                
+                logger.info(f"Deleted tag: {tag_name} for {model_type}")
+                
+        except Exception as e:
+            logger.error(f"Failed to delete tag: {e}")
+            if isinstance(e, ValueError):
+                raise
+            raise PreservationError(f"Tag deletion failed: {e}")
+    
+    async def list_tags(
+        self,
+        model_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        List all tags for a model type
+        
+        Args:
+            model_type: Type of model
+            
+        Returns:
+            List of tag information dictionaries
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                query = """
+                    SELECT 
+                        tag_id, tag_name, model_type, version, preservation_id,
+                        created_at, updated_at, description, metadata
+                    FROM model_tags
+                    WHERE model_type = $1
+                    ORDER BY created_at DESC
+                """
+                
+                rows = await conn.fetch(query, model_type)
+                
+                return [
+                    {
+                        "tag_id": row["tag_id"],
+                        "tag_name": row["tag_name"],
+                        "model_type": row["model_type"],
+                        "version": row["version"],
+                        "preservation_id": row["preservation_id"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                        "description": row["description"],
+                        "metadata": json.loads(row["metadata"]) if row["metadata"] else {}
+                    }
+                    for row in rows
+                ]
+                
+        except Exception as e:
+            logger.error(f"Failed to list tags: {e}")
+            raise PreservationError(f"Tag listing failed: {e}")
+    
+    async def resolve_tag_to_version(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> Optional[str]:
+        """
+        Resolve a tag name to its version
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to resolve
+            
+        Returns:
+            Version string or None if tag not found
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                version = await conn.fetchval("""
+                    SELECT version FROM model_tags
+                    WHERE model_type = $1 AND tag_name = $2
+                """, model_type, tag_name)
+                
+                return version
+                
+        except Exception as e:
+            logger.error(f"Failed to resolve tag: {e}")
+            raise PreservationError(f"Tag resolution failed: {e}")
+    
+    async def get_tag_history(
+        self,
+        model_type: str,
+        tag_name: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get tag change history
+        
+        Args:
+            model_type: Type of model
+            tag_name: Optional specific tag name
+            limit: Maximum number of history entries
+            
+        Returns:
+            List of tag history entries
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                if tag_name:
+                    query = """
+                        SELECT 
+                            tag_id, tag_name, model_type, old_version, new_version,
+                            old_preservation_id, new_preservation_id, action, reason,
+                            changed_by, changed_at
+                        FROM model_tag_history
+                        WHERE model_type = $1 AND tag_name = $2
+                        ORDER BY changed_at DESC
+                        LIMIT $3
+                    """
+                    rows = await conn.fetch(query, model_type, tag_name, limit)
+                else:
+                    query = """
+                        SELECT 
+                            tag_id, tag_name, model_type, old_version, new_version,
+                            old_preservation_id, new_preservation_id, action, reason,
+                            changed_by, changed_at
+                        FROM model_tag_history
+                        WHERE model_type = $1
+                        ORDER BY changed_at DESC
+                        LIMIT $2
+                    """
+                    rows = await conn.fetch(query, model_type, limit)
+                
+                return [
+                    {
+                        "tag_id": row["tag_id"],
+                        "tag_name": row["tag_name"],
+                        "model_type": row["model_type"],
+                        "old_version": row["old_version"],
+                        "new_version": row["new_version"],
+                        "old_preservation_id": row["old_preservation_id"],
+                        "new_preservation_id": row["new_preservation_id"],
+                        "action": row["action"],
+                        "reason": row["reason"],
+                        "changed_by": row["changed_by"],
+                        "changed_at": row["changed_at"]
+                    }
+                    for row in rows
+                ]
+                
+        except Exception as e:
+            logger.error(f"Failed to get tag history: {e}")
+            raise PreservationError(f"Tag history query failed: {e}")
+    
+    async def update_standard_tags(
+        self,
+        model_type: str,
+        new_version: str,
+        preservation_id: str,
+        mode: str = "analysis"
+    ) -> None:
+        """
+        Update standard tags (latest, stable) automatically
+        
+        Args:
+            model_type: Type of model
+            new_version: New version that was saved
+            preservation_id: Preservation ID of the new version
+            mode: Operational mode
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        try:
+            async with get_database_connection() as conn:
+                # Call the database function to update standard tags
+                await conn.execute("""
+                    SELECT update_standard_tags($1, $2, $3, $4)
+                """, model_type, new_version, preservation_id, mode)
+                
+                logger.info(f"Updated standard tags for {model_type} {new_version}")
+                
+        except Exception as e:
+            logger.error(f"Failed to update standard tags: {e}")
+            # Don't raise error - this is not critical for the main operation
