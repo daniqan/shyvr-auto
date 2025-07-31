@@ -11,62 +11,8 @@ from unittest.mock import MagicMock, AsyncMock, patch, Mock
 from typing import Dict, Any, List
 import hashlib
 
-
-# These will be imported from src.model_preservation.gcs_handler once implemented
-# For now, we'll define a mock implementation for TDD
-
-class GCSHandler:
-    """Google Cloud Storage handler for model preservation"""
-    
-    def __init__(self, bucket_name: str, project_id: str = None, 
-                 enable_compression: bool = True, compression_level: int = 6):
-        self.bucket_name = bucket_name
-        self.project_id = project_id
-        self.enable_compression = enable_compression
-        self.compression_level = compression_level
-        self.client = None
-        self.bucket = None
-        self._cache = {}
-    
-    async def initialize(self):
-        """Initialize GCS client and bucket"""
-        pass
-    
-    async def save(self, model_data: bytes, metadata: Dict[str, Any]) -> str:
-        """Save model to GCS with optional compression"""
-        pass
-    
-    async def load(self, storage_path: str, use_cache: bool = True) -> bytes:
-        """Load model from GCS with caching support"""
-        pass
-    
-    async def delete(self, storage_path: str) -> bool:
-        """Delete model from GCS"""
-        pass
-    
-    async def exists(self, storage_path: str) -> bool:
-        """Check if model exists in GCS"""
-        pass
-    
-    async def list_models(self, prefix: str = "", limit: int = 100) -> List[str]:
-        """List models in GCS bucket"""
-        pass
-    
-    async def get_metadata(self, storage_path: str) -> Dict[str, Any]:
-        """Get GCS-specific metadata"""
-        pass
-    
-    def _calculate_checksum(self, data: bytes) -> str:
-        """Calculate SHA256 checksum"""
-        return f"sha256:{hashlib.sha256(data).hexdigest()}"
-    
-    def _compress_data(self, data: bytes) -> bytes:
-        """Compress data using gzip"""
-        return gzip.compress(data, compresslevel=self.compression_level)
-    
-    def _decompress_data(self, data: bytes) -> bytes:
-        """Decompress gzip data"""
-        return gzip.decompress(data)
+# Import the actual implementation
+from src.model_preservation.gcs_handler import GCSHandler
 
 
 class TestGCSHandler:
@@ -415,25 +361,37 @@ class TestGCSHandler:
     @pytest.mark.asyncio
     async def test_list_models(self, handler):
         """Test listing models in bucket"""
-        # Mock blob listing
-        mock_blobs = [
-            Mock(name="models/lstm/v1.0.0/model.pkl.gz"),
-            Mock(name="models/lstm/v1.1.0/model.pkl.gz"),
-            Mock(name="models/dqn/v1.0.0/model.pkl.gz"),
-            Mock(name="models/transformer/v2.0.0/model.pkl.gz")
-        ]
+        # Mock blob listing with proper prefix filtering
+        # Create mock blobs with 'name' as an actual attribute, not Mock's name
+        blob1 = Mock()
+        blob1.name = "models/lstm/v1.0.0/model.pkl.gz"
         
-        handler.bucket.list_blobs.return_value = mock_blobs
+        blob2 = Mock()
+        blob2.name = "models/lstm/v1.1.0/model.pkl.gz"
         
-        # Mock the list_models method
-        async def mock_list(prefix="", limit=100):
-            blobs = handler.bucket.list_blobs(prefix=prefix)
-            paths = [blob.name for blob in blobs]
+        blob3 = Mock()
+        blob3.name = "models/dqn/v1.0.0/model.pkl.gz"
+        
+        blob4 = Mock()
+        blob4.name = "models/transformer/v2.0.0/model.pkl.gz"
+        
+        all_blobs = [blob1, blob2, blob3, blob4]
+        
+        def mock_list_blobs(**kwargs):
+            """Mock list_blobs that properly filters by prefix"""
+            prefix = kwargs.get('prefix', '')
+            max_results = kwargs.get('max_results', None)
+            
             if prefix:
-                paths = [p for p in paths if p.startswith(prefix)]
-            return paths[:limit]
+                filtered = [b for b in all_blobs if b.name.startswith(prefix)]
+            else:
+                filtered = all_blobs
+            
+            if max_results:
+                return filtered[:max_results]
+            return filtered
         
-        handler.list_models = mock_list
+        handler.bucket.list_blobs = mock_list_blobs
         
         # List all models
         all_models = await handler.list_models()
