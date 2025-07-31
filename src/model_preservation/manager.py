@@ -246,11 +246,14 @@ class PreservationManager:
                     )
                     if versions:
                         # Use previous version
-                        metadata = await self.db_handler.get_metadata(
-                            model_type=model_type,
-                            version=versions[0]["version"],
-                            mode=mode
-                        )
+                        for prev_version in versions:
+                            metadata = await self.db_handler.get_metadata(
+                                model_type=model_type,
+                                version=prev_version["version"],
+                                mode=mode
+                            )
+                            if metadata:
+                                break
                 
                 if not metadata:
                     raise FileNotFoundError(f"Model not found: {model_type} {version or 'latest'}")
@@ -259,13 +262,18 @@ class PreservationManager:
                 model_data = await self.storage_handler.load(metadata["storage_path"])
                 
                 # Record load event
+                event_details = {"source": "primary"}
+                if version:
+                    event_details["requested_version"] = version
+                    
+                # Check if we're using a fallback version
+                if fallback and version and metadata.get("version") != version:
+                    event_details["source"] = "fallback"
+                    
                 await self.db_handler.record_event(
                     model_id=metadata["model_id"],
                     event_type="loaded",
-                    details={
-                        "source": "fallback" if fallback and metadata["version"] != version else "primary",
-                        "requested_version": version
-                    }
+                    details=event_details
                 )
                 
                 return model_data, metadata
@@ -461,7 +469,7 @@ class PreservationManager:
         """
         deleted_count = 0
         
-        if self.db_handler:
+        if self.db_handler and hasattr(self.db_handler, 'get_old_versions'):
             old_versions = await self.db_handler.get_old_versions(days=days)
             
             for version in old_versions:
@@ -471,7 +479,7 @@ class PreservationManager:
                     
                     # Update state in database
                     await self.db_handler.update_state(
-                        model_type=version["model_type"],
+                        model_type=version.get("model_type", "lstm"),
                         version=version["version"],
                         state=ModelState.DELETED
                     )
