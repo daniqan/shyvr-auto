@@ -203,6 +203,14 @@ class PreservationManager:
                     event_type="saved",
                     details={"priority": priority.value}
                 )
+                
+                # Update standard tags automatically
+                await self.db_handler.update_standard_tags(
+                    model_type=model_type,
+                    new_version=version,
+                    preservation_id=model_metadata.preservation_id if hasattr(model_metadata, 'preservation_id') else model_id,
+                    mode=mode
+                )
             else:
                 model_id = model_metadata.model_id
             
@@ -226,7 +234,7 @@ class PreservationManager:
         
         Args:
             model_type: Type of model to load
-            version: Specific version to load (latest if not specified)
+            version: Specific version to load (latest if not specified, can be a tag name)
             mode: Operational mode
             fallback: Whether to fallback to previous version if not found
             
@@ -234,11 +242,19 @@ class PreservationManager:
             Tuple of (model_data, metadata)
         """
         try:
+            # Resolve tag to version if version looks like a tag
+            resolved_version = version
+            if version and self.db_handler:
+                # Check if version is a tag name
+                tag_version = await self.db_handler.resolve_tag_to_version(model_type, version)
+                if tag_version:
+                    resolved_version = tag_version
+            
             # Get metadata from database if available
             if self.db_handler:
                 metadata = await self.db_handler.get_metadata(
                     model_type=model_type,
-                    version=version,
+                    version=resolved_version,
                     mode=mode
                 )
                 
@@ -814,3 +830,303 @@ class PreservationManager:
                         except Exception:
                             # Log error but continue
                             pass
+    
+    # =============================================================================
+    # TAG OPERATIONS
+    # =============================================================================
+    
+    async def tag_model(
+        self,
+        model_type: str,
+        version: str,
+        tag_name: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Tag a model version with a friendly name
+        
+        Args:
+            model_type: Type of model to tag
+            version: Version to tag
+            tag_name: Name of the tag
+            description: Optional description
+            metadata: Optional additional metadata
+            
+        Returns:
+            Tag ID of created/updated tag
+            
+        Raises:
+            PreservationError: If tagging fails
+            ValueError: If tag name is invalid or version doesn't exist
+        """
+        try:
+            if not self.db_handler:
+                raise PreservationError("Database handler required for tagging")
+            
+            # Import here to avoid circular imports
+            from .base import ModelTag, is_valid_tag_name
+            
+            # Validate tag name
+            if not is_valid_tag_name(tag_name):
+                raise ValueError(f"Invalid tag name: {tag_name}")
+            
+            # Create ModelTag object
+            tag = ModelTag(
+                tag_name=tag_name,
+                model_type=model_type,
+                version=version,
+                created_at=datetime.now(),
+                description=description,
+                metadata=metadata or {}
+            )
+            
+            # Save tag to database
+            tag_id = await self.db_handler.save_tag(tag)
+            
+            # Record tagging event
+            await self.db_handler.record_event(
+                model_id=f"{model_type}-{version}",
+                event_type="tagged",
+                details={
+                    "tag_name": tag_name,
+                    "description": description
+                }
+            )
+            
+            return tag_id
+            
+        except Exception as e:
+            if isinstance(e, (ValueError, PreservationError)):
+                raise
+            raise PreservationError(f"Failed to tag model: {str(e)}")
+    
+    async def resolve_tag(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> Optional[str]:
+        """
+        Resolve a tag name to its version
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to resolve
+            
+        Returns:
+            Version string or None if tag not found
+        """
+        if not self.db_handler:
+            return None
+        
+        try:
+            return await self.db_handler.resolve_tag_to_version(model_type, tag_name)
+        except Exception:
+            return None
+    
+    async def move_tag(
+        self,
+        model_type: str,
+        tag_name: str,
+        new_version: str,
+        description: Optional[str] = None
+    ) -> None:
+        """
+        Move a tag to point to a different version
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to move
+            new_version: New version to point to
+            description: Optional new description
+            
+        Raises:
+            PreservationError: If move fails
+            ValueError: If tag or version doesn't exist
+        """
+        try:
+            if not self.db_handler:
+                raise PreservationError("Database handler required for tag operations")
+            
+            # Update tag in database
+            await self.db_handler.update_tag(
+                model_type=model_type,
+                tag_name=tag_name,
+                new_version=new_version,
+                description=description
+            )
+            
+            # Record tag move event
+            await self.db_handler.record_event(
+                model_id=f"{model_type}-{new_version}",
+                event_type="tag_moved",
+                details={
+                    "tag_name": tag_name,
+                    "new_version": new_version,
+                    "description": description
+                }
+            )
+            
+        except Exception as e:
+            if isinstance(e, (ValueError, PreservationError)):
+                raise
+            raise PreservationError(f"Failed to move tag: {str(e)}")
+    
+    async def delete_tag(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> None:
+        """
+        Delete a tag
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag to delete
+            
+        Raises:
+            PreservationError: If deletion fails
+            ValueError: If tag doesn't exist
+        """
+        try:
+            if not self.db_handler:
+                raise PreservationError("Database handler required for tag operations")
+            
+            # Import here to avoid circular imports
+            from .base import StandardTags
+            
+            # Prevent deletion of standard tags
+            if StandardTags.is_standard_tag(tag_name):
+                raise ValueError(f"Cannot delete standard tag: {tag_name}")
+            
+            # Delete tag from database
+            await self.db_handler.delete_tag(model_type, tag_name)
+            
+            # Record tag deletion event
+            await self.db_handler.record_event(
+                model_id=f"{model_type}-unknown",
+                event_type="tag_deleted",
+                details={"tag_name": tag_name}
+            )
+            
+        except Exception as e:
+            if isinstance(e, (ValueError, PreservationError)):
+                raise
+            raise PreservationError(f"Failed to delete tag: {str(e)}")
+    
+    async def list_model_tags(
+        self,
+        model_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        List all tags for a model type
+        
+        Args:
+            model_type: Type of model
+            
+        Returns:
+            List of tag information dictionaries
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            return await self.db_handler.list_tags(model_type)
+        except Exception:
+            return []
+    
+    async def get_tag_info(
+        self,
+        model_type: str,
+        tag_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a specific tag
+        
+        Args:
+            model_type: Type of model
+            tag_name: Name of tag
+            
+        Returns:
+            Tag information dictionary or None if not found
+        """
+        if not self.db_handler:
+            return None
+        
+        try:
+            return await self.db_handler.get_tag(model_type, tag_name)
+        except Exception:
+            return None
+    
+    async def get_tag_history(
+        self,
+        model_type: str,
+        tag_name: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get tag change history
+        
+        Args:
+            model_type: Type of model
+            tag_name: Optional specific tag name
+            limit: Maximum number of history entries
+            
+        Returns:
+            List of tag history entries
+        """
+        if not self.db_handler:
+            return []
+        
+        try:
+            return await self.db_handler.get_tag_history(
+                model_type=model_type,
+                tag_name=tag_name,
+                limit=limit
+            )
+        except Exception:
+            return []
+    
+    async def update_stable_tag(
+        self,
+        model_type: str,
+        mode: str = "analysis"
+    ) -> Optional[str]:
+        """
+        Update the 'stable' tag to point to the latest stable version
+        
+        Args:
+            model_type: Type of model
+            mode: Operational mode
+            
+        Returns:
+            Version that stable tag now points to, or None if no stable versions
+        """
+        if not self.db_handler:
+            return None
+        
+        try:
+            # Get all stable versions
+            stable_versions = await self.get_stable_versions(model_type, mode)
+            
+            if not stable_versions:
+                return None
+            
+            # Latest stable is first in the list (sorted descending)
+            latest_stable = stable_versions[0]
+            
+            # Import here to avoid circular imports
+            from .base import StandardTags
+            
+            # Update stable tag
+            await self.move_tag(
+                model_type=model_type,
+                tag_name=StandardTags.STABLE,
+                new_version=latest_stable,
+                description=f"Latest stable version of {model_type}"
+            )
+            
+            return latest_stable
+            
+        except Exception:
+            return None
