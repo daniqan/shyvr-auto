@@ -94,88 +94,113 @@ class TestDatabaseTagOperations:
     @pytest.mark.asyncio
     async def test_save_tag(self, mock_db_handler):
         """Test saving a tag to database"""
-        # TODO: Test save_tag method once implemented
-        # tag = ModelTag(
-        #     tag_name="latest",
-        #     model_type="dqn", 
-        #     version="v1.2.3",
-        #     created_at=datetime.now(timezone.utc)
-        # )
-        # 
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "tag_id"
-        #     
-        #     result = await mock_db_handler.save_tag(tag)
-        #     assert result == "tag_id"
-        pytest.skip("save_tag method not yet implemented")
+        from src.model_preservation.base import ModelTag
+        
+        tag = ModelTag(
+            tag_name="latest",
+            model_type="dqn", 
+            version="v1.2.3",
+            created_at=datetime.now(timezone.utc)
+        )
+        
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            mock_conn.return_value.__aenter__.return_value.fetchval.side_effect = [
+                "dqn-v1.2.3-preservation-id",  # preservation_exists check
+                "tag_id"  # save_tag result
+            ]
+            
+            result = await mock_db_handler.save_tag(tag)
+            assert result == "tag_id"
     
     @pytest.mark.asyncio
     async def test_get_tag(self, mock_db_handler):
         """Test retrieving a tag from database"""
-        # TODO: Test get_tag method once implemented
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_row = {
-        #         'tag_name': 'latest',
-        #         'model_type': 'dqn',
-        #         'version': 'v1.2.3',
-        #         'created_at': datetime.now(timezone.utc)
-        #     }
-        #     mock_conn.return_value.__aenter__.return_value.fetchrow.return_value = mock_row
-        #     
-        #     tag = await mock_db_handler.get_tag("dqn", "latest")
-        #     assert tag["tag_name"] == "latest"
-        #     assert tag["version"] == "v1.2.3"
-        pytest.skip("get_tag method not yet implemented")
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            mock_row = {
+                'tag_id': 'dqn-latest',
+                'tag_name': 'latest',
+                'model_type': 'dqn',
+                'version': 'v1.2.3',
+                'preservation_id': 'dqn-v1.2.3-12345678',
+                'created_at': datetime.now(timezone.utc),
+                'updated_at': datetime.now(timezone.utc),
+                'description': 'Latest version',
+                'metadata': None
+            }
+            mock_conn.return_value.__aenter__.return_value.fetchrow.return_value = mock_row
+            
+            tag = await mock_db_handler.get_tag("dqn", "latest")
+            assert tag["tag_name"] == "latest"
+            assert tag["version"] == "v1.2.3"
+            assert tag["model_type"] == "dqn"
     
     @pytest.mark.asyncio
     async def test_update_tag(self, mock_db_handler):
         """Test updating a tag to point to new version"""
-        # TODO: Test update_tag method once implemented
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_conn.return_value.__aenter__.return_value.execute.return_value = None
-        #     
-        #     await mock_db_handler.update_tag("dqn", "latest", "v1.3.0")
-        #     # Verify database update was called
-        pytest.skip("update_tag method not yet implemented")
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            # Mock preservation_id lookup and update
+            mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "dqn-v1.3.0-preservation-id"
+            mock_conn.return_value.__aenter__.return_value.execute.return_value = "UPDATE 1"
+            
+            await mock_db_handler.update_tag("dqn", "latest", "v1.3.0")
+            
+            # Verify database update was called
+            mock_conn.return_value.__aenter__.return_value.execute.assert_called()
     
     @pytest.mark.asyncio
     async def test_delete_tag(self, mock_db_handler):
         """Test deleting a tag from database"""
-        # TODO: Test delete_tag method once implemented
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_conn.return_value.__aenter__.return_value.execute.return_value = None
-        #     
-        #     await mock_db_handler.delete_tag("dqn", "experimental")
-        #     # Verify database deletion was called
-        pytest.skip("delete_tag method not yet implemented")
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            mock_conn.return_value.__aenter__.return_value.execute.return_value = "DELETE 1"
+            
+            await mock_db_handler.delete_tag("dqn", "custom-tag")
+            
+            # Verify database deletion was called
+            mock_conn.return_value.__aenter__.return_value.execute.assert_called()
     
     @pytest.mark.asyncio
     async def test_list_tags_for_model_type(self, mock_db_handler):
         """Test listing all tags for a model type"""
-        # TODO: Test list_tags method once implemented
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_rows = [
-        #         {'tag_name': 'latest', 'version': 'v1.2.3'},
-        #         {'tag_name': 'stable', 'version': 'v1.2.0'},
-        #         {'tag_name': 'experimental', 'version': 'v1.3.0-alpha'}
-        #     ]
-        #     mock_conn.return_value.__aenter__.return_value.fetch.return_value = mock_rows
-        #     
-        #     tags = await mock_db_handler.list_tags("dqn")
-        #     assert len(tags) == 3
-        #     assert tags[0]["tag_name"] == "latest"
-        pytest.skip("list_tags method not yet implemented")
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            mock_rows = [
+                {
+                    'tag_id': 'dqn-latest',
+                    'tag_name': 'latest', 
+                    'model_type': 'dqn',
+                    'version': 'v1.2.3',
+                    'preservation_id': 'dqn-v1.2.3-12345678',
+                    'created_at': datetime.now(timezone.utc),
+                    'updated_at': datetime.now(timezone.utc),
+                    'description': 'Latest version',
+                    'metadata': None
+                },
+                {
+                    'tag_id': 'dqn-stable',
+                    'tag_name': 'stable',
+                    'model_type': 'dqn', 
+                    'version': 'v1.2.0',
+                    'preservation_id': 'dqn-v1.2.0-12345678',
+                    'created_at': datetime.now(timezone.utc),
+                    'updated_at': datetime.now(timezone.utc),
+                    'description': 'Stable version',
+                    'metadata': None
+                }
+            ]
+            mock_conn.return_value.__aenter__.return_value.fetch.return_value = mock_rows
+            
+            tags = await mock_db_handler.list_tags("dqn")
+            assert len(tags) == 2
+            assert tags[0]["tag_name"] == "latest"
+            assert tags[1]["tag_name"] == "stable"
     
     @pytest.mark.asyncio
     async def test_resolve_tag_to_version(self, mock_db_handler):
         """Test resolving a tag name to its version"""
-        # TODO: Test resolve_tag_to_version method once implemented
-        # with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
-        #     mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "v1.2.3"
-        #     
-        #     version = await mock_db_handler.resolve_tag_to_version("dqn", "latest")
-        #     assert version == "v1.2.3"
-        pytest.skip("resolve_tag_to_version method not yet implemented")
+        with patch('src.model_preservation.db_handler.get_database_connection') as mock_conn:
+            mock_conn.return_value.__aenter__.return_value.fetchval.return_value = "v1.2.3"
+            
+            version = await mock_db_handler.resolve_tag_to_version("dqn", "latest")
+            assert version == "v1.2.3"
 
 
 class TestPreservationManagerTagging:
