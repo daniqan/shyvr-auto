@@ -163,19 +163,18 @@ setup_iam_permissions() {
     # Grant Storage Object Admin role for both buckets
     log_info "Granting Storage Object Admin role to Cloud Run service account..."
     
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT" \
-        --role="roles/storage.objectAdmin" \
-        --condition="expression=resource.name.startsWith('projects/_/buckets/$PROD_BUCKET') || resource.name.startsWith('projects/_/buckets/$STAGING_BUCKET'),title=Model Storage Access"
+    # Grant objectAdmin role directly on buckets instead of using conditional binding
+    # The conditional binding at project level doesn't work reliably for bucket operations
+    log_info "Granting objectAdmin role on production bucket..."
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectAdmin" "gs://$PROD_BUCKET"
     
-    # Grant bucket-level permissions for listing
-    log_info "Granting bucket-level permissions for listing..."
+    log_info "Granting objectAdmin role on staging bucket..."
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectAdmin" "gs://$STAGING_BUCKET"
     
-    # For production bucket
-    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectViewer" "gs://$PROD_BUCKET"
-    
-    # For staging bucket
-    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:objectViewer" "gs://$STAGING_BUCKET"
+    # Also grant legacyBucketReader for bucket metadata operations
+    log_info "Granting legacyBucketReader role for bucket operations..."
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:legacyBucketReader" "gs://$PROD_BUCKET"
+    gsutil iam ch "serviceAccount:$CLOUD_RUN_SERVICE_ACCOUNT:legacyBucketReader" "gs://$STAGING_BUCKET"
     
     log_success "IAM permissions configured"
 }
