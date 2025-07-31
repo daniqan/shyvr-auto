@@ -4,87 +4,23 @@ Tests for model preservation base classes and data structures
 
 import pytest
 from datetime import datetime
-from enum import Enum
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 from unittest.mock import MagicMock, AsyncMock, patch
-from abc import ABC, abstractmethod
 
-
-# These will be imported from src.model_preservation.base once implemented
-# For now, we'll define them here to write tests first (TDD approach)
-
-class PreservationPriority(Enum):
-    """Priority levels for model preservation"""
-    CRITICAL = "critical"
-    HIGH = "high"
-    NORMAL = "normal"
-    LOW = "low"
-
-
-class ModelState(Enum):
-    """State of preserved models"""
-    ACTIVE = "active"
-    PRESERVED = "preserved"
-    ARCHIVED = "archived"
-    CORRUPTED = "corrupted"
-    DELETED = "deleted"
-
-
-@dataclass
-class ModelMetadata:
-    """Metadata for preserved models"""
-    model_id: str
-    model_type: str  # e.g., "lstm", "dqn", "transformer"
-    version: str
-    created_at: datetime
-    preserved_at: Optional[datetime] = None
-    file_path: str = ""
-    file_size_bytes: int = 0
-    checksum: str = ""
-    compression_type: Optional[str] = None
-    preservation_priority: PreservationPriority = PreservationPriority.NORMAL
-    state: ModelState = ModelState.ACTIVE
-    performance_metrics: Dict[str, float] = field(default_factory=dict)
-    tags: List[str] = field(default_factory=list)
-    mode: Optional[str] = None  # simulation, analysis, live
-    description: Optional[str] = None
-    parent_version: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-class StorageHandlerBase(ABC):
-    """Abstract base class for model storage handlers"""
-    
-    @abstractmethod
-    async def save(self, model_data: bytes, metadata: ModelMetadata) -> str:
-        """Save model data and return storage path"""
-        pass
-    
-    @abstractmethod
-    async def load(self, storage_path: str) -> bytes:
-        """Load model data from storage"""
-        pass
-    
-    @abstractmethod
-    async def delete(self, storage_path: str) -> bool:
-        """Delete model from storage"""
-        pass
-    
-    @abstractmethod
-    async def exists(self, storage_path: str) -> bool:
-        """Check if model exists in storage"""
-        pass
-    
-    @abstractmethod
-    async def list_models(self, prefix: str = "", limit: int = 100) -> List[str]:
-        """List models in storage with optional prefix filter"""
-        pass
-    
-    @abstractmethod
-    async def get_metadata(self, storage_path: str) -> Dict[str, Any]:
-        """Get storage-specific metadata"""
-        pass
+from src.model_preservation.base import (
+    PreservationPriority,
+    ModelState,
+    ModelMetadata,
+    StorageHandlerBase,
+    PreservationError,
+    StorageError,
+    ChecksumError,
+    VersionError,
+    generate_model_id,
+    calculate_checksum,
+    format_file_size,
+    validate_version_format
+)
 
 
 class TestPreservationPriority:
@@ -464,38 +400,21 @@ class TestPreservationExceptions:
     
     def test_preservation_error(self):
         """Test base preservation error"""
-        # These would be defined in the actual implementation
-        class PreservationError(Exception):
-            """Base exception for preservation errors"""
-            pass
-        
         with pytest.raises(PreservationError):
             raise PreservationError("Preservation failed")
     
     def test_storage_error(self):
         """Test storage-specific error"""
-        class StorageError(Exception):
-            """Storage operation failed"""
-            pass
-        
         with pytest.raises(StorageError):
             raise StorageError("Failed to save to GCS")
     
     def test_checksum_error(self):
         """Test checksum verification error"""
-        class ChecksumError(Exception):
-            """Checksum verification failed"""
-            pass
-        
         with pytest.raises(ChecksumError):
             raise ChecksumError("Model checksum mismatch")
     
     def test_version_error(self):
         """Test version conflict error"""
-        class VersionError(Exception):
-            """Version conflict or invalid version"""
-            pass
-        
         with pytest.raises(VersionError):
             raise VersionError("Version already exists")
 
@@ -505,25 +424,12 @@ class TestHelperFunctions:
     
     def test_generate_model_id(self):
         """Test model ID generation"""
-        # This would be implemented in actual module
-        import uuid
-        
-        def generate_model_id(model_type: str, version: str) -> str:
-            """Generate unique model ID"""
-            return f"{model_type}-{version}-{uuid.uuid4().hex[:8]}"
-        
         model_id = generate_model_id("lstm", "v1.0.0")
         assert model_id.startswith("lstm-v1.0.0-")
         assert len(model_id) > len("lstm-v1.0.0-")
     
     def test_calculate_checksum(self):
         """Test checksum calculation"""
-        import hashlib
-        
-        def calculate_checksum(data: bytes) -> str:
-            """Calculate SHA256 checksum"""
-            return f"sha256:{hashlib.sha256(data).hexdigest()}"
-        
         data = b"test model data"
         checksum = calculate_checksum(data)
         assert checksum.startswith("sha256:")
@@ -531,14 +437,6 @@ class TestHelperFunctions:
     
     def test_format_file_size(self):
         """Test file size formatting"""
-        def format_file_size(size_bytes: int) -> str:
-            """Format file size for display"""
-            for unit in ['B', 'KB', 'MB', 'GB']:
-                if size_bytes < 1024.0:
-                    return f"{size_bytes:.2f} {unit}"
-                size_bytes /= 1024.0
-            return f"{size_bytes:.2f} TB"
-        
         assert format_file_size(500) == "500.00 B"
         assert format_file_size(1024) == "1.00 KB"
         assert format_file_size(1024 * 1024) == "1.00 MB"
@@ -546,13 +444,6 @@ class TestHelperFunctions:
     
     def test_validate_version_format(self):
         """Test version format validation"""
-        import re
-        
-        def validate_version_format(version: str) -> bool:
-            """Validate semantic version format"""
-            pattern = r'^v?\d+\.\d+\.\d+(-[a-zA-Z0-9]+)?$'
-            return bool(re.match(pattern, version))
-        
         assert validate_version_format("v1.0.0") is True
         assert validate_version_format("1.0.0") is True
         assert validate_version_format("v1.0.0-beta") is True
