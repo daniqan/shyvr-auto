@@ -180,6 +180,10 @@ analysis_metrics = AnalysisMetricsCollector(metrics_registry)
 # Include dashboard routes
 app.include_router(dashboard_api.router)
 
+# Include preservation API routes
+from src.model_preservation.api import preservation_api
+app.include_router(preservation_api.router)
+
 # Mount static files for dashboard
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

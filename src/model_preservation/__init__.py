@@ -56,29 +56,53 @@ __all__ = [
 _preservation_manager = None
 
 
-# def get_preservation_manager() -> ModelPreservationManager:
-#     """Get or create the global preservation manager instance"""
-#     global _preservation_manager
-#     
-#     if _preservation_manager is None:
-#         _preservation_manager = ModelPreservationManager()
-#     
-#     return _preservation_manager
-# 
-# 
-# async def initialize_preservation_system(config: PreservationConfig = None):
-#     """Initialize the model preservation system"""
-#     manager = get_preservation_manager()
-#     
-#     if config:
-#         manager.config = config
-#         manager.handler = GCSModelPreservationHandler(config)
-#     
-#     await manager.start()
-#     return manager
-# 
-# 
-# async def shutdown_preservation_system():
-#     """Shutdown the model preservation system gracefully"""
-#     if _preservation_manager:
-#         await _preservation_manager.stop()
+def get_preservation_manager():
+    """Get or create the global preservation manager instance"""
+    global _preservation_manager
+    return _preservation_manager
+
+
+def set_preservation_manager(manager):
+    """Set the global preservation manager instance"""
+    global _preservation_manager
+    _preservation_manager = manager
+
+
+async def initialize_preservation_system(config=None):
+    """Initialize the model preservation system"""
+    from .manager import PreservationManager, PreservationConfig
+    from src.utils.config import get_config
+    
+    # Get configuration
+    app_config = get_config()
+    
+    # Create preservation config
+    preservation_config = PreservationConfig(
+        gcs_bucket=getattr(app_config.model_preservation, 'gcs_bucket', 'shyvr-models-prod'),
+        backup_interval_hours=getattr(app_config.model_preservation, 'backup_interval_hours', 6.0),
+        max_versions_per_model=getattr(app_config.model_preservation, 'max_versions_per_model', 10),
+        enable_compression=getattr(app_config.model_preservation, 'enable_compression', True),
+        mode_isolation=getattr(app_config.model_preservation, 'mode_isolation', True),
+        enable_caching=getattr(app_config.model_preservation, 'enable_caching', True),
+        enable_metrics=getattr(app_config.model_preservation, 'enable_metrics', True)
+    )
+    
+    # Create and initialize manager
+    manager = PreservationManager(preservation_config)
+    await manager.initialize()
+    await manager.start()
+    
+    # Set global instance
+    set_preservation_manager(manager)
+    
+    # Set up API integration
+    from .api import set_preservation_manager as set_api_manager
+    set_api_manager(manager)
+    
+    return manager
+
+
+async def shutdown_preservation_system():
+    """Shutdown the model preservation system gracefully"""
+    if _preservation_manager:
+        await _preservation_manager.stop()
