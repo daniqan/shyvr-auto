@@ -50,10 +50,10 @@ cp env.template .env
 ### Basic Setup
 
 ```python
-from src.model_preservation.manager import ModelPreservationManager
+from src.model_preservation.manager import PreservationManager
 
 # Initialize the manager
-manager = ModelPreservationManager()
+manager = PreservationManager()
 
 # Save a model
 model_data = {"weights": [...], "config": {...}}
@@ -225,7 +225,7 @@ cache_config = {
     "enable_compression": True
 }
 
-manager = ModelPreservationManager(cache_config=cache_config)
+manager = PreservationManager(cache_config=cache_config)
 
 # Clear cache when needed
 manager.clear_cache(model_type="dqn_agent")
@@ -363,10 +363,10 @@ monitoring:
 
 ```python
 import asyncio
-from src.model_preservation.manager import ModelPreservationManager
+from src.model_preservation.manager import PreservationManager
 
 async def complete_workflow():
-    manager = ModelPreservationManager()
+    manager = PreservationManager()
     
     # 1. Save initial model
     initial_model = {"weights": [...], "config": {...}}

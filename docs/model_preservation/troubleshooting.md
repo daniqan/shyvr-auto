@@ -25,8 +25,8 @@
 **Diagnosis**:
 ```python
 # Check if model exists in database
-from src.model_preservation.manager import ModelPreservationManager
-manager = ModelPreservationManager()
+from src.model_preservation.manager import PreservationManager
+manager = PreservationManager()
 
 # List all models
 models = await manager.list_models()
@@ -121,15 +121,15 @@ except Exception as e:
 
 **Error Code**: `HTTP 503 Service Unavailable`
 
-**Cause**: The ModelPreservationManager is not properly initialized
+**Cause**: The PreservationManager is not properly initialized
 
 **Solution**:
 ```python
 # Check initialization in main.py
-from src.model_preservation.manager import ModelPreservationManager
+from src.model_preservation.manager import PreservationManager
 
 # Ensure proper initialization
-manager = ModelPreservationManager()
+manager = PreservationManager()
 await manager.initialize()
 
 # Set in API
@@ -344,12 +344,12 @@ for blob in blobs:
 
 2. **Implement retry logic**:
    ```python
-   from google.api_core import retry
-   
-   @retry.Retry()
-   async def upload_with_retry(blob, data):
-       return blob.upload_from_string(data)
-   ```
+from google.api_core import retry
+
+@retry.Retry()
+async def upload_with_retry(blob, data):
+    return blob.upload_from_string(data)
+```
 
 3. **Use resumable uploads**:
    ```python
@@ -378,16 +378,16 @@ else:
 **Solutions**:
 1. **Re-upload corrupted models**:
    ```python
-   await manager.repair_model("dqn_agent", "1.2.3")
+await manager.repair_model("dqn_agent", "1.2.3")
    ```
 
 2. **Enable integrity checks**:
    ```python
-   config = {
-       "verify_checksums": True,
-       "use_redundant_storage": True
-   }
-   ```
+config = {
+    "verify_checksums": True,
+    "use_redundant_storage": True
+}
+```
 
 ## Database Issues
 

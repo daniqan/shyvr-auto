@@ -125,7 +125,7 @@ classDiagram
         +health_check() async
     }
     
-    class ModelPreservationManager {
+    class PreservationManager {
         +gcs_handler: GCSHandler
         +db_handler: DatabaseHandler
         +cache_handler: CacheHandler
@@ -166,16 +166,16 @@ classDiagram
         +merge_branch(source, target) async
     }
     
-    BasePreservation <|-- ModelPreservationManager
+    BasePreservation <|-- PreservationManager
     BasePreservation <|-- GCSHandler
     BasePreservation <|-- DatabaseHandler
     BasePreservation <|-- CacheHandler
     BasePreservation <|-- VersionController
     
-    ModelPreservationManager --> GCSHandler
-    ModelPreservationManager --> DatabaseHandler
-    ModelPreservationManager --> CacheHandler
-    ModelPreservationManager --> VersionController
+    PreservationManager --> GCSHandler
+    PreservationManager --> DatabaseHandler
+    PreservationManager --> CacheHandler
+    PreservationManager --> VersionController
 ```
 
 ## Data Flow

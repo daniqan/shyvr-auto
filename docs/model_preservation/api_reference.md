@@ -96,6 +96,15 @@ All endpoints are prefixed with `/api/preservation`.
 - `500 Internal Server Error`: Server error
 - `503 Service Unavailable`: Service temporarily unavailable
 
+### HTTP Methods Used
+
+The API uses the following HTTP methods:
+
+- `GET`: Retrieve resources (list models, get model details, health checks)
+- `POST`: Create resources or perform actions (rollback operations)
+- `DELETE`: Remove resources (delete model versions)
+- `PUT`: Currently not implemented - would be used for updating model metadata in future versions
+
 ### Error Response Examples
 
 ```json
@@ -417,6 +426,46 @@ curl -s -X POST "$API_BASE/rollback" \
 # 5. Verify rollback
 echo -e "\nVerifying rollback..."
 curl -s -X GET "$API_BASE/models/dqn_agent/1.1.0" -H "$HEADERS" | jq '.model'
+```
+
+### Additional curl Examples
+
+#### List Models with Pagination
+```bash
+curl -X GET \
+  "https://your-domain.com/api/preservation/models?limit=20&offset=40&mode=live" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json"
+```
+
+#### Get Model with Specific Mode
+```bash
+curl -X GET \
+  "https://your-domain.com/api/preservation/models/lstm_predictor/2.1.0?mode=analysis" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json"
+```
+
+#### Rollback with Detailed Reason
+```bash
+curl -X POST \
+  "https://your-domain.com/api/preservation/rollback" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_type": "transformer_model",
+    "target_version": "3.0.1",
+    "mode": "live",
+    "reason": "Critical bug found in version 3.1.0 affecting accuracy"
+  }'
+```
+
+#### Delete Model Version (Admin Only)
+```bash
+curl -X DELETE \
+  "https://your-domain.com/api/preservation/models/cnn_classifier/1.0.0-beta?mode=simulation" \
+  -H "Authorization: Bearer YOUR_ADMIN_API_KEY" \
+  -H "Content-Type: application/json"
 ```
 
 ### Python Client Example

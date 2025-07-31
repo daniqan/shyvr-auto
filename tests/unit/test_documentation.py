@@ -240,11 +240,11 @@ class TestDocumentationValidation:
         """Test that code examples can import model preservation modules"""
         try:
             # Test basic imports that appear in documentation
-            from src.model_preservation.manager import ModelPreservationManager
+            from src.model_preservation.manager import PreservationManager
             from src.model_preservation.api import PreservationAPI
             
             # Test that classes can be instantiated (at least structurally)
-            assert ModelPreservationManager is not None, "ModelPreservationManager should be importable"
+            assert PreservationManager is not None, "PreservationManager should be importable"
             assert PreservationAPI is not None, "PreservationAPI should be importable"
             
         except ImportError as e:
@@ -399,13 +399,13 @@ class TestDocumentationIntegration:
     @pytest.mark.asyncio
     async def test_manager_initialization_example(self):
         """Test that manager initialization example would work"""
-        with patch('src.model_preservation.manager.ModelPreservationManager') as mock_manager:
+        with patch('src.model_preservation.manager.PreservationManager') as mock_manager:
             mock_instance = AsyncMock()
             mock_manager.return_value = mock_instance
             
             # Simulate the example from user guide
-            from src.model_preservation.manager import ModelPreservationManager
-            manager = ModelPreservationManager()
+            from src.model_preservation.manager import PreservationManager
+            manager = PreservationManager()
             
             # Should be able to call common methods
             mock_instance.save_model = AsyncMock(return_value={"version": "1.0.0"})
