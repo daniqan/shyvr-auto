@@ -262,56 +262,60 @@ class MLRLTrainingPipeline:
         self.training_config = training_config or config
         self.ml_rl_config = ml_rl_config or MLRLConfig()
         
-        # Initialize components (mock implementations for tests)
-        self.ml_analyzer = self._create_mock_ml_analyzer()
-        self.rl_agent = self._create_mock_rl_agent()
+        # Initialize logger first
+        self.logger = structlog.get_logger().bind(component="MLRLTrainingPipeline")
+        
+        # Initialize components with real implementations
+        self.ml_analyzer = self._create_real_ml_analyzer()
+        self.rl_agent = self._create_real_rl_agent()
         self.bridge = MLRLBridge(
             ml_analyzer=self.ml_analyzer,
             rl_agent=self.rl_agent,
             tokens=tokens
         )
         self.integration_metrics = MLRLPerformanceMetrics()
-        
-        self.logger = structlog.get_logger().bind(component="MLRLTrainingPipeline")
     
-    def _create_mock_ml_analyzer(self):
-        """Create mock ML analyzer for testing"""
-        import unittest.mock
-        mock_analyzer = unittest.mock.MagicMock()
+    def _create_real_ml_analyzer(self):
+        """Create real ML analyzer with LSTM model"""
+        from src.ml_analysis.lstm_model import LSTMAnalyzer
         
-        # Mock batch analysis
-        def mock_analyze_batch(tokens):
-            predictions = []
-            for token in tokens:
-                prediction = PredictionResult(
-                    token=token,
-                    analyzed_at=datetime.now(),
-                    model_type=ModelType.LSTM,
-                    price_prediction_1h=token.price_usd * 1.02,
-                    price_prediction_24h=token.price_usd * 1.05,
-                    confidence=0.75
-                )
-                predictions.append(prediction)
-            return predictions
+        # Configure analyzer for production use
+        config = {
+            'sequence_length': 50,
+            'hidden_size': 128,
+            'num_layers': 2,
+            'dropout': 0.2,
+            'learning_rate': 0.001,
+            'batch_size': 32,
+            'num_epochs': 100
+        }
         
-        # Make batch_analyze async-compatible
-        async def async_mock_analyze_batch(tokens):
-            return mock_analyze_batch(tokens)
-        
-        mock_analyzer.batch_analyze = async_mock_analyze_batch
-        mock_analyzer.analyze_batch = mock_analyze_batch  # Backwards compatibility
-        return mock_analyzer
+        analyzer = LSTMAnalyzer(config)
+        self.logger.info("Created real LSTM analyzer", config=config)
+        return analyzer
     
-    def _create_mock_rl_agent(self):
-        """Create mock RL agent for testing"""
-        import unittest.mock
-        mock_agent = unittest.mock.MagicMock()
-        # Make predict_action async-compatible
-        async def async_predict_action(market_state):
-            return TradeAction.BUY, 0.75  # Return action and confidence
+    def _create_real_rl_agent(self):
+        """Create real RL agent with DQN model"""
+        from src.rl_agent.dqn_agent import DQNTradingAgent
+        from src.rl_agent.base import AgentConfig, ModelType as RLModelType
         
-        mock_agent.predict_action = async_predict_action
-        return mock_agent
+        # Configure agent for production use
+        agent_config = AgentConfig(
+            model_type=RLModelType.DQN,
+            hidden_size=256,
+            num_layers=3,
+            dropout=0.1,
+            learning_rate=1e-4,
+            batch_size=32,
+            replay_buffer_size=10000,
+            target_update_frequency=100,
+            episodes=1000,
+            steps_per_episode=100
+        )
+        
+        agent = DQNTradingAgent(agent_config)
+        self.logger.info("Created real DQN agent", config=agent_config.model_type.value)
+        return agent
     
     def run_ml_rl_episode(self, episode_num: int) -> Dict[str, Any]:
         """Run episode with ML-RL integration"""
