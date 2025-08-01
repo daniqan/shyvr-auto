@@ -260,7 +260,7 @@ create_or_update_secret() {
         fi
         
         # Use environment value if available and not a placeholder
-        if [[ -n "$env_value" && "$env_value" != "your_"* ]]; then
+        if [[ -n "$env_value" && "$env_value" != "your"* ]]; then
             echo -e "${GREEN}  📁 Using value from environment file${NC}"
             secret_value="$env_value"
         else

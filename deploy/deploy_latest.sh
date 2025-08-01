@@ -12,7 +12,7 @@ REPOSITORY="shyvr-ai-prod"
 SERVICE="shyvr-rlte"
 REGION="us-central1"
 IMAGE_NAME="us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE"
-CLOUD_SQL_INSTANCE="shvyr-ai-bots:us-central1:shyvr-rlte-db"
+CLOUD_SQL_INSTANCE="shvyr-ai-bots:us-central1:shyvr-rlte-db-prod"
 SERVICE_ACCOUNT="shyvr-rlte@$PROJECT_ID.iam.gserviceaccount.com"
 
 # Deployment tracking
