@@ -199,6 +199,40 @@ class ModelPreservationConfig(BaseModel):
         return self
 
 
+class SecurityConfig(BaseModel):
+    """Security configuration"""
+
+    secret_key: str
+    jwt_algorithm: str = "HS256"
+    jwt_expiry_hours: int = 24
+    api_key_length: int = 32
+    rate_limit_storage: str = "memory"
+
+    @model_validator(mode='after')
+    def validate_security_config(self):
+        """Validate security configuration"""
+        # Check for default secrets in production
+        if hasattr(self, '_environment') and self._environment == 'production':
+            if 'dev-key' in self.secret_key.lower() or self.secret_key == 'dev-key-change-in-prod':
+                raise ValueError("Default secret key detected in production configuration")
+        
+        # Validate secret key length (minimum 32 characters)
+        if len(self.secret_key) < 32:
+            raise ValueError("Secret key must be at least 32 characters long")
+        
+        # Validate JWT algorithm
+        allowed_algorithms = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']
+        if self.jwt_algorithm not in allowed_algorithms:
+            raise ValueError(f"JWT algorithm '{self.jwt_algorithm}' is not secure. Use one of: {allowed_algorithms}")
+        
+        # Deprecated/weak algorithms
+        weak_algorithms = ['none', 'HS1', 'RS1']
+        if self.jwt_algorithm in weak_algorithms:
+            raise ValueError(f"JWT algorithm '{self.jwt_algorithm}' is deprecated and insecure")
+        
+        return self
+
+
 class AppConfig(BaseModel):
     """Application configuration"""
 
@@ -215,6 +249,7 @@ class RLTEConfig(BaseModel):
     app: AppConfig = field(default_factory=AppConfig)
     database: DatabaseConfig
     telegram: TelegramConfig
+    security: SecurityConfig
     agent: AgentConfig = field(default_factory=AgentConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     ml: MLConfig = field(default_factory=MLConfig)
@@ -226,6 +261,22 @@ class RLTEConfig(BaseModel):
         validate_assignment=True,
         extra="allow"  # Allow extra fields for flexibility
     )
+    
+    @model_validator(mode='after')
+    def validate_production_security(self):
+        """Validate production security requirements"""
+        if self.app.environment == 'production':
+            # Security config is required in production
+            if not self.security:
+                raise ValueError("Security configuration is required in production environment")
+            
+            # Set environment context for security validation
+            self.security._environment = 'production'
+            
+            # Re-validate security config with production environment
+            self.security.validate_security_config()
+        
+        return self
 
 
 class ConfigManager:
@@ -368,6 +419,9 @@ class ConfigManager:
             if config.trading.risk_management.max_position_size_pct > 10.0:
                 logger.warning("Maximum position size is very high (>10%)")
 
+            # Validate security configuration
+            self._validate_security_config(config)
+            
             # Validate RL experience storage
             self._validate_rl_experience_config(config)
             
@@ -425,6 +479,49 @@ class ConfigManager:
                 logger.warning("Very low max versions (<3) may limit rollback options")
         else:
             logger.info("Model preservation is disabled")
+
+    def _validate_security_config(self, config: 'RLTEConfig') -> None:
+        """Validate security configuration"""
+        if not hasattr(config, 'security') or config.security is None:
+            if config.app.environment == 'production':
+                logger.error("Security configuration is required in production environment")
+                raise ConfigurationError("Security configuration is missing in production")
+            else:
+                logger.warning("Security configuration is not configured")
+                return
+        
+        security_config = config.security
+        
+        # Check for default secrets
+        if 'dev-key' in security_config.secret_key.lower():
+            if config.app.environment == 'production':
+                logger.error("Default secret key detected in production")
+                raise ConfigurationError("Default secret key 'dev-key-change-in-prod' is not allowed in production")
+            else:
+                logger.warning("Using default secret key in development environment")
+        
+        # Validate secret key strength
+        if len(security_config.secret_key) < 32:
+            logger.error(f"Secret key is too short ({len(security_config.secret_key)} chars). Minimum 32 characters required.")
+            raise ConfigurationError("Secret key must be at least 32 characters long")
+        
+        # Check if secret comes from environment variable
+        if security_config.secret_key == 'dev-key-change-in-prod':
+            logger.error("Secret key is using default value")
+            if config.app.environment == 'production':
+                raise ConfigurationError("Default secret key is not allowed in production")
+        
+        # Validate JWT configuration
+        if security_config.jwt_algorithm not in ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512']:
+            logger.error(f"Insecure JWT algorithm: {security_config.jwt_algorithm}")
+            raise ConfigurationError(f"JWT algorithm '{security_config.jwt_algorithm}' is not secure")
+        
+        if security_config.jwt_expiry_hours > 24:
+            logger.warning("JWT expiry time is very long (>24 hours)")
+        elif security_config.jwt_expiry_hours < 1:
+            logger.warning("JWT expiry time is very short (<1 hour)")
+        
+        logger.info("Security configuration validated successfully")
 
 
 # Global configuration instance
