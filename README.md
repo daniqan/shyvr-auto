@@ -223,63 +223,6 @@ sequenceDiagram
     Bot-->>User: Response with results
 ```
 
-### Model Preservation Architecture
-
-```mermaid
-graph TB
-    subgraph "Model Preservation System"
-        subgraph "API Layer"
-            RestAPI[REST API<br/>/api/preservation/*]
-            Auth[Authentication<br/>& Authorization]
-        end
-
-        subgraph "Core Components"
-            Manager[Preservation<br/>Manager]
-            Versioning[Semantic<br/>Versioning]
-            Tagging[Tag<br/>System]
-            Branches[Branch<br/>Management]
-        end
-
-        subgraph "Storage Layers"
-            subgraph "Cache Hierarchy"
-                Memory[Memory Cache<br/>LRU 2GB]
-                Disk[Disk Cache<br/>/tmp/models]
-                GCSCache[GCS Cache<br/>Remote]
-            end
-            
-            subgraph "Persistent Storage"
-                GCSStorage[GCS Storage<br/>Model Artifacts]
-                PGDB[(PostgreSQL<br/>Metadata)]
-            end
-        end
-
-        subgraph "Monitoring"
-            Metrics[Prometheus<br/>Metrics]
-            Logs[Structured<br/>Logging]
-            Alerts[Cloud<br/>Monitoring]
-        end
-    end
-
-    %% Connections
-    RestAPI --> Auth
-    Auth --> Manager
-    
-    Manager --> Versioning
-    Manager --> Tagging
-    Manager --> Branches
-    
-    Manager --> Memory
-    Memory --> Disk
-    Disk --> GCSCache
-    GCSCache --> GCSStorage
-    
-    Manager --> PGDB
-    
-    Manager --> Metrics
-    Manager --> Logs
-    Metrics --> Alerts
-```
-
 ### Three-Mode Operation
 - **Mode 1: Analysis & Reporting** - Comprehensive token analysis with ML predictions
 - **Mode 2: Simulation Trading** - Paper trading with RL agent training
@@ -393,6 +336,63 @@ The Model Preservation System provides enterprise-grade versioning, storage, and
 - **Branch Support**: Isolated development branches for experimental models
 - **REST API**: Complete API for model management and deployment
 - **Monitoring**: Prometheus metrics, Grafana dashboards, and alerts
+
+### Model Preservation Architecture
+
+```mermaid
+graph TB
+    subgraph "Model Preservation System"
+        subgraph "API Layer"
+            RestAPI[REST API<br/>/api/preservation/*]
+            Auth[Authentication<br/>& Authorization]
+        end
+
+        subgraph "Core Components"
+            Manager[Preservation<br/>Manager]
+            Versioning[Semantic<br/>Versioning]
+            Tagging[Tag<br/>System]
+            Branches[Branch<br/>Management]
+        end
+
+        subgraph "Storage Layers"
+            subgraph "Cache Hierarchy"
+                Memory[Memory Cache<br/>LRU 2GB]
+                Disk[Disk Cache<br/>/tmp/models]
+                GCSCache[GCS Cache<br/>Remote]
+            end
+            
+            subgraph "Persistent Storage"
+                GCSStorage[GCS Storage<br/>Model Artifacts]
+                PGDB[(PostgreSQL<br/>Metadata)]
+            end
+        end
+
+        subgraph "Monitoring"
+            Metrics[Prometheus<br/>Metrics]
+            Logs[Structured<br/>Logging]
+            Alerts[Cloud<br/>Monitoring]
+        end
+    end
+
+    %% Connections
+    RestAPI --> Auth
+    Auth --> Manager
+    
+    Manager --> Versioning
+    Manager --> Tagging
+    Manager --> Branches
+    
+    Manager --> Memory
+    Memory --> Disk
+    Disk --> GCSCache
+    GCSCache --> GCSStorage
+    
+    Manager --> PGDB
+    
+    Manager --> Metrics
+    Manager --> Logs
+    Metrics --> Alerts
+```
 
 ### Storage Architecture
 ```python
@@ -696,10 +696,10 @@ Live trading mode is **disabled by default** and requires:
 ## 📈 Performance Targets
 
 ### Phase 1 (Completed) - Foundation
--  88% test coverage
--  Sub-10s application startup
--  Comprehensive configuration management
--  Production-ready deployment pipeline
+- ✅ 88% test coverage
+- ✅ Sub-10s application startup
+- ✅ Comprehensive configuration management
+- ✅ Production-ready deployment pipeline
 
 ### Phase 2 (Completed) - Discovery & Evaluation
 - ✅ 101 passing tests with comprehensive token detection
@@ -852,59 +852,6 @@ This project is for educational and research purposes. See LICENSE file for deta
 
 This software is for educational purposes only. Cryptocurrency trading involves substantial risk of loss. Users are solely responsible for their trading decisions and any financial outcomes.
 
-## 🏗️ System Architecture
-
-This diagram illustrates the high-level structure of the Shyvr-RLTE project, followed by an explanation of the components and their interactions.
-
-```mermaid
-
-```
-
-### Architecture Explanation
-
-This diagram illustrates a modular, event-driven architecture designed for a sophisticated AI trading bot.
-
-1.  **Presentation & API Layer:**
-    *   The user interacts with the system through a web-based **Dashboard UI**.
-    *   All communication is handled by a **FastAPI Server**, which provides a robust API for the dashboard and any other external clients. The **Dashboard API** contains the specific business logic for UI interactions.
-
-2.  **Core Application Logic:**
-    *   The **Mode Manager** is the central controller, responsible for activating, deactivating, and managing the state of the different operational modes.
-    *   The system can run in one of three primary modes:
-        *   **Live Trading Mode:** Executes real trades with actual funds.
-        *   **Simulation Mode:** Paper trades using real-time market data and a virtual portfolio.
-        *   **Analysis Mode:** Performs offline analysis, backtesting, and reporting without executing trades.
-
-3.  **Decision Engine (The "Brain"):**
-    *   When a trading decision is needed, the active mode consults the **ML-RL Bridge**.
-    *   This bridge acts as a mediator, querying both the **ML Model Manager** for market predictions (e.g., will the price go up?) and the **RL DQN Agent** for a specific trading action (e.g., BUY, SELL, HOLD).
-    *   The **Model Manager** uses the **Feature Engineer** to process raw data from external APIs into meaningful features for its prediction models (like the LSTM).
-    *   The bridge then synthesizes these inputs to produce a final, confident trading decision.
-
-4.  **Trading & Execution Layer:**
-    *   Once a decision is made, the active mode uses the **DEX-Wallet Bridge** to execute the trade.
-    *   This bridge abstracts the complexity of interacting with different blockchains. It selects the appropriate **DEX Client** (e.g., Jupiter for Solana) and **Wallet** to prepare, sign, and broadcast the transaction.
-    *   The **Portfolio Manager** is the single source of truth for all assets, open positions, and P&L, which is updated after every trade.
-
-5.  **Continuous Learning Loop:**
-    *   This is the system's feedback mechanism for autonomous improvement.
-    *   The **Experience Collector** observes the actions taken and outcomes from the `LiveMode`.
-    *   It stores these `(state, action, reward, next_state)` tuples in the **Experience Replay Buffer**.
-    *   The **Continuous Learning Engine** monitors the system's performance and the number of new experiences. When a trigger condition is met (e.g., 1,000 new trades), it initiates the **DQN Training Pipeline**.
-    *   The pipeline samples from the replay buffer to retrain and improve the **DQN Agent**. The newly trained model can then be evaluated and deployed, completing the loop.
-
-6.  **Database Layer (Production PostgreSQL):**
-    *   This is the persistent storage foundation for the entire system.
-    *   **RL Experience Storage:** Three-table schema (`rl_experiences`, `rl_training_sessions`, `rl_performance_metrics`) providing scalable, high-performance storage for reinforcement learning data with sub-100ms query times.
-    *   **Activity Logging:** Comprehensive system logging with structured storage for auditing, debugging, and compliance.
-    *   **Configuration Management:** Centralized system configuration with database-backed settings.
-    *   **Production Features:** Automated backups, connection pooling, monitoring integration, and lifecycle management.
-
-7.  **Shared Services:**
-    *   These are cross-cutting concerns used by all other layers.
-    *   **Configuration:** Provides centralized access to all system parameters.
-    *   **Experience Database:** High-performance interface to PostgreSQL for RL experience storage with batch operations and prioritized sampling.
-    *   **Activity Logging Integration:** Structured logging that integrates with the database layer for comprehensive audit trails.
 
 ## 🔄 System Process Flow
 
