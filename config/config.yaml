@@ -11,7 +11,7 @@ app:
   port: ${PORT:8080}
   
 database:
-  host: "${DB_HOST:localhost}"
+  host: "${DB_HOST}"
   port: ${DB_PORT:5432}
   database: "${DB_NAME:shyvr_rlte}"
   username: "${DB_USER:rlte_user}"
@@ -554,7 +554,7 @@ monitoring:
   # Grafana dashboard settings
   grafana:
     enabled: true
-    dashboard_url: "${GRAFANA_DASHBOARD_URL:http://localhost:3000}"
+    dashboard_url: "${GRAFANA_DASHBOARD_URL}"
     api_key: "${GRAFANA_API_KEY:}"
     organization: "${GRAFANA_ORG:Main Org.}"
     
