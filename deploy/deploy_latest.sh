@@ -262,7 +262,8 @@ done
 
 # Comprehensive secret management with validation
 log_info "🔐 Configuring comprehensive secret integration..."
-log_info "💡 To set up secrets, run: ./deploy/setup_secrets.sh"
+log_info "💡 To set up secrets from .env file, run: ./deploy/setup_secrets.sh --env-file .env"
+log_info "💡 For interactive setup, run: ./deploy/setup_secrets.sh"
 
 # Enhanced secret validation with health checks
 validate_secret_accessibility() {

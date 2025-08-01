@@ -1,12 +1,111 @@
 #!/bin/bash
 # Comprehensive Secret Manager setup for Shyvr RLTE
 # Handles all API keys and sensitive configuration systematically
+# Enhanced to read from .env files for automated deployment
 
 set -e
 
 # Configuration
 PROJECT_ID="shvyr-ai-bots"
 REGION="us-central1"
+
+# Environment file configuration
+ENV_FILE=""
+ENV_TEMP_FILE=""
+
+# Function to load environment variables from .env file
+load_env_file() {
+    local env_file=$1
+    
+    if [[ ! -f "$env_file" ]]; then
+        echo -e "${YELLOW}⚠ Environment file not found: $env_file${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}📁 Loading environment variables from: $env_file${NC}"
+    
+    # Create a temporary file to store processed env vars
+    ENV_TEMP_FILE=$(mktemp)
+    
+    # Read and parse .env file, ignoring comments and empty lines
+    local count=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+        
+        # Parse KEY=VALUE pairs using basic pattern matching
+        if [[ "$line" == *"="* ]]; then
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            
+            # Clean up key (remove leading/trailing whitespace)
+            key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            
+            # Clean up value (remove quotes if present)
+            value=$(echo "$value" | sed "s/^['\"]//;s/['\"]$//")
+            
+            # Only process valid variable names
+            if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                echo "$key=$value" >> "$ENV_TEMP_FILE"
+                ((count++))
+            fi
+        fi
+    done < "$env_file"
+    
+    echo -e "${GREEN}✅ Loaded $count environment variables${NC}"
+}
+
+# Function to get value from environment file or return empty
+get_env_value() {
+    local key=$1
+    
+    if [[ -n "$ENV_TEMP_FILE" && -f "$ENV_TEMP_FILE" ]]; then
+        local line
+        line=$(grep "^$key=" "$ENV_TEMP_FILE" 2>/dev/null)
+        if [[ -n "$line" ]]; then
+            echo "${line#*=}"
+            return
+        fi
+    fi
+    echo ""
+}
+
+# Cleanup function
+cleanup_env_temp() {
+    if [[ -n "$ENV_TEMP_FILE" && -f "$ENV_TEMP_FILE" ]]; then
+        rm -f "$ENV_TEMP_FILE"
+    fi
+}
+
+# Set up cleanup trap
+trap cleanup_env_temp EXIT
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env-file)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --project)
+            PROJECT_ID="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: $0 [options]"
+            echo "Options:"
+            echo "  --env-file FILE    Load secrets from environment file"
+            echo "  --project PROJECT  GCP project ID (default: shvyr-ai-bots)"
+            echo "  --help            Show this help"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -19,61 +118,69 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}🔐 Setting up Secret Manager for Shyvr RLTE${NC}"
 echo -e "${PURPLE}🤖 Comprehensive API key and sensitive configuration management${NC}"
 
+# Load environment file if specified
+if [[ -n "$ENV_FILE" ]]; then
+    load_env_file "$ENV_FILE"
+    echo -e "${GREEN}✅ Environment file loaded - will use values when available${NC}"
+    echo -e "${YELLOW}💡 Secrets not found in env file will prompt for manual input${NC}"
+    echo
+fi
+
 # Enable Secret Manager API
 echo -e "${YELLOW}📦 Enabling Secret Manager API...${NC}"
 gcloud services enable secretmanager.googleapis.com --project=$PROJECT_ID
 
 # Core System Secrets (Required)
-declare -A REQUIRED_SECRETS=(
-    ["TELEGRAM_TOKEN"]="Bot token from @BotFather on Telegram"
-    ["WEBHOOK_SECRET"]="Random string for webhook authentication"
-    ["DB_PASSWORD"]="PostgreSQL database password"
-    ["DATABASE_URL"]="Complete PostgreSQL connection string"
+REQUIRED_SECRETS=(
+    "TELEGRAM_TOKEN|Bot token from @BotFather on Telegram"
+    "WEBHOOK_SECRET|Random string for webhook authentication"
+    "DB_PASSWORD|PostgreSQL database password"
+    "DATABASE_URL|Complete PostgreSQL connection string"
 )
 
 # Blockchain & RPC Secrets
-declare -A BLOCKCHAIN_SECRETS=(
-    ["HELIUS_API_KEY"]="Solana RPC provider API key"
-    ["BIRDEYE_API_KEY"]="DeFi data aggregator API key"
-    ["ETHERSCAN_API_KEY"]="Ethereum blockchain explorer API key"
-    ["ALCHEMY_API_KEY"]="General Ethereum/Polygon RPC provider"
-    ["ETHEREUM_API_KEY"]="Ethereum-specific RPC API key"
-    ["BASE_API_KEY"]="Base chain RPC API key"
-    ["SOLANA_RPC_URL"]="Custom Solana RPC endpoint URL"
-    ["ETHEREUM_RPC_URL"]="Custom Ethereum RPC endpoint URL"
+BLOCKCHAIN_SECRETS=(
+    "HELIUS_API_KEY|Solana RPC provider API key"
+    "BIRDEYE_API_KEY|DeFi data aggregator API key"
+    "ETHERSCAN_API_KEY|Ethereum blockchain explorer API key"
+    "ALCHEMY_API_KEY|General Ethereum/Polygon RPC provider"
+    "ETHEREUM_API_KEY|Ethereum-specific RPC API key"
+    "BASE_API_KEY|Base chain RPC API key"
+    "SOLANA_RPC_URL|Custom Solana RPC endpoint URL"
+    "ETHEREUM_RPC_URL|Custom Ethereum RPC endpoint URL"
 )
 
 # Trading & Wallet Secrets (Critical - Live Trading)
-declare -A TRADING_SECRETS=(
-    ["SOLANA_PRIVATE_KEY"]="Solana wallet private key (base58)"
-    ["ETHEREUM_PRIVATE_KEY"]="Ethereum wallet private key (hex)"
-    ["HYPERLIQUID_PRIVATE_KEY"]="Hyperliquid exchange private key"
-    ["HYPERLIQUID_API_KEY"]="Hyperliquid exchange API key"
-    ["WALLET_PRIVATE_KEY"]="Primary wallet private key"
+TRADING_SECRETS=(
+    "SOLANA_PRIVATE_KEY|Solana wallet private key (base58)"
+    "ETHEREUM_PRIVATE_KEY|Ethereum wallet private key (hex)"
+    "HYPERLIQUID_PRIVATE_KEY|Hyperliquid exchange private key"
+    "HYPERLIQUID_API_KEY|Hyperliquid exchange API key"
+    "WALLET_PRIVATE_KEY|Primary wallet private key"
 )
 
 # AI & ML API Secrets
-declare -A AI_SECRETS=(
-    ["XAI_API_KEY"]="xAI/Grok API key for analysis"
-    ["OPENAI_API_KEY"]="OpenAI GPT API key"
-    ["AGENT_API_KEY"]="Custom AI agent API key"
+AI_SECRETS=(
+    "XAI_API_KEY|xAI/Grok API key for analysis"
+    "OPENAI_API_KEY|OpenAI GPT API key"
+    "AGENT_API_KEY|Custom AI agent API key"
 )
 
 # Market Data & Analytics Secrets
-declare -A MARKET_SECRETS=(
-    ["LUNARCRUSH_API_KEY"]="Social sentiment data API key"
-    ["COINGECKO_API_KEY"]="CoinGecko market data API key"
-    ["COINGECKO_PRO_API_KEY"]="CoinGecko Pro API key"
-    ["GLASSNODE_API_KEY"]="On-chain analytics API key"
-    ["MESSARI_API_KEY"]="Crypto research data API key"
-    ["JUPITER_API_KEY"]="Jupiter DEX aggregator API key"
+MARKET_SECRETS=(
+    "LUNARCRUSH_API_KEY|Social sentiment data API key"
+    "COINGECKO_API_KEY|CoinGecko market data API key"
+    "COINGECKO_PRO_API_KEY|CoinGecko Pro API key"
+    "GLASSNODE_API_KEY|On-chain analytics API key"
+    "MESSARI_API_KEY|Crypto research data API key"
+    "JUPITER_API_KEY|Jupiter DEX aggregator API key"
 )
 
 # Social Media & External APIs
-declare -A SOCIAL_SECRETS=(
-    ["X_BEARER_TOKEN"]="X (Twitter) API bearer token"
-    ["X_API_KEY"]="X (Twitter) API key"
-    ["X_API_SECRET"]="X (Twitter) API secret"
+SOCIAL_SECRETS=(
+    "X_BEARER_TOKEN|X (Twitter) API bearer token"
+    "X_API_KEY|X (Twitter) API key"
+    "X_API_SECRET|X (Twitter) API secret"
 )
 
 # Function to create or update a secret
@@ -81,29 +188,68 @@ create_or_update_secret() {
     local secret_name=$1
     local description=$2
     local is_required=${3:-false}
+    local secret_value=""
     
     echo -e "${BLUE}Processing secret: $secret_name${NC}"
+    
+    # First, try to get value from environment file
+    local env_value
+    env_value=$(get_env_value "$secret_name")
+    
+    # Handle specific mappings for common secrets
+    if [[ -z "$env_value" ]]; then
+        case "$secret_name" in
+            "WEBHOOK_SECRET")
+                env_value=$(get_env_value "TELEGRAM_WEBHOOK_SECRET")
+                ;;
+            "AGENT_API_KEY")
+                # Try multiple possible keys for agent API
+                env_value=$(get_env_value "AGENT_API_KEY")
+                [[ -z "$env_value" ]] && env_value=$(get_env_value "OPENAI_API_KEY")
+                [[ -z "$env_value" ]] && env_value=$(get_env_value "XAI_API_KEY")
+                ;;
+            "WALLET_PRIVATE_KEY")
+                # Try different wallet private keys
+                env_value=$(get_env_value "SOLANA_PRIVATE_KEY")
+                [[ -z "$env_value" ]] && env_value=$(get_env_value "ETH_PRIVATE_KEY")
+                [[ -z "$env_value" ]] && env_value=$(get_env_value "ETHEREUM_PRIVATE_KEY")
+                ;;
+            "SOLANA_RPC_URL")
+                env_value=$(get_env_value "SOLANA_RPC_URL")
+                ;;
+            "ETHEREUM_RPC_URL")
+                env_value=$(get_env_value "ETH_RPC_URL")
+                ;;
+            # Add more mappings if needed
+        esac
+    fi
     
     # Check if secret already exists
     if gcloud secrets describe "$secret_name" --project=$PROJECT_ID --quiet 2>/dev/null; then
         echo -e "${YELLOW}  ⚠ Secret $secret_name already exists${NC}"
         
-        # Prompt for update
-        read -p "  Update existing secret? (y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            echo -e "${BLUE}  📝 Enter new value for $secret_name:${NC}"
-            echo -e "${YELLOW}  Description: $description${NC}"
-            read -s secret_value
-            
-            if [[ -n "$secret_value" ]]; then
-                echo "$secret_value" | gcloud secrets versions add "$secret_name" --data-file=- --project=$PROJECT_ID
-                echo -e "${GREEN}  ✓ Updated secret: $secret_name${NC}"
-            else
-                echo -e "${YELLOW}  ⚠ Skipped empty value for: $secret_name${NC}"
-            fi
+        if [[ -n "$env_value" && "$env_value" != "your_"* ]]; then
+            echo -e "${GREEN}  📁 Using value from environment file${NC}"
+            secret_value="$env_value"
         else
-            echo -e "${YELLOW}  ⚠ Skipped update for: $secret_name${NC}"
+            # Prompt for update
+            read -p "  Update existing secret? (y/n): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                echo -e "${BLUE}  📝 Enter new value for $secret_name:${NC}"
+                echo -e "${YELLOW}  Description: $description${NC}"
+                read -s secret_value
+            else
+                echo -e "${YELLOW}  ⚠ Skipped update for: $secret_name${NC}"
+                return 0
+            fi
+        fi
+        
+        if [[ -n "$secret_value" ]]; then
+            echo "$secret_value" | gcloud secrets versions add "$secret_name" --data-file=- --project=$PROJECT_ID
+            echo -e "${GREEN}  ✓ Updated secret: $secret_name${NC}"
+        else
+            echo -e "${YELLOW}  ⚠ Skipped empty value for: $secret_name${NC}"
         fi
     else
         echo -e "${GREEN}  + Creating new secret: $secret_name${NC}"
@@ -113,8 +259,17 @@ create_or_update_secret() {
             echo -e "${RED}  ⚠ REQUIRED SECRET - Must provide value${NC}"
         fi
         
-        echo -e "${BLUE}  📝 Enter value for $secret_name (press Enter to skip):${NC}"
-        read -s secret_value
+        # Use environment value if available and not a placeholder
+        if [[ -n "$env_value" && "$env_value" != "your_"* ]]; then
+            echo -e "${GREEN}  📁 Using value from environment file${NC}"
+            secret_value="$env_value"
+        else
+            if [[ -n "$env_value" ]]; then
+                echo -e "${YELLOW}  ⚠ Found placeholder value in env file: $env_value${NC}"
+            fi
+            echo -e "${BLUE}  📝 Enter value for $secret_name (press Enter to skip):${NC}"
+            read -s secret_value
+        fi
         
         if [[ -n "$secret_value" ]]; then
             # Create the secret
@@ -138,13 +293,17 @@ create_or_update_secret() {
 # Function to setup secrets by category
 setup_secret_category() {
     local category_name=$1
-    local -n secrets_ref=$2
+    local secrets_array_name=$2
     local is_required=${3:-false}
     
     echo -e "${PURPLE}📋 Setting up $category_name secrets...${NC}"
     
-    for secret_name in "${!secrets_ref[@]}"; do
-        description="${secrets_ref[$secret_name]}"
+    # Use eval to reference the array by name
+    eval "local secrets=(\"\${${secrets_array_name}[@]}\")"
+    
+    for secret_entry in "${secrets[@]}"; do
+        local secret_name="${secret_entry%%|*}"
+        local description="${secret_entry##*|}"
         create_or_update_secret "$secret_name" "$description" "$is_required"
     done
     
@@ -157,13 +316,13 @@ echo -e "${YELLOW}🚀 Starting comprehensive secret setup...${NC}"
 echo
 
 # Setup required secrets first
-setup_secret_category "Core System (Required)" REQUIRED_SECRETS true
+setup_secret_category "Core System (Required)" "REQUIRED_SECRETS" true
 
 # Setup optional secret categories
-setup_secret_category "Blockchain & RPC" BLOCKCHAIN_SECRETS false
-setup_secret_category "AI & ML APIs" AI_SECRETS false
-setup_secret_category "Market Data & Analytics" MARKET_SECRETS false
-setup_secret_category "Social Media APIs" SOCIAL_SECRETS false
+setup_secret_category "Blockchain & RPC" "BLOCKCHAIN_SECRETS" false
+setup_secret_category "AI & ML APIs" "AI_SECRETS" false
+setup_secret_category "Market Data & Analytics" "MARKET_SECRETS" false
+setup_secret_category "Social Media APIs" "SOCIAL_SECRETS" false
 
 # Warning for trading secrets
 echo -e "${RED}⚠️  WARNING: Trading secrets contain sensitive wallet private keys${NC}"
@@ -173,7 +332,7 @@ echo
 read -p "Setup trading/wallet secrets? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    setup_secret_category "Trading & Wallet (CRITICAL)" TRADING_SECRETS false
+    setup_secret_category "Trading & Wallet (CRITICAL)" "TRADING_SECRETS" false
 else
     echo -e "${YELLOW}⚠ Skipped trading secrets setup${NC}"
 fi
@@ -474,6 +633,12 @@ echo -e "  1. Run validation: python validate_secrets.py"
 echo -e "  2. Update deployment scripts with secret integration"
 echo -e "  3. Test secret retrieval in development environment"
 echo -e "  4. Configure monitoring for secret access patterns"
+echo
+echo -e "${BLUE}💡 Usage Examples:${NC}"
+echo -e "  • Interactive setup: ./deploy/setup_secrets.sh"
+echo -e "  • From .env file:    ./deploy/setup_secrets.sh --env-file .env"
+echo -e "  • Production env:    ./deploy/setup_secrets.sh --env-file .env.production"
+echo -e "  • Custom project:    ./deploy/setup_secrets.sh --env-file .env --project my-project"
 echo
 echo -e "${YELLOW}💡 Utilities created:${NC}"
 echo -e "  • validate_secrets.py - Validate secret accessibility"
