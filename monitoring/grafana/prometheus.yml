@@ -16,7 +16,7 @@ alerting:
 scrape_configs:
   - job_name: 'shyvr-rlte'
     static_configs:
-      - targets: ['localhost:8080']
+      - targets: ['shyvr-rlte:8080']
     metrics_path: '/metrics'
     scrape_interval: 30s
     scrape_timeout: 10s
@@ -33,4 +33,4 @@ scrape_configs:
   # Optional: Monitor Prometheus itself
   - job_name: 'prometheus'
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ['prometheus:9090']
