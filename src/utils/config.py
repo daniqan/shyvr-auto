@@ -178,7 +178,7 @@ class ModelPreservationConfig(BaseModel):
     """Model preservation configuration"""
     
     enabled: bool = True
-    gcs_bucket: str
+    gcs_bucket: str | None = None
     backup_interval_hours: int = 6
     max_versions_per_model: int = 10
     enable_compression: bool = True
@@ -199,6 +199,56 @@ class ModelPreservationConfig(BaseModel):
         return self
 
 
+class MonitoringAlertsConfig(BaseModel):
+    """Monitoring alerts configuration"""
+    
+    enabled: bool = True
+    webhook_url: str | None = None
+    critical_threshold: float = 0.95
+    warning_threshold: float = 0.8
+
+
+class MonitoringGrafanaConfig(BaseModel):
+    """Grafana monitoring configuration"""
+    
+    enabled: bool = True
+    port: int = 3000
+    admin_password: str | None = None
+
+
+class MonitoringPrometheusConfig(BaseModel):
+    """Prometheus monitoring configuration"""
+    
+    enabled: bool = True
+    port: int = 9090
+    retention_days: int = 30
+
+
+class MonitoringConfig(BaseModel):
+    """Monitoring configuration"""
+    
+    enabled: bool = True
+    metrics_port: int = 9090
+    health_check_port: int = 8081
+    log_level: str = "INFO"
+    alerts: MonitoringAlertsConfig = field(default_factory=MonitoringAlertsConfig)
+    grafana: MonitoringGrafanaConfig = field(default_factory=MonitoringGrafanaConfig)
+    prometheus: MonitoringPrometheusConfig = field(default_factory=MonitoringPrometheusConfig)
+
+
+class FeaturesConfig(BaseModel):
+    """Feature flags configuration"""
+    
+    live_trading: bool = False
+    paper_trading: bool = True
+    ml_predictions: bool = True
+    rl_decisions: bool = True
+    risk_management: bool = True
+    position_monitoring: bool = True
+    automated_stops: bool = True
+    emergency_shutdown: bool = True
+
+
 class SecurityConfig(BaseModel):
     """Security configuration"""
 
@@ -216,9 +266,16 @@ class SecurityConfig(BaseModel):
             if 'dev-key' in self.secret_key.lower() or self.secret_key == 'dev-key-change-in-prod':
                 raise ValueError("Default secret key detected in production configuration")
         
-        # Validate secret key length (minimum 32 characters)
-        if len(self.secret_key) < 32:
-            raise ValueError("Secret key must be at least 32 characters long")
+        # Get environment context
+        environment = getattr(self, '_environment', 'development')
+        
+        # Validate secret key length (minimum 32 characters for production/staging, 16 for development)
+        min_length = 32 if environment in ['production', 'staging'] else 16
+        if len(self.secret_key) < min_length:
+            if environment in ['production', 'staging']:
+                raise ValueError("Secret key must be at least 32 characters long in production/staging")
+            elif len(self.secret_key) < 16:
+                raise ValueError("Secret key must be at least 16 characters long")
         
         # Validate JWT algorithm
         allowed_algorithms = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512']
@@ -256,6 +313,8 @@ class RLTEConfig(BaseModel):
     rl: RLConfig = field(default_factory=RLConfig)
     apis: dict[str, APIConfig] = field(default_factory=dict)
     model_preservation: ModelPreservationConfig | None = None
+    monitoring: MonitoringConfig | None = None
+    features: FeaturesConfig | None = None
 
     model_config = ConfigDict(
         validate_assignment=True,
@@ -265,15 +324,16 @@ class RLTEConfig(BaseModel):
     @model_validator(mode='after')
     def validate_production_security(self):
         """Validate production security requirements"""
-        if self.app.environment == 'production':
-            # Security config is required in production
+        # Set environment context for security validation
+        if self.security:
+            self.security._environment = self.app.environment
+            
+        if self.app.environment in ['production', 'staging']:
+            # Security config is required in production/staging
             if not self.security:
-                raise ValueError("Security configuration is required in production environment")
+                raise ValueError(f"Security configuration is required in {self.app.environment} environment")
             
-            # Set environment context for security validation
-            self.security._environment = 'production'
-            
-            # Re-validate security config with production environment
+            # Re-validate security config with environment context
             self.security.validate_security_config()
         
         return self
@@ -288,17 +348,37 @@ class ConfigManager:
         else:
             self.config_path = Path(config_path) if isinstance(config_path, str) else config_path
         self._config: RLTEConfig | None = None
+        self._required_prod_vars = [
+            'DB_HOST', 'DB_PASSWORD', 'SECRET_KEY', 'TELEGRAM_TOKEN',
+            'HELIUS_API_KEY', 'ETHERSCAN_API_KEY', 'BIRDEYE_API_KEY'
+        ]
 
     def _find_config_file(self) -> Path:
-        """Find configuration file in standard locations"""
-        possible_paths = [
+        """Find configuration file in standard locations with environment-specific support"""
+        environment = os.environ.get('ENVIRONMENT', 'development')
+        
+        # Environment-specific config file paths
+        env_specific_paths = [
+            Path(f"config/config.{environment}.yaml"),
+            Path(f"config.{environment}.yaml"),
+            Path(f"/app/config/config.{environment}.yaml"),
+        ]
+        
+        # Check for environment-specific config first
+        for path in env_specific_paths:
+            if path.exists():
+                logger.info(f"Using environment-specific config: {path}")
+                return path
+        
+        # Fallback to standard config file locations
+        standard_paths = [
             Path("config/config.yaml"),
             Path("config.yaml"),
             Path("/app/config/config.yaml"),
             Path.home() / ".config" / "shyvr-rlte" / "config.yaml",
         ]
 
-        for path in possible_paths:
+        for path in standard_paths:
             if path.exists():
                 return path
 
@@ -364,11 +444,25 @@ class ConfigManager:
 
             # Substitute environment variables
             processed_config = self._substitute_env_vars(raw_config)
+            
+            # Get environment for validation
+            environment = processed_config.get('app', {}).get('environment', 'development')
+            
+            # Validate production requirements before parsing
+            if environment == 'production':
+                self._validate_production_requirements(processed_config)
+            elif environment == 'staging':
+                self._validate_staging_requirements(processed_config)
 
             # Parse with Pydantic
             self._config = RLTEConfig(**processed_config)
+            
+            # Post-load validation
+            if environment in ['production', 'staging']:
+                self._validate_production_constraints(self._config)
+                self._validate_no_localhost_references(self._config)
 
-            logger.info(f"Configuration loaded from {self.config_path}")
+            logger.info(f"Configuration loaded from {self.config_path} (environment: {environment})")
             return self._config
 
         except yaml.YAMLError as e:
@@ -399,6 +493,157 @@ class ConfigManager:
         except (AttributeError, KeyError):
             return default
 
+    def _validate_production_requirements(self, config: dict) -> None:
+        """Validate production-specific requirements"""
+        logger.info("Validating production configuration requirements")
+        
+        # Check required environment variables
+        missing_vars = []
+        for var in self._required_prod_vars:
+            if not os.environ.get(var):
+                missing_vars.append(var)
+        
+        if missing_vars:
+            raise ConfigurationError(
+                f"Required production environment variables missing: {', '.join(missing_vars)}"
+            )
+        
+        # Validate critical configuration sections exist
+        required_sections = ['app', 'database', 'security', 'telegram']
+        for section in required_sections:
+            if section not in config:
+                raise ConfigurationError(f"Required configuration section missing: {section}")
+        
+        # Validate APIs section has required APIs
+        if 'apis' not in config or not config['apis']:
+            raise ConfigurationError("APIs configuration is required in production")
+        
+        required_apis = ['helius', 'etherscan', 'birdeye']
+        apis = config.get('apis', {})
+        missing_apis = [api for api in required_apis if api not in apis]
+        if missing_apis:
+            raise ConfigurationError(
+                f"Required API configurations missing: {', '.join(missing_apis)}"
+            )
+    
+    def _validate_staging_requirements(self, config: dict) -> None:
+        """Validate staging-specific requirements (similar to production)"""
+        logger.info("Validating staging configuration requirements")
+        
+        # Staging uses similar validation to production
+        self._validate_production_requirements(config)
+    
+    def _validate_production_constraints(self, config: RLTEConfig) -> None:
+        """Validate production configuration constraints"""
+        logger.info("Validating production configuration constraints")
+        
+        # Validate database configuration
+        if config.database.pool_size <= 0:
+            raise ConfigurationError("Database pool size must be positive")
+        
+        if config.database.max_overflow < 0:
+            raise ConfigurationError("Database max overflow cannot be negative")
+        
+        # Validate risk management constraints
+        risk_config = config.trading.risk_management
+        
+        if risk_config.max_position_size_pct <= 0 or risk_config.max_position_size_pct > 100:
+            raise ConfigurationError(
+                "Max position size must be between 0 and 100 percent"
+            )
+        
+        if risk_config.max_daily_loss_pct <= 0 or risk_config.max_daily_loss_pct > 100:
+            raise ConfigurationError(
+                "Max daily loss must be between 0 and 100 percent"
+            )
+        
+        if risk_config.max_open_positions <= 0:
+            raise ConfigurationError("Max open positions must be positive")
+        
+        if risk_config.min_trade_amount_usd <= 0:
+            raise ConfigurationError("Minimum trade amount must be positive")
+    
+    def _validate_no_localhost_references(self, config: RLTEConfig) -> None:
+        """Validate no localhost references in production/staging"""
+        logger.info("Validating no localhost references in production configuration")
+        
+        # Check database host
+        if 'localhost' in config.database.host.lower():
+            raise ConfigurationError(
+                "Localhost database host not allowed in production environment"
+            )
+        
+        # Check API base URLs
+        for api_name, api_config in config.apis.items():
+            if hasattr(api_config, 'base_url') and 'localhost' in api_config.base_url.lower():
+                raise ConfigurationError(
+                    f"Localhost reference in {api_name} API base URL not allowed in production"
+                )
+    
+    def validate_health_checks(self) -> bool:
+        """Validate configuration health checks"""
+        logger.info("Running configuration health checks")
+        
+        try:
+            config = self.load()
+            
+            # Database connection health check would go here
+            # For now, just validate configuration is loadable
+            if not config:
+                raise ConfigurationError("Configuration failed to load")
+            
+            # TODO: Add actual database connection test
+            # TODO: Add API endpoint connectivity tests
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            raise ConfigurationError(f"Configuration health check failed: {e}")
+    
+    def validate_api_health(self) -> bool:
+        """Validate API endpoint health"""
+        logger.info("Running API health checks")
+        
+        try:
+            config = self.load()
+            
+            # API health checks would go here
+            # For now, just validate APIs are configured
+            if not config.apis:
+                raise ConfigurationError("No APIs configured")
+            
+            # TODO: Add actual API connectivity tests
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"API health check failed: {e}")
+            raise ConfigurationError(f"API health check failed: {e}")
+    
+    def validate_production_readiness(self) -> bool:
+        """Validate complete production readiness"""
+        logger.info("Running complete production readiness validation")
+        
+        try:
+            # Load and validate configuration
+            config = self.load()
+            
+            # Run all validation checks
+            basic_validation = self.validate()
+            health_checks = self.validate_health_checks()
+            api_health = self.validate_api_health()
+            
+            if not all([basic_validation, health_checks, api_health]):
+                raise ConfigurationError("Production readiness validation failed")
+            
+            logger.info("Production readiness validation passed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Production readiness validation failed: {e}")
+            raise ConfigurationError(f"Production readiness validation failed: {e}")
+    
     def validate(self) -> bool:
         """Validate configuration"""
         try:
