@@ -268,8 +268,21 @@ class StatisticalDriftAnalyzer:
             baseline_counts = pd.Series(baseline).value_counts().reindex(all_categories, fill_value=0)
             current_counts = pd.Series(current).value_counts().reindex(all_categories, fill_value=0)
             
+            # Convert to proportions for proper chi-square test
+            baseline_total = len(baseline)
+            current_total = len(current)
+            
+            # Calculate expected frequencies based on baseline proportions
+            baseline_props = baseline_counts / baseline_total
+            expected_counts = baseline_props * current_total
+            
+            # Add small epsilon to avoid zero expected frequencies
+            epsilon = 1e-6
+            expected_counts = expected_counts + epsilon
+            current_counts = current_counts + epsilon
+            
             # Perform chi-square test
-            chi2_stat, p_value = stats.chisquare(current_counts, baseline_counts)
+            chi2_stat, p_value = stats.chisquare(current_counts, expected_counts)
             has_drift = p_value < alpha
             
             self.logger.debug(
@@ -314,7 +327,7 @@ class StatisticalDriftAnalyzer:
                 threshold=threshold
             )
             
-            return float(wd_distance), has_drift
+            return float(wd_distance), bool(has_drift)
             
         except Exception as e:
             self.logger.error("Wasserstein distance calculation failed", error=str(e))
@@ -514,12 +527,20 @@ class FeatureDriftMonitor:
             'has_drift': chi2_drift
         }
         
-        # PSI for categorical data
-        psi_score, psi_drift = self.analyzer.population_stability_index(
-            baseline_data.astype(str), current_data.astype(str),
-            n_bins=len(np.unique(np.concatenate([baseline_data, current_data]))),
-            threshold=self.config['psi_threshold']
-        )
+        # PSI for categorical data - calculate manually for categorical
+        all_categories = np.unique(np.concatenate([baseline_data, current_data]))
+        baseline_counts = pd.Series(baseline_data).value_counts().reindex(all_categories, fill_value=0)
+        current_counts = pd.Series(current_data).value_counts().reindex(all_categories, fill_value=0)
+        
+        # Convert to proportions
+        epsilon = 1e-6
+        baseline_props = (baseline_counts + epsilon) / (len(baseline_data) + len(all_categories) * epsilon)
+        current_props = (current_counts + epsilon) / (len(current_data) + len(all_categories) * epsilon)
+        
+        # Calculate PSI
+        psi_values = (current_props - baseline_props) * np.log(current_props / baseline_props)
+        psi_score = float(np.sum(psi_values))
+        psi_drift = psi_score > self.config['psi_threshold']
         result.test_results['psi'] = {
             'score': psi_score,
             'has_drift': psi_drift
@@ -714,31 +735,14 @@ class ConceptDriftDetector:
         
         # Compare prediction distributions
         if self.model_type == 'classification':
-            # For classification, compare prediction probabilities if available
-            if hasattr(self.baseline_model, 'predict_proba'):
-                baseline_probs = self.baseline_model.predict_proba(
-                    self.baseline_model.feature_importances_.reshape(1, -1)
-                )[0] if len(self.baseline_model.feature_importances_) > 0 else np.array([0.5, 0.5])
-                current_probs = np.mean(self.baseline_model.predict_proba(features), axis=0)
-                
-                # Use JS divergence for probability distributions
-                js_div, has_drift = self.analyzer.jensen_shannon_divergence(
-                    baseline_probs, current_probs,
-                    n_bins=len(baseline_probs),
-                    threshold=self.config['prediction_drift_threshold']
-                )
-                
-                result.metrics['prediction_drift_score'] = js_div
-                result.has_concept_drift = has_drift
-            else:
-                # Use chi-square test for discrete predictions
-                chi2_stat, chi2_p, has_drift = self.analyzer.chi_square_test(
-                    self.baseline_predictions, current_predictions,
-                    self.config['statistical_significance']
-                )
-                
-                result.metrics['prediction_drift_score'] = chi2_stat / 100  # Normalized
-                result.has_concept_drift = has_drift
+            # Use chi-square test for discrete predictions
+            chi2_stat, chi2_p, has_drift = self.analyzer.chi_square_test(
+                self.baseline_predictions, current_predictions,
+                self.config['statistical_significance']
+            )
+            
+            result.metrics['prediction_drift_score'] = chi2_stat / 100  # Normalized
+            result.has_concept_drift = has_drift
         
         else:
             # For regression, use KS test on predictions
@@ -902,6 +906,13 @@ class DriftDetector:
                 else:
                     feature_types[col] = 'categorical'
         
+        # Add target column to feature types if available
+        if self.target_column and self.target_column in self.reference_data.columns:
+            if pd.api.types.is_numeric_dtype(self.reference_data[self.target_column]):
+                feature_types[self.target_column] = 'numerical'
+            else:
+                feature_types[self.target_column] = 'categorical'
+        
         self.feature_monitor = FeatureDriftMonitor(
             feature_types=feature_types,
             config=self.config
@@ -965,8 +976,12 @@ class DriftDetector:
                 f"Insufficient sample size: {len(current_data)} < {self.config['min_sample_size']}"
             )
         
-        # Detect feature drift
-        feature_drifts = self.feature_monitor.detect_all_features_drift(current_data)
+        # Detect feature drift (excluding target column)
+        feature_drifts = []
+        for feature_name in self.feature_columns:
+            if feature_name in current_data.columns:
+                result = self.feature_monitor.detect_feature_drift(feature_name, current_data[feature_name])
+                feature_drifts.append(result)
         
         # Detect target drift if available
         target_drift = None
