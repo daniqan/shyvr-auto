@@ -1,0 +1,171 @@
+# Shyvr RLTE Production Configuration
+# Strict production settings with required environment variables and no defaults
+
+app:
+  name: "shyvr-rlte"
+  version: "0.1.0"
+  environment: "production"
+  log_level: "${LOG_LEVEL:INFO}"
+  debug: false
+  host: "${HOST:0.0.0.0}"
+  port: ${PORT:8080}
+  
+database:
+  host: "${DB_HOST}"  # Required - no default
+  port: ${DB_PORT:5432}
+  database: "${DB_NAME:shyvr_rlte}"
+  username: "${DB_USER:rlte_user}"
+  password: "${DB_PASSWORD}"  # Required - no default
+  pool_size: ${DB_POOL_SIZE:20}  # Higher for production
+  max_overflow: ${DB_MAX_OVERFLOW:30}  # Higher for production
+  echo: false  # Never log SQL in production
+  
+security:
+  secret_key: "${SECRET_KEY}"  # Required - no default
+  jwt_algorithm: "${JWT_ALGORITHM:HS256}"
+  jwt_expiry_hours: ${JWT_EXPIRY_HOURS:12}  # Shorter for production
+  api_key_length: ${API_KEY_LENGTH:32}
+  rate_limit_storage: "${RATE_LIMIT_STORAGE:redis}"  # Redis for production
+  
+telegram:
+  token: "${TELEGRAM_TOKEN}"  # Required - no default
+  webhook_secret: "${TELEGRAM_WEBHOOK_SECRET}"  # Required for production
+  admin_users: []  # Will be set via environment variable parsing
+  rate_limit: ${TELEGRAM_RATE_LIMIT:10}  # Lower for production safety
+  
+apis:
+  helius:
+    api_key: "${HELIUS_API_KEY}"  # Required - no default
+    base_url: "https://api.helius.xyz"
+    rate_limit: ${HELIUS_RATE_LIMIT:100}
+    timeout: ${HELIUS_TIMEOUT:30}
+    
+  etherscan:
+    api_key: "${ETHERSCAN_API_KEY}"  # Required - no default
+    base_url: "https://api.etherscan.io"
+    rate_limit: ${ETHERSCAN_RATE_LIMIT:5}
+    timeout: ${ETHERSCAN_TIMEOUT:30}
+    
+  basescan:
+    api_key: "${ETHERSCAN_API_KEY}"  # Consolidated with Etherscan
+    base_url: "https://api.basescan.org"
+    rate_limit: ${BASESCAN_RATE_LIMIT:5}
+    timeout: ${BASESCAN_TIMEOUT:30}
+    
+  birdeye:
+    api_key: "${BIRDEYE_API_KEY}"  # Required - no default
+    base_url: "https://public-api.birdeye.so"
+    rate_limit: ${BIRDEYE_RATE_LIMIT:60}
+    timeout: ${BIRDEYE_TIMEOUT:30}
+    
+agent:
+  model_type: "${AGENT_MODEL_TYPE:openai}"
+  model_name: "${AGENT_MODEL_NAME:gpt-4o-mini}"
+  api_key: "${OPENAI_API_KEY}"  # Required if using OpenAI
+  max_tokens: ${AGENT_MAX_TOKENS:1000}
+  temperature: ${AGENT_TEMPERATURE:0.1}
+  max_active_rules: ${AGENT_MAX_RULES:10}
+  rule_expiry_hours: ${AGENT_RULE_EXPIRY:24}
+  
+trading:
+  modes:
+    analysis: true
+    simulation: true
+    live: ${LIVE_TRADING_ENABLED:false}  # Explicitly control live trading
+  risk_management:
+    max_position_size_pct: ${MAX_POSITION_SIZE:2.0}  # Conservative for production
+    max_daily_loss_pct: ${MAX_DAILY_LOSS:3.0}  # Conservative for production
+    max_drawdown_pct: ${MAX_DRAWDOWN:10.0}  # Conservative for production
+    stop_loss_pct: ${STOP_LOSS:5.0}  # Tight stops for production
+    take_profit_pct: ${TAKE_PROFIT:15.0}  # Conservative targets
+    max_open_positions: ${MAX_POSITIONS:3}  # Limited for production
+    min_trade_amount_usd: ${MIN_TRADE_AMOUNT:50.0}  # Higher minimum for production
+    
+ml:
+  batch_size: ${ML_BATCH_SIZE:64}  # Larger for production
+  learning_rate: ${ML_LEARNING_RATE:0.0001}  # Conservative
+  epochs: ${ML_EPOCHS:200}  # More training for production
+  validation_split: ${ML_VALIDATION_SPLIT:0.2}
+  early_stopping_patience: ${ML_EARLY_STOPPING:15}  # More patience for production
+  
+rl:
+  algorithm: "${RL_ALGORITHM:DQN}"
+  training_episodes: ${RL_TRAINING_EPISODES:20000}  # More training for production
+  epsilon_start: ${RL_EPSILON_START:0.5}  # Less exploration in production
+  epsilon_end: ${RL_EPSILON_END:0.01}
+  epsilon_decay: ${RL_EPSILON_DECAY:0.9995}  # Slower decay for production
+  learning_rate: ${RL_LEARNING_RATE:0.00005}  # Conservative
+  gamma: ${RL_GAMMA:0.99}
+  batch_size: ${RL_BATCH_SIZE:128}  # Larger batches for production
+  memory_size: ${RL_MEMORY_SIZE:100000}  # Larger memory for production
+  target_update_freq: ${RL_TARGET_UPDATE:2000}  # Less frequent updates
+  
+  experience_storage:
+    enabled: true
+    storage_backend: "database"
+    max_experiences: ${RL_MAX_EXPERIENCES:100000}
+    batch_size: ${RL_EXP_BATCH_SIZE:128}
+    prioritized_replay: true
+    
+    performance:
+      cache_size: ${RL_CACHE_SIZE:2000}  # Larger cache for production
+      async_operations: true
+      compression: ${RL_COMPRESSION:true}  # Enable compression for production
+      query_timeout_seconds: ${RL_QUERY_TIMEOUT:45}  # Longer timeout
+      batch_commit_size: ${RL_BATCH_COMMIT:200}  # Larger batches
+      
+    database:
+      pool_size: ${RL_DB_POOL_SIZE:10}  # Dedicated pool
+      max_overflow: ${RL_DB_OVERFLOW:15}
+      timeout_seconds: ${RL_DB_TIMEOUT:45}
+      enable_query_logging: false  # Disabled in production
+      connection_retry_attempts: ${RL_DB_RETRIES:5}  # More retries
+      
+    lifecycle:
+      cleanup_enabled: true
+      max_age_days: ${RL_MAX_AGE_DAYS:60}  # Longer retention for production
+      cleanup_interval_hours: ${RL_CLEANUP_INTERVAL:12}  # More frequent cleanup
+      archive_old_experiences: ${RL_ARCHIVE:true}  # Enable archiving in production
+      min_experiences_to_keep: ${RL_MIN_EXPERIENCES:5000}  # Keep more data
+      
+model_preservation:
+  enabled: ${MODEL_PRESERVATION_ENABLED:false}  # Disabled by default, enable when GCS is configured
+  gcs_bucket: "${GCS_BUCKET:}"  # Optional - provide when enabling model preservation
+  backup_interval_hours: ${BACKUP_INTERVAL:4}  # More frequent backups
+  max_versions_per_model: ${MAX_MODEL_VERSIONS:20}  # More versions for production
+  enable_compression: ${MODEL_COMPRESSION:true}
+  mode_isolation: ${MODE_ISOLATION:true}
+
+# Production monitoring and alerting
+monitoring:
+  enabled: true
+  metrics_port: ${METRICS_PORT:9090}
+  health_check_port: ${HEALTH_CHECK_PORT:8081}
+  log_level: "${MONITORING_LOG_LEVEL:INFO}"
+  
+  alerts:
+    enabled: true
+    webhook_url: "${ALERT_WEBHOOK_URL}"  # Required for production
+    critical_threshold: ${CRITICAL_THRESHOLD:0.95}
+    warning_threshold: ${WARNING_THRESHOLD:0.8}
+    
+  grafana:
+    enabled: ${GRAFANA_ENABLED:true}
+    port: ${GRAFANA_PORT:3000}
+    admin_password: "${GRAFANA_ADMIN_PASSWORD}"  # Required - no default
+    
+  prometheus:
+    enabled: ${PROMETHEUS_ENABLED:true}
+    port: ${PROMETHEUS_PORT:9090}
+    retention_days: ${PROMETHEUS_RETENTION:30}
+
+# Production-specific feature flags
+features:
+  live_trading: ${LIVE_TRADING_ENABLED:false}  # Explicitly disabled by default
+  paper_trading: ${PAPER_TRADING_ENABLED:true}
+  ml_predictions: ${ML_PREDICTIONS_ENABLED:true}
+  rl_decisions: ${RL_DECISIONS_ENABLED:true}
+  risk_management: ${RISK_MANAGEMENT_ENABLED:true}  # Always enabled in production
+  position_monitoring: ${POSITION_MONITORING_ENABLED:true}
+  automated_stops: ${AUTOMATED_STOPS_ENABLED:true}
+  emergency_shutdown: ${EMERGENCY_SHUTDOWN_ENABLED:true}
