@@ -14,6 +14,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from .base import ConfigurationError
+from .security.config_encryption import ConfigEncryption
 
 logger = logging.getLogger(__name__)
 
@@ -392,6 +393,11 @@ class ConfigManager:
         elif isinstance(obj, list):
             return [self._substitute_env_vars(item) for item in obj]
         elif isinstance(obj, str):
+            # Check for encrypted values and decrypt them
+            if obj.startswith('encrypted:'):
+                if not hasattr(self, '_encryptor'):
+                    self._encryptor = ConfigEncryption()
+                return self._encryptor.decrypt_value(obj)
             return self._expand_env_vars(obj)
         else:
             return obj
@@ -643,6 +649,39 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Production readiness validation failed: {e}")
             raise ConfigurationError(f"Production readiness validation failed: {e}")
+    
+    def add_runtime_validator(self, key: str, validator: Any) -> None:
+        """Add runtime validation hook for configuration key"""
+        raise NotImplementedError("Runtime validation hooks not implemented yet")
+    
+    def enable_change_detection(self) -> None:
+        """Enable configuration change detection"""
+        raise NotImplementedError("Configuration change detection not implemented yet")
+    
+    def detect_sensitive_values(self) -> list[str]:
+        """Detect sensitive values in configuration"""
+        config = self.load()
+        config_dict = self._config_to_dict(config)
+        
+        if not hasattr(self, '_encryptor'):
+            self._encryptor = ConfigEncryption()
+        
+        sensitive_keys = self._encryptor.get_sensitive_keys_in_config(config_dict)
+        
+        if sensitive_keys:
+            logger.warning(f"Found {len(sensitive_keys)} sensitive configuration keys: {sensitive_keys}")
+        else:
+            logger.info("No sensitive configuration keys detected")
+        
+        return sensitive_keys
+    
+    def _config_to_dict(self, config: 'RLTEConfig') -> dict:
+        """Convert RLTEConfig to dictionary for processing"""
+        return config.model_dump()
+    
+    def enable_audit_logging(self) -> None:
+        """Enable configuration audit logging"""
+        raise NotImplementedError("Configuration audit logging not implemented yet")
     
     def validate(self) -> bool:
         """Validate configuration"""
