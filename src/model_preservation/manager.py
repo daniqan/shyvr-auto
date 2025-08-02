@@ -35,6 +35,7 @@ from .caching import (
 )
 from .monitoring import PreservationMetricsCollector, StructuredLogger
 from .ab_testing import ABTestManager
+from .model_registry import ModelRegistry
 
 
 @dataclass
@@ -120,6 +121,9 @@ class PreservationManager:
         
         # Initialize A/B testing manager
         self.ab_test_manager = ABTestManager()
+        
+        # Initialize model registry
+        self.model_registry = ModelRegistry()
         
         # Internal state
         self._shutdown_event = asyncio.Event()
@@ -1834,3 +1838,238 @@ class PreservationManager:
             reason=reason,
             preserve_data=preserve_data
         )
+    
+    # =============================================================================
+    # MODEL REGISTRY METHODS
+    # =============================================================================
+    
+    def register_model(
+        self,
+        model_name: str,
+        model_type: str,
+        version: str,
+        author: str,
+        description: str,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Register a model in the registry
+        
+        Args:
+            model_name: Name of the model
+            model_type: Type of model
+            version: Model version
+            author: Model author
+            description: Model description
+            tags: Optional tags
+            metadata: Optional metadata
+            
+        Returns:
+            Registration ID
+        """
+        return self.model_registry.register_model(
+            model_name=model_name,
+            model_type=model_type,
+            version=version,
+            author=author,
+            description=description,
+            tags=tags,
+            metadata=metadata
+        )
+    
+    def search_models(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for models in the registry
+        
+        Args:
+            query: Search query
+            filters: Optional filters
+            sort_by: Field to sort by
+            sort_order: Sort order ("asc" or "desc")
+            limit: Maximum number of results
+            
+        Returns:
+            List of matching models
+        """
+        return self.model_registry.search_models(
+            query=query,
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit
+        )
+    
+    def get_model_by_name(
+        self,
+        model_name: str,
+        version: str = "latest"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get model by name and version from registry
+        
+        Args:
+            model_name: Name of the model
+            version: Version (or "latest")
+            
+        Returns:
+            Model information or None if not found
+        """
+        return self.model_registry.get_model_by_name(model_name, version)
+    
+    def list_model_versions(
+        self,
+        model_name: str,
+        include_deprecated: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        List all versions of a model from registry
+        
+        Args:
+            model_name: Name of the model
+            include_deprecated: Whether to include deprecated versions
+            
+        Returns:
+            List of model versions
+        """
+        return self.model_registry.list_model_versions(model_name, include_deprecated)
+    
+    def update_model_metadata(
+        self,
+        model_name: str,
+        version: str,
+        metadata_updates: Dict[str, Any]
+    ) -> bool:
+        """
+        Update model metadata in registry
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            metadata_updates: Metadata updates
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        return self.model_registry.update_model_metadata(
+            model_name=model_name,
+            version=version,
+            metadata_updates=metadata_updates
+        )
+    
+    def deprecate_model(
+        self,
+        model_name: str,
+        version: str,
+        reason: str,
+        replacement_version: Optional[str] = None
+    ) -> bool:
+        """
+        Deprecate a model version in registry
+        
+        Args:
+            model_name: Name of the model
+            version: Version to deprecate
+            reason: Deprecation reason
+            replacement_version: Optional replacement version
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        return self.model_registry.deprecate_model(
+            model_name=model_name,
+            version=version,
+            reason=reason,
+            replacement_version=replacement_version
+        )
+    
+    def get_model_lineage(
+        self,
+        model_name: str,
+        version: str
+    ) -> Dict[str, Any]:
+        """
+        Get model lineage information from registry
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            
+        Returns:
+            Lineage information
+        """
+        return self.model_registry.get_model_lineage(model_name, version)
+    
+    def register_model_dependencies(
+        self,
+        model_name: str,
+        version: str,
+        dependencies: Dict[str, Any]
+    ) -> bool:
+        """
+        Register model dependencies
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            dependencies: Dependency information
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        return self.model_registry.update_model_metadata(
+            model_name=model_name,
+            version=version,
+            metadata_updates={"dependencies": dependencies}
+        )
+    
+    def record_model_performance(
+        self,
+        model_name: str,
+        version: str,
+        environment: str,
+        metrics: Dict[str, float],
+        timestamp: Optional[datetime] = None,
+        dataset_id: Optional[str] = None
+    ) -> bool:
+        """
+        Record model performance metrics
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            environment: Environment where metrics were recorded
+            metrics: Performance metrics
+            timestamp: Optional timestamp
+            dataset_id: Optional dataset identifier
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        performance_record = {
+            "metrics": metrics,
+            "environment": environment,
+            "timestamp": (timestamp or datetime.now()).isoformat(),
+            "dataset_id": dataset_id
+        }
+        
+        # Get existing performance records
+        existing_metadata = self.model_registry.get_model_by_name(model_name, version)
+        if existing_metadata:
+            performance_history = existing_metadata.get("metadata", {}).get("performance_history", [])
+            performance_history.append(performance_record)
+            
+            return self.model_registry.update_model_metadata(
+                model_name=model_name,
+                version=version,
+                metadata_updates={"performance_history": performance_history}
+            )
+        
+        return False
