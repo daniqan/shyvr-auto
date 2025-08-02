@@ -328,26 +328,221 @@ def normalize_version_string(version_string: str) -> str:
     return str(version)
 
 
-def parse_version_range(range_string: str) -> Dict[str, SemanticVersion]:
+def parse_version_range(range_string: str) -> Dict[str, Any]:
     """
-    Parse a version range string (future enhancement).
+    Parse a version range string.
     
     Examples:
         - ">=1.0.0" 
         - "~1.2.0" (patch-level changes)
         - "^1.2.0" (compatible within major version)
+        - "1.2.x" (wildcard patterns)
+        - ">=1.0.0 <2.0.0" (compound ranges)
         
     Args:
         range_string: Version range to parse
         
     Returns:
-        Dictionary describing the range constraints
+        Dictionary describing the range constraints with matching function
         
-    Note:
-        This is a placeholder for future range parsing functionality.
+    Raises:
+        VersionError: If range string is invalid
     """
-    # TODO: Implement version range parsing in future phases
-    raise NotImplementedError("Version range parsing will be implemented in Phase 2.2")
+    if not isinstance(range_string, str):
+        raise VersionError(f"Range string must be a string, got {type(range_string)}")
+    
+    range_string = range_string.strip()
+    if not range_string:
+        raise VersionError("Range string cannot be empty")
+    
+    # Handle compound ranges (AND operations)
+    if ' ' in range_string and '||' not in range_string:
+        return _parse_compound_range(range_string)
+    
+    # Handle OR ranges
+    if '||' in range_string:
+        return _parse_or_range(range_string)
+    
+    # Handle single ranges
+    return _parse_single_range(range_string)
+
+
+def _parse_single_range(range_string: str) -> Dict[str, Any]:
+    """Parse a single version range constraint."""
+    range_string = range_string.strip()
+    
+    # Patterns for different range types
+    operator_patterns = [
+        (r'^>=\s*(.+)$', '>='),
+        (r'^>\s*(.+)$', '>'),
+        (r'^<=\s*(.+)$', '<='),
+        (r'^<\s*(.+)$', '<'),
+        (r'^~\s*(.+)$', '~'),
+        (r'^\^\s*(.+)$', '^'),
+    ]
+    
+    # Check for operator patterns
+    for pattern, operator in operator_patterns:
+        match = re.match(pattern, range_string)
+        if match:
+            version_str = match.group(1).strip()
+            version = SemanticVersion(version_str)
+            
+            if operator == '~':
+                return _create_tilde_range(version)
+            elif operator == '^':
+                return _create_caret_range(version)
+            else:
+                return _create_comparison_range(operator, version)
+    
+    # Check for wildcard patterns
+    if 'x' in range_string.lower():
+        return _parse_wildcard_range(range_string)
+    
+    # Default to exact match
+    try:
+        version = SemanticVersion(range_string)
+        return _create_comparison_range('=', version)
+    except VersionError:
+        raise VersionError(f"Invalid version range: {range_string}")
+
+
+def _parse_compound_range(range_string: str) -> Dict[str, Any]:
+    """Parse compound ranges (AND operations)."""
+    parts = range_string.split()
+    ranges = []
+    
+    i = 0
+    while i < len(parts):
+        if i + 1 < len(parts) and parts[i] in ['>=', '>', '<=', '<', '=']:
+            # Operator followed by version
+            operator = parts[i]
+            version_str = parts[i + 1]
+            version = SemanticVersion(version_str)
+            ranges.append(_create_comparison_range(operator, version))
+            i += 2
+        else:
+            # Single range part
+            single_range = _parse_single_range(parts[i])
+            ranges.append(single_range)
+            i += 1
+    
+    def compound_matches(version: SemanticVersion) -> bool:
+        return all(r['matches'](version) for r in ranges)
+    
+    return {
+        'type': 'compound',
+        'ranges': ranges,
+        'matches': compound_matches
+    }
+
+
+def _parse_or_range(range_string: str) -> Dict[str, Any]:
+    """Parse OR ranges."""
+    parts = range_string.split('||')
+    ranges = [_parse_single_range(part.strip()) for part in parts]
+    
+    def or_matches(version: SemanticVersion) -> bool:
+        return any(r['matches'](version) for r in ranges)
+    
+    return {
+        'type': 'or',
+        'ranges': ranges,
+        'matches': or_matches
+    }
+
+
+def _parse_wildcard_range(range_string: str) -> Dict[str, Any]:
+    """Parse wildcard ranges like 1.2.x or 1.x."""
+    pattern = range_string.lower().replace('x', r'\d+')
+    parts = range_string.split('.')
+    
+    if len(parts) == 3 and parts[2].lower() == 'x':
+        # 1.2.x pattern
+        major = int(parts[0])
+        minor = int(parts[1])
+        min_version = SemanticVersion(f"{major}.{minor}.0")
+        max_version = SemanticVersion(f"{major}.{minor + 1}.0")
+    elif len(parts) == 2 and parts[1].lower() == 'x':
+        # 1.x pattern
+        major = int(parts[0])
+        min_version = SemanticVersion(f"{major}.0.0")
+        max_version = SemanticVersion(f"{major + 1}.0.0")
+    else:
+        raise VersionError(f"Invalid wildcard pattern: {range_string}")
+    
+    def wildcard_matches(version: SemanticVersion) -> bool:
+        return min_version <= version < max_version
+    
+    return {
+        'operator': 'wildcard',
+        'pattern': range_string,
+        'min_version': min_version,
+        'max_version': max_version,
+        'matches': wildcard_matches
+    }
+
+
+def _create_comparison_range(operator: str, version: SemanticVersion) -> Dict[str, Any]:
+    """Create a comparison range."""
+    def comparison_matches(test_version: SemanticVersion) -> bool:
+        if operator == '>=':
+            return test_version >= version
+        elif operator == '>':
+            return test_version > version
+        elif operator == '<=':
+            return test_version <= version
+        elif operator == '<':
+            return test_version < version
+        elif operator == '=':
+            return test_version == version
+        return False
+    
+    return {
+        'operator': operator,
+        'version': version,
+        'matches': comparison_matches
+    }
+
+
+def _create_tilde_range(version: SemanticVersion) -> Dict[str, Any]:
+    """Create a tilde range (~1.2.3 -> >=1.2.3 <1.3.0)."""
+    min_version = version
+    max_version = SemanticVersion(f"{version.major}.{version.minor + 1}.0")
+    
+    def tilde_matches(test_version: SemanticVersion) -> bool:
+        return min_version <= test_version < max_version
+    
+    return {
+        'operator': '~',
+        'version': version,
+        'min_version': min_version,
+        'max_version': max_version,
+        'matches': tilde_matches
+    }
+
+
+def _create_caret_range(version: SemanticVersion) -> Dict[str, Any]:
+    """Create a caret range (^1.2.3 -> >=1.2.3 <2.0.0)."""
+    min_version = version
+    
+    if version.major > 0:
+        max_version = SemanticVersion(f"{version.major + 1}.0.0")
+    elif version.minor > 0:
+        max_version = SemanticVersion(f"0.{version.minor + 1}.0")
+    else:
+        max_version = SemanticVersion(f"0.0.{version.patch + 1}")
+    
+    def caret_matches(test_version: SemanticVersion) -> bool:
+        return min_version <= test_version < max_version
+    
+    return {
+        'operator': '^',
+        'version': version,
+        'min_version': min_version,
+        'max_version': max_version,
+        'matches': caret_matches
+    }
 
 
 def find_latest_version(versions: list[Union[str, SemanticVersion]], 
@@ -444,3 +639,63 @@ def find_compatible_versions(target_version: Union[str, SemanticVersion],
             continue  # Skip invalid versions
     
     return sorted(compatible, reverse=True)
+
+
+def version_satisfies_range(version: Union[str, SemanticVersion], 
+                           range_string: str) -> bool:
+    """
+    Check if a version satisfies a version range.
+    
+    Args:
+        version: Version to check
+        range_string: Range specification to check against
+        
+    Returns:
+        True if version satisfies the range, False otherwise
+        
+    Raises:
+        VersionError: If version or range string is invalid
+    """
+    if isinstance(version, str):
+        version_obj = SemanticVersion(version)
+    else:
+        version_obj = version
+    
+    range_spec = parse_version_range(range_string)
+    return range_spec['matches'](version_obj)
+
+
+def find_versions_matching_range(versions: list[Union[str, SemanticVersion]],
+                                range_string: str) -> list[SemanticVersion]:
+    """
+    Find all versions that match a version range.
+    
+    Args:
+        versions: List of versions to filter
+        range_string: Range specification to match against
+        
+    Returns:
+        List of versions that match the range, sorted in descending order
+        
+    Raises:
+        VersionError: If range string is invalid
+    """
+    range_spec = parse_version_range(range_string)
+    matching_versions = []
+    
+    for version in versions:
+        try:
+            if isinstance(version, str):
+                version_obj = SemanticVersion(version)
+            elif isinstance(version, SemanticVersion):
+                version_obj = version
+            else:
+                continue  # Skip invalid version types
+            
+            if range_spec['matches'](version_obj):
+                matching_versions.append(version_obj)
+                
+        except VersionError:
+            continue  # Skip invalid versions
+    
+    return sorted(matching_versions, reverse=True)

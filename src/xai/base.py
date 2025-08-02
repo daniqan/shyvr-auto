@@ -243,10 +243,10 @@ class GradientBasedExplainer(BaseExplainer):
     
     def _validate_gradient_support(self) -> None:
         """
-        Validate that the model supports gradient computation.
+        Validate that the model supports gradient computation or can use numerical gradients.
         
         Raises:
-            ValueError: If model doesn't support gradients
+            ValueError: If model cannot be used for gradient-based explanations
         """
         # Check for PyTorch models
         if hasattr(self.model, 'parameters'):
@@ -256,9 +256,15 @@ class GradientBasedExplainer(BaseExplainer):
         if hasattr(self.model, 'trainable_weights'):
             return
             
-        # Could add more framework checks here
+        # Check for scikit-learn models (can use numerical gradients)
+        if hasattr(self.model, 'predict'):
+            return
+            
+        # Check if model is callable (can use numerical gradients)
+        if callable(self.model):
+            return
         
-        raise ValueError("Model must support gradient computation for gradient-based explanations")
+        raise ValueError("Model must be callable or have predict method for gradient-based explanations")
     
     def validate_input(
         self,
@@ -285,9 +291,10 @@ class GradientBasedExplainer(BaseExplainer):
         if not all(isinstance(name, str) for name in feature_names):
             return False, "All feature names must be strings"
         
-        # Check gradient support
-        if not (hasattr(model, 'parameters') or hasattr(model, 'trainable_weights')):
-            return False, "Model must support gradient computation"
+        # Check gradient support (including numerical gradients)
+        if not (hasattr(model, 'parameters') or hasattr(model, 'trainable_weights') or 
+                hasattr(model, 'predict') or callable(model)):
+            return False, "Model must be callable or have predict method for gradient-based explanations"
         
         return True, None
     
