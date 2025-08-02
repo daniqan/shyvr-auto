@@ -34,6 +34,7 @@ from .caching import (
     GCSCache
 )
 from .monitoring import PreservationMetricsCollector, StructuredLogger
+from .ab_testing import ABTestManager
 
 
 @dataclass
@@ -116,6 +117,9 @@ class PreservationManager:
             self.metrics_collector = PreservationMetricsCollector()
         if config.enable_structured_logging:
             self.logger = StructuredLogger(component="model_preservation")
+        
+        # Initialize A/B testing manager
+        self.ab_test_manager = ABTestManager()
         
         # Internal state
         self._shutdown_event = asyncio.Event()
@@ -1602,3 +1606,231 @@ class PreservationManager:
             return await self.db_handler.list_models(branch=branch)
         except Exception:
             return []
+    
+    # =============================================================================
+    # A/B TESTING METHODS
+    # =============================================================================
+    
+    def create_ab_test(
+        self,
+        test_name: str,
+        model_a_type: str,
+        model_a_version: str,
+        model_b_type: str,
+        model_b_version: str,
+        traffic_split: float = 0.5,
+        test_config: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Create a new A/B test for comparing model performance
+        
+        Args:
+            test_name: Unique name for the test
+            model_a_type: Type of model A (control)
+            model_a_version: Version of model A
+            model_b_type: Type of model B (treatment)
+            model_b_version: Version of model B
+            traffic_split: Fraction of traffic for model B (0-1)
+            test_config: Additional test configuration
+            metadata: Optional metadata
+            
+        Returns:
+            Test ID
+        """
+        return self.ab_test_manager.create_ab_test(
+            test_name=test_name,
+            model_a_type=model_a_type,
+            model_a_version=model_a_version,
+            model_b_type=model_b_type,
+            model_b_version=model_b_version,
+            traffic_split=traffic_split,
+            test_config=test_config,
+            metadata=metadata
+        )
+    
+    def route_ab_test_traffic(
+        self,
+        test_name: str,
+        user_id: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Route traffic for A/B test
+        
+        Args:
+            test_name: Name of the test
+            user_id: User identifier for consistent routing
+            context: Optional routing context
+            
+        Returns:
+            Variant name ("model_a" or "model_b")
+        """
+        return self.ab_test_manager.route_ab_test_traffic(
+            test_name=test_name,
+            user_id=user_id,
+            context=context
+        )
+    
+    def record_ab_test_metrics(
+        self,
+        test_name: str,
+        variant: str,
+        user_id: str,
+        metrics: Dict[str, float],
+        timestamp: Optional[datetime] = None
+    ):
+        """
+        Record metrics for A/B test
+        
+        Args:
+            test_name: Name of the test
+            variant: Variant name
+            user_id: User identifier
+            metrics: Dictionary of metric name -> value
+            timestamp: Optional timestamp (defaults to now)
+        """
+        self.ab_test_manager.record_ab_test_metrics(
+            test_name=test_name,
+            variant=variant,
+            user_id=user_id,
+            metrics=metrics,
+            timestamp=timestamp
+        )
+    
+    def analyze_ab_test(self, test_name: str, metric: str = "accuracy"):
+        """
+        Analyze A/B test results
+        
+        Args:
+            test_name: Name of the test
+            metric: Metric to analyze
+            
+        Returns:
+            Analysis results
+        """
+        return self.ab_test_manager.analyze_ab_test(test_name, metric)
+    
+    def determine_ab_test_winner(
+        self,
+        test_name: str,
+        confidence_level: float = 0.95,
+        metric: str = "accuracy"
+    ) -> Dict[str, Any]:
+        """
+        Determine the winner of an A/B test
+        
+        Args:
+            test_name: Name of the test
+            confidence_level: Required confidence level
+            metric: Metric to evaluate
+            
+        Returns:
+            Winner determination results
+        """
+        return self.ab_test_manager.determine_ab_test_winner(
+            test_name=test_name,
+            confidence_level=confidence_level,
+            metric=metric
+        )
+    
+    def check_ab_test_early_stopping(
+        self,
+        test_name: str,
+        min_effect_size: float = 0.05,
+        metric: str = "accuracy"
+    ) -> Dict[str, Any]:
+        """
+        Check if A/B test should be stopped early
+        
+        Args:
+            test_name: Name of the test
+            min_effect_size: Minimum meaningful effect size
+            metric: Metric to evaluate
+            
+        Returns:
+            Early stopping recommendation
+        """
+        return self.ab_test_manager.check_ab_test_early_stopping(
+            test_name=test_name,
+            min_effect_size=min_effect_size,
+            metric=metric
+        )
+    
+    def promote_ab_test_winner(
+        self,
+        test_name: str,
+        target_environment: str = "production",
+        rollout_percentage: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Promote winning A/B test model to target environment
+        
+        Args:
+            test_name: Name of the test
+            target_environment: Target environment for deployment
+            rollout_percentage: Percentage rollout for deployment
+            
+        Returns:
+            Promotion result
+        """
+        winner_info = self.ab_test_manager.determine_ab_test_winner(test_name)
+        
+        if winner_info["winner"] == "inconclusive":
+            raise ValueError("Cannot promote inconclusive A/B test results")
+        
+        # Get the winning model details
+        test_config = self.ab_test_manager.active_tests[test_name]
+        
+        if winner_info["winner"] == "model_a":
+            winning_model_type = test_config.model_a_type
+            winning_model_version = test_config.model_a_version
+        else:
+            winning_model_type = test_config.model_b_type
+            winning_model_version = test_config.model_b_version
+        
+        return {
+            "test_name": test_name,
+            "winning_variant": winner_info["winner"],
+            "winning_model": f"{winning_model_type}:{winning_model_version}",
+            "target_environment": target_environment,
+            "rollout_percentage": rollout_percentage,
+            "confidence": winner_info["confidence"],
+            "effect_size": winner_info["effect_size"],
+            "promotion_timestamp": datetime.now().isoformat()
+        }
+    
+    def list_active_ab_tests(self) -> List[Dict[str, Any]]:
+        """List all active A/B tests"""
+        return self.ab_test_manager.list_active_ab_tests()
+    
+    def pause_ab_test(self, test_name: str):
+        """Pause an A/B test"""
+        self.ab_test_manager.pause_ab_test(test_name)
+    
+    def resume_ab_test(self, test_name: str):
+        """Resume a paused A/B test"""
+        self.ab_test_manager.resume_ab_test(test_name)
+    
+    def terminate_ab_test(
+        self,
+        test_name: str,
+        reason: str,
+        preserve_data: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Terminate an A/B test
+        
+        Args:
+            test_name: Name of the test
+            reason: Reason for termination
+            preserve_data: Whether to preserve test data
+            
+        Returns:
+            Termination result
+        """
+        return self.ab_test_manager.terminate_ab_test(
+            test_name=test_name,
+            reason=reason,
+            preserve_data=preserve_data
+        )
