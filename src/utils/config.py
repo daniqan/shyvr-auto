@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from .base import ConfigurationError
 from .security.config_encryption import ConfigEncryption
+from .security.config_auditor import ConfigAuditor
 
 logger = logging.getLogger(__name__)
 
@@ -681,7 +682,16 @@ class ConfigManager:
     
     def enable_audit_logging(self) -> None:
         """Enable configuration audit logging"""
-        raise NotImplementedError("Configuration audit logging not implemented yet")
+        if not hasattr(self, '_auditor'):
+            self._auditor = ConfigAuditor()
+            logger.info("Configuration audit logging enabled")
+        else:
+            logger.info("Configuration audit logging already enabled")
+    
+    def log_config_access(self, key: str, value: Any = None, user: str = "system") -> None:
+        """Log configuration access if auditing is enabled"""
+        if hasattr(self, '_auditor'):
+            self._auditor.log_config_access(key, value, user)
     
     def validate(self) -> bool:
         """Validate configuration"""
