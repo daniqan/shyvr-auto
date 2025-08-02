@@ -833,7 +833,11 @@ class FinancialDataValidator:
         try:
             # Try normal validation first
             if isinstance(data, (PriceData, dict)):
-                return await self.validate_price_data(data)
+                result = await self.validate_price_data(data)
+                # If normal validation failed due to data structure, mark as fallback
+                if not result.is_valid and any("error" in w for w in result.warnings):
+                    result.used_fallback = True
+                return result
             else:
                 # Fallback for invalid data types
                 return ValidationResult(
