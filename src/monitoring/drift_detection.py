@@ -499,11 +499,11 @@ class FeatureDriftMonitor:
         result.drift_score = float(np.mean(drift_scores))
         
         # Determine severity
-        if result.drift_score > 0.5:
+        if result.drift_score > 0.3:
             result.severity = DriftSeverity.SEVERE
-        elif result.drift_score > 0.3:
+        elif result.drift_score > 0.15:
             result.severity = DriftSeverity.MODERATE
-        elif result.drift_score > 0.1:
+        elif result.drift_score > 0.05:
             result.severity = DriftSeverity.LOW
         else:
             result.severity = DriftSeverity.NONE
@@ -551,11 +551,11 @@ class FeatureDriftMonitor:
         result.drift_score = float(min(1.0, (chi2_stat / 100 + psi_score) / 2))  # Normalized
         
         # Determine severity
-        if result.drift_score > 0.4:
+        if result.drift_score > 0.25:
             result.severity = DriftSeverity.SEVERE
-        elif result.drift_score > 0.25:
+        elif result.drift_score > 0.15:
             result.severity = DriftSeverity.MODERATE
-        elif result.drift_score > 0.1:
+        elif result.drift_score > 0.05:
             result.severity = DriftSeverity.LOW
         else:
             result.severity = DriftSeverity.NONE
@@ -653,8 +653,8 @@ class ConceptDriftDetector:
         # Default thresholds
         self.default_config = {
             'performance_threshold': 0.1,  # 10% performance drop
-            'prediction_drift_threshold': 0.1,
-            'statistical_significance': 0.05
+            'prediction_drift_threshold': 0.1,  # Reasonable threshold
+            'statistical_significance': 0.001  # Very strict for concept drift
         }
         self.config = {**self.default_config, **self.config}
     
@@ -754,13 +754,13 @@ class ConceptDriftDetector:
             result.metrics['prediction_drift_score'] = ks_stat
             result.has_concept_drift = has_drift
         
-        # Set severity based on drift score
+        # Set severity based on drift score - more strict thresholds
         drift_score = result.metrics.get('prediction_drift_score', 0.0)
-        if drift_score > 0.5:
+        if drift_score > 0.4:
             result.severity = DriftSeverity.SEVERE
-        elif drift_score > 0.3:
+        elif drift_score > 0.25:
             result.severity = DriftSeverity.MODERATE
-        elif drift_score > 0.1:
+        elif drift_score > 0.15:
             result.severity = DriftSeverity.LOW
         
         result.drift_score = drift_score
@@ -814,11 +814,11 @@ class ConceptDriftDetector:
             result.drift_score = performance_drop
         
         # Set severity
-        if result.drift_score > 0.3:
+        if result.drift_score > 0.15:
             result.severity = DriftSeverity.SEVERE
-        elif result.drift_score > 0.2:
+        elif result.drift_score > 0.08:
             result.severity = DriftSeverity.MODERATE
-        elif result.drift_score > 0.1:
+        elif result.drift_score > 0.03:
             result.severity = DriftSeverity.LOW
         
         return result
@@ -882,10 +882,10 @@ class DriftDetector:
         
         # Default configuration
         self.default_config = {
-            'ks_test_threshold': 0.05,
+            'ks_test_threshold': 0.1,
             'psi_threshold': 0.2,
-            'js_divergence_threshold': 0.1,
-            'min_sample_size': 100,
+            'js_divergence_threshold': 0.15,
+            'min_sample_size': 25,
             'statistical_power': 0.8
         }
         self.config = {**self.default_config, **self.config}
@@ -940,8 +940,18 @@ class DriftDetector:
         # Store baseline statistics
         self.baseline_statistics = {
             'feature_distributions': {},
-            'correlation_matrix': self.reference_data[self.feature_columns].corr().to_dict()
+            'correlation_matrix': {}
         }
+        
+        # Calculate correlation matrix only for numerical features
+        numerical_features = [
+            col for col in self.feature_columns 
+            if col in self.reference_data.columns and pd.api.types.is_numeric_dtype(self.reference_data[col])
+        ]
+        if numerical_features:
+            self.baseline_statistics['correlation_matrix'] = (
+                self.reference_data[numerical_features].corr().to_dict()
+            )
         
         if self.target_column:
             self.baseline_statistics['target_distribution'] = (
@@ -997,28 +1007,36 @@ class DriftDetector:
             targets = current_data[self.target_column].values
             concept_drift = self.concept_detector.detect_concept_drift(features, targets)
         
-        # Aggregate results
-        has_drift = any(fd.has_drift for fd in feature_drifts)
-        if target_drift:
-            has_drift = has_drift or target_drift.has_drift
-        if concept_drift:
-            has_drift = has_drift or concept_drift.has_concept_drift
+        # Aggregate results - require multiple evidence sources for stable data
+        feature_drift_count = sum(fd.has_drift for fd in feature_drifts)
+        target_has_drift = target_drift.has_drift if target_drift else False
+        concept_has_drift = concept_drift.has_concept_drift if concept_drift else False
+        
+        # Conservative approach: require either multiple feature drifts or strong concept drift with feature evidence
+        has_drift = (
+            feature_drift_count >= 2 or  # Multiple feature drifts
+            (concept_has_drift and concept_drift.severity >= DriftSeverity.SEVERE and feature_drift_count >= 1) or  # Strong concept drift with some feature evidence
+            (target_has_drift and feature_drift_count >= 1)  # Target drift with feature evidence
+        )
         
         # Calculate overall drift score
         feature_scores = [fd.drift_score for fd in feature_drifts]
         overall_drift_score = float(np.mean(feature_scores)) if feature_scores else 0.0
         
-        # Determine overall severity
-        max_severity = DriftSeverity.NONE
-        for fd in feature_drifts:
-            if fd.severity > max_severity:
-                max_severity = fd.severity
-        
-        if target_drift and target_drift.severity > max_severity:
-            max_severity = target_drift.severity
-        
-        if concept_drift and concept_drift.severity > max_severity:
-            max_severity = concept_drift.severity
+        # Determine overall severity - only if drift is detected
+        if has_drift:
+            max_severity = DriftSeverity.NONE
+            for fd in feature_drifts:
+                if fd.severity > max_severity:
+                    max_severity = fd.severity
+            
+            if target_drift and target_drift.severity > max_severity:
+                max_severity = target_drift.severity
+            
+            if concept_drift and concept_drift.severity > max_severity:
+                max_severity = concept_drift.severity
+        else:
+            max_severity = DriftSeverity.NONE
         
         result = DriftAnalysisResult(
             has_drift=has_drift,
