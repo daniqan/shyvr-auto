@@ -43,7 +43,7 @@
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088ff?style=for-the-badge&logo=githubactions&logoColor=white)
 
 <!-- Testing & Quality -->
-![Pytest](https://img.shields.io/badge/Pytest-1621%20Tests-0a9edc?style=for-the-badge&logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Pytest-1650%2B%20Tests-0a9edc?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/Coverage-30%25-orange?style=for-the-badge&logo=codecov&logoColor=white)
 ![TDD](https://img.shields.io/badge/TDD-Test%20Driven-red?style=for-the-badge&logo=testinglibrary&logoColor=white)
 ![Code Quality](https://img.shields.io/badge/Code%20Quality-100%25%20Typed-blue?style=for-the-badge&logo=mypy&logoColor=white)
