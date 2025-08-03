@@ -38,7 +38,7 @@ def run_tests(args):
     # Add coverage if requested
     if args.coverage:
         pytest_cmd.extend([
-            "--cov=src.logging",
+            "--cov=src.enhanced_logging",
             "--cov=src.utils.database",
             "--cov-report=html",
             "--cov-report=term-missing"
