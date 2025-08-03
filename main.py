@@ -30,7 +30,7 @@ from src.model_preservation import initialize_preservation_system, shutdown_pres
 from src.model_preservation.integration import setup_preservation_hooks
 
 # Import enhanced logging system
-from src.logging.enhanced_logging import initialize_logging, LogLevel
+from src.enhanced_logging.enhanced_logging import initialize_logging, LogLevel
 
 # Configure enhanced structured logging for Phase 6.2
 initialize_logging(
@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
     logger.info("Dashboard service stopped")
     
     # Shutdown enhanced logging system
-    from src.logging.enhanced_logging import shutdown_logging
+    from src.enhanced_logging.enhanced_logging import shutdown_logging
     await shutdown_logging()
     logger.info("Enhanced logging system shut down")
 
