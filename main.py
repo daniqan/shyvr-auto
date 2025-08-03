@@ -29,23 +29,15 @@ from src.utils.config import get_config, init_config
 from src.model_preservation import initialize_preservation_system, shutdown_preservation_system
 from src.model_preservation.integration import setup_preservation_hooks
 
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
+# Import enhanced logging system
+from src.logging.enhanced_logging import initialize_logging, LogLevel
+
+# Configure enhanced structured logging for Phase 6.2
+initialize_logging(
+    log_level=LogLevel.INFO,
+    enable_file_logging=True,
+    enable_console_logging=True,
+    enable_aggregation=True
 )
 
 logger = structlog.get_logger()
@@ -161,6 +153,11 @@ async def lifespan(app: FastAPI):
     # Stop dashboard service
     await dashboard_service.stop()
     logger.info("Dashboard service stopped")
+    
+    # Shutdown enhanced logging system
+    from src.logging.enhanced_logging import shutdown_logging
+    await shutdown_logging()
+    logger.info("Enhanced logging system shut down")
 
 
 # FastAPI application
