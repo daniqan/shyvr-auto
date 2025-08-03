@@ -17,7 +17,7 @@ from typing import Dict, List, Any
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 # Import the log retention system
-from src.logging.log_retention import (
+from src.enhanced_logging.log_retention import (
     RetentionPeriod, ArchivalFormat, StorageTier, RetentionPolicy,
     ArchivalMetadata, LogRetentionManager, RetentionScheduler,
     setup_default_retention, archive_logs_by_pattern, get_compliance_report

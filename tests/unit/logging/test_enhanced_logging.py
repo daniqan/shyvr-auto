@@ -15,7 +15,7 @@ from typing import Dict, List, Any
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 # Import the enhanced logging system
-from src.logging.enhanced_logging import (
+from src.enhanced_logging.enhanced_logging import (
     LogLevel, LogCategory, LogContext, EnhancedLoggingFormatter,
     ComplianceProcessor, SecurityEventProcessor, LogAggregator,
     FileRotationHandler, EnhancedLoggingSystem, initialize_logging,
@@ -711,7 +711,7 @@ class TestLoggingIntegration:
                 logger.info(f"Performance test message {i}", iteration=i)
             
             # Force flush to ensure all messages are processed
-            from src.logging.enhanced_logging import _logging_system
+            from src.enhanced_logging.enhanced_logging import _logging_system
             if _logging_system.aggregator:
                 await _logging_system.force_flush()
             
