@@ -1,0 +1,121 @@
+# Test Configuration for Integration Tests
+# This configuration is specifically designed for comprehensive integration testing
+# and includes safe defaults that won't interfere with production systems
+
+app:
+  name: "shyvr-rlte-test"
+  version: "0.1.0"
+  environment: "test"
+  log_level: "INFO"
+  debug: true
+
+# Test database configuration - uses SQLite in-memory for isolation
+database:
+  host: "localhost"
+  port: 5432
+  database: "test_shyvr_rlte"
+  username: "test_user"
+  password: "${DATABASE_PASSWORD:test_password}"
+  pool_size: 5
+  max_overflow: 10
+  echo: false
+  url: "${DATABASE_URL:sqlite:///:memory:}"
+
+# Test telegram configuration
+telegram:
+  token: "${TELEGRAM_TOKEN:test_token_12345}"
+  webhook_secret: "${TELEGRAM_WEBHOOK_SECRET:test_webhook_secret}"
+  admin_users: []
+  rate_limit: 30
+
+# Security configuration for testing
+security:
+  secret_key: "${SECRET_KEY:test_secret_key_12345}"
+  jwt_algorithm: "${JWT_ALGORITHM:HS256}"
+  session_timeout: 3600
+  rate_limit_storage: "memory"
+
+# Agent configuration for testing
+agent:
+  model_type: "mock"
+  model_name: "test-model"
+  api_key: "${OPENAI_API_KEY:test_api_key}"
+  max_tokens: 100
+  temperature: 0.1
+  max_active_rules: 5
+  rule_expiry_hours: 1
+
+# Trading configuration for safe testing
+trading:
+  modes:
+    analysis: true
+    simulation: true
+    live: false  # Never enable live trading in tests
+  risk_management:
+    max_position_size_pct: 0.1  # Very small for testing
+    max_daily_loss_pct: 1.0     # Small losses only
+    max_drawdown_pct: 5.0       # Limited drawdown
+    stop_loss_pct: 2.0
+    take_profit_pct: 10.0
+    max_open_positions: 2
+    min_trade_amount_usd: 1.0
+
+# ML configuration for testing
+ml:
+  batch_size: 4      # Small batches for fast tests
+  learning_rate: 0.01
+  epochs: 2          # Few epochs for fast tests
+  validation_split: 0.2
+  early_stopping_patience: 1
+  model_save_path: "/tmp/test_models"
+
+# RL configuration for testing
+rl:
+  algorithm: "dqn"
+  learning_rate: 0.01
+  batch_size: 4
+  memory_size: 100   # Small memory for tests
+  exploration_rate: 0.1
+  exploration_decay: 0.99
+  target_update_freq: 5
+  save_freq: 10
+
+# Test API configurations
+apis:
+  birdeye:
+    base_url: "https://api.test.birdeye.so"
+    api_key: "${BIRDEYE_API_KEY:test_birdeye_key}"
+    rate_limit: 60
+    timeout: 10
+  jupiter:
+    base_url: "https://api.test.jup.ag"
+    rate_limit: 60
+    timeout: 10
+
+# Model preservation configuration for testing
+model_preservation:
+  storage_type: "memory"  # Use memory storage for tests
+  cache_size: 10
+  retention_days: 1
+  gcs_bucket: "test-bucket"
+  enable_encryption: false  # Disable for simpler testing
+
+# Monitoring configuration for testing
+monitoring:
+  metrics_interval: 1
+  log_level: "INFO"
+  alert_thresholds:
+    error_rate: 0.5
+    latency_ms: 5000
+  prometheus:
+    enabled: false  # Disable external services in tests
+  grafana:
+    enabled: false
+
+# Features configuration for testing
+features:
+  activity_logging: true
+  model_preservation: true
+  enhanced_monitoring: true
+  safety_controls: true
+  real_trading: false  # Never enable in tests
