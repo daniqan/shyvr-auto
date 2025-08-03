@@ -399,6 +399,9 @@ class TestAlertRoutingManager:
             timestamp=datetime.now() - timedelta(minutes=15)  # Old enough to escalate
         )
         
+        # Route the alert first so it gets tracked
+        await routing_manager.route_alert(old_alert)
+        
         # Mock escalation
         routing_manager._escalate_alert = AsyncMock()
         
@@ -616,22 +619,34 @@ class TestIntegrationWithExistingMonitoring:
     
     def test_integration_with_drift_detection(self):
         """Test integration with existing drift detection."""
-        from src.monitoring.drift_detection import DriftDetector
+        # Create mock drift detector
+        class MockDriftDetector:
+            def detect_drift(self, data):
+                return {"drift_score": 0.5, "drift_detected": True}
         
         # Should integrate with drift detection for anomaly context
-        drift_detector = DriftDetector()
+        drift_detector = MockDriftDetector()
         intelligent_alerting = IntelligentAlertingSystem()
         
-        # Integration point for drift-based anomalies
-        assert hasattr(intelligent_alerting, 'integrate_drift_detection')
+        # Test integration
+        result = intelligent_alerting.integrate_drift_detection(drift_detector)
+        assert result is True
+        assert hasattr(intelligent_alerting, '_drift_detector')
     
-    def test_integration_with_safety_systems(self):
+    @pytest.mark.asyncio
+    async def test_integration_with_safety_systems(self):
         """Test integration with safety systems."""
-        from src.safety.emergency_stop_controller import EmergencyStopController
+        # Create mock safety controller
+        class MockSafetyController:
+            async def emergency_stop(self, reason=None, alert_id=None):
+                return {"status": "stopped", "reason": reason, "alert_id": alert_id}
         
         # Should integrate with safety systems for emergency alerts
-        emergency_controller = EmergencyStopController()
+        emergency_controller = MockSafetyController()
         intelligent_alerting = IntelligentAlertingSystem()
         
-        # Integration point for emergency escalation
-        assert hasattr(intelligent_alerting, 'integrate_safety_systems')
+        # Test integration
+        result = intelligent_alerting.integrate_safety_systems(emergency_controller)
+        assert result is True
+        assert hasattr(intelligent_alerting, '_safety_controller')
+        assert hasattr(intelligent_alerting, '_emergency_alert_handler')

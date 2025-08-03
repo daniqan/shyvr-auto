@@ -437,20 +437,37 @@ class AlertCorrelationEngine:
     
     def _calculate_alert_similarity(self, alert1: Alert, alert2: Alert) -> float:
         """Calculate similarity between two alerts."""
-        # Simple similarity based on source and message content
+        # Enhanced similarity based on source, message content, and severity
         similarity = 0.0
         
-        # Source similarity
+        # Source similarity (higher weight for same source)
         if alert1.source == alert2.source:
-            similarity += 0.3
+            similarity += 0.4
         
-        # Message similarity (simple word overlap)
+        # Message similarity (enhanced with stemming-like approach)
         words1 = set(alert1.message.lower().split())
         words2 = set(alert2.message.lower().split())
         
         if words1 and words2:
-            word_overlap = len(words1.intersection(words2)) / len(words1.union(words2))
-            similarity += 0.5 * word_overlap
+            # Calculate Jaccard similarity
+            intersection = len(words1.intersection(words2))
+            union = len(words1.union(words2))
+            jaccard_similarity = intersection / union if union > 0 else 0
+            
+            # Enhanced word similarity with partial matching
+            similar_words = 0
+            for word1 in words1:
+                for word2 in words2:
+                    # Check exact match or partial match for similar words
+                    if word1 == word2 or (len(word1) > 3 and len(word2) > 3 and 
+                          (word1 in word2 or word2 in word1)):
+                        similar_words += 1
+                        break
+            
+            # Use the higher of Jaccard or enhanced similarity
+            enhanced_similarity = similar_words / max(len(words1), len(words2)) if max(len(words1), len(words2)) > 0 else 0
+            word_similarity = max(jaccard_similarity, enhanced_similarity)
+            similarity += 0.4 * word_similarity
         
         # Severity similarity
         if alert1.severity == alert2.severity:
@@ -478,12 +495,17 @@ class AlertRoutingManager:
         self.notification_channels = config.get('notification_channels', [])
         self.routing_rules = []
         self.notification_service = None  # Will be injected
+        self.active_alerts: List[Alert] = []  # Track active alerts for escalation
         
         logger.info("AlertRoutingManager initialized", config=config)
     
     async def route_alert(self, alert: Alert):
         """Route alert to appropriate channels."""
         try:
+            # Track active alerts for escalation
+            if not alert.resolved:
+                self.active_alerts.append(alert)
+            
             # Select notification channels based on severity
             channels = self._select_notification_channels(alert)
             
@@ -498,9 +520,44 @@ class AlertRoutingManager:
     
     async def check_escalations(self):
         """Check for alerts that need escalation."""
-        # This would typically check a database of active alerts
-        # Simplified implementation for testing
-        pass
+        try:
+            escalation_count = 0
+            current_time = datetime.now()
+            
+            # Check each active alert for escalation
+            for alert in self.active_alerts[:]:  # Use slice to avoid modification during iteration
+                if alert.resolved:
+                    # Remove resolved alerts
+                    self.active_alerts.remove(alert)
+                    continue
+                
+                # Calculate alert age
+                alert_age = current_time - alert.timestamp
+                
+                # Check if alert needs escalation based on severity and time
+                severity_key = alert.severity.value
+                if severity_key in self.escalation_thresholds:
+                    threshold = self.escalation_thresholds[severity_key]
+                    
+                    # Handle both timedelta and dict-style thresholds
+                    if isinstance(threshold, timedelta):
+                        escalation_threshold = threshold
+                    elif isinstance(threshold, dict) and 'time_minutes' in threshold:
+                        escalation_threshold = timedelta(minutes=threshold['time_minutes'])
+                    else:
+                        continue
+                    
+                    # Escalate if alert is old enough
+                    if alert_age > escalation_threshold:
+                        await self._escalate_alert(alert)
+                        escalation_count += 1
+            
+            logger.debug("Escalation check completed", escalation_count=escalation_count)
+            return escalation_count
+            
+        except Exception as e:
+            logger.error("Failed to check escalations", error=str(e))
+            return 0
     
     async def _escalate_alert(self, alert: Alert):
         """Escalate an alert to higher severity."""
@@ -718,10 +775,38 @@ class IntelligentAlertingSystem:
     
     def integrate_drift_detection(self, drift_detector):
         """Integration point with drift detection system."""
-        # This would integrate with the existing drift detection from Phase 5
-        logger.info("Drift detection integration configured")
+        if hasattr(drift_detector, 'detect_drift'):
+            # Create integration hook for drift detection alerts
+            self._drift_detector = drift_detector
+            logger.info("Drift detection integration configured successfully", 
+                       detector_type=type(drift_detector).__name__)
+            return True
+        else:
+            logger.warning("Invalid drift detector - missing detect_drift method")
+            return False
     
     def integrate_safety_systems(self, safety_controller):
         """Integration point with safety systems."""
-        # This would integrate with emergency stop controller from Phase 4
-        logger.info("Safety systems integration configured")
+        if hasattr(safety_controller, 'emergency_stop'):
+            # Create integration hook for emergency alerts
+            self._safety_controller = safety_controller
+            
+            # Set up automatic emergency stop for critical alerts
+            async def emergency_alert_handler(alert: Alert):
+                if alert.severity == AlertSeverity.EMERGENCY:
+                    try:
+                        await safety_controller.emergency_stop(
+                            reason=f"Alert escalation: {alert.message}",
+                            alert_id=alert.id
+                        )
+                        logger.critical("Emergency stop triggered by alert", alert_id=alert.id)
+                    except Exception as e:
+                        logger.error("Failed to trigger emergency stop", error=str(e))
+            
+            self._emergency_alert_handler = emergency_alert_handler
+            logger.info("Safety systems integration configured successfully",
+                       controller_type=type(safety_controller).__name__)
+            return True
+        else:
+            logger.warning("Invalid safety controller - missing emergency_stop method")
+            return False

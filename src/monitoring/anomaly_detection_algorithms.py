@@ -644,8 +644,9 @@ class SystemMetricsAnomalyDetector:
         if len(memory_data) >= 10:
             # Check for consistent upward trend
             recent_data = memory_data.tail(10)
-            if recent_data.iloc[-1] > recent_data.iloc[0] * 1.2:  # 20% increase
-                trend_strength = (recent_data.iloc[-1] - recent_data.iloc[0]) / recent_data.iloc[0]
+            if len(recent_data) > 0 and recent_data.iloc[-1] > recent_data.iloc[0] * 1.2:  # 20% increase
+                initial_value = recent_data.iloc[0] if recent_data.iloc[0] > 0 else 1.0  # Avoid division by zero
+                trend_strength = (recent_data.iloc[-1] - recent_data.iloc[0]) / initial_value
                 
                 anomaly = AnomalyResult(
                     confidence=min(trend_strength, 1.0),
@@ -777,25 +778,25 @@ class SystemMetricsAnomalyDetector:
         scores = []
         
         # CPU health score
-        if 'cpu_usage' in data.columns:
+        if 'cpu_usage' in data.columns and self.cpu_threshold > 0:
             avg_cpu = data['cpu_usage'].mean()
             cpu_score = max(0, 1 - (avg_cpu / self.cpu_threshold))
             scores.append(cpu_score)
         
         # Memory health score
-        if 'memory_usage' in data.columns:
+        if 'memory_usage' in data.columns and self.memory_threshold > 0:
             avg_memory = data['memory_usage'].mean()
             memory_score = max(0, 1 - (avg_memory / self.memory_threshold))
             scores.append(memory_score)
         
         # Response time health score
-        if 'response_time_ms' in data.columns:
+        if 'response_time_ms' in data.columns and self.response_time_threshold > 0:
             avg_response = data['response_time_ms'].mean()
             response_score = max(0, 1 - (avg_response / self.response_time_threshold))
             scores.append(response_score)
         
         # Error rate health score
-        if 'error_rate' in data.columns:
+        if 'error_rate' in data.columns and self.error_rate_threshold > 0:
             avg_error_rate = data['error_rate'].mean()
             error_score = max(0, 1 - (avg_error_rate / self.error_rate_threshold))
             scores.append(error_score)
