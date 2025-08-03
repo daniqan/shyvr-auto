@@ -328,36 +328,94 @@ steps:
     if [[ "$BRANCH_NAME" == "develop" ]]; then
       echo "🚀 Deploying to staging environment..."
       
-      # Deploy to staging Cloud Run service
+      # Get current revision for rollback capability
+      CURRENT_REVISION=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "")
+      
+      # Deploy to staging Cloud Run service with enhanced configuration
       gcloud run deploy shyvr-rlte-staging \
         --image=us-central1-docker.pkg.dev/$PROJECT_ID/shyvr-ai-prod/shyvr-rlte:$SHORT_SHA \
         --region=us-central1 \
         --platform=managed \
         --port=8080 \
-        --memory=2Gi \
-        --cpu=1 \
+        --memory=4Gi \
+        --cpu=2 \
         --concurrency=25 \
-        --timeout=600 \
-        --max-instances=3 \
+        --timeout=900 \
+        --max-instances=5 \
         --min-instances=0 \
         --allow-unauthenticated \
-        --set-env-vars="ENVIRONMENT=staging,LOG_LEVEL=INFO,TRADING_MODE=simulation" \
+        --cpu-boost \
+        --execution-environment=gen2 \
+        --set-env-vars="ENVIRONMENT=staging,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA" \
         --add-cloudsql-instances="$PROJECT_ID:us-central1:shyvr-rlte-db" \
-        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest" \
+        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,JWT_SECRET=JWT_SECRET:latest" \
+        --no-traffic \
+        --tag="staging-$SHORT_SHA" \
         --quiet
       
-      # Wait for deployment to be ready
-      sleep 30
+      # Get new revision
+      NEW_REVISION=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.latestCreatedRevisionName)")
       
-      # Test staging deployment
-      STAGING_URL=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.url)")
-      echo "Testing staging deployment at $STAGING_URL"
+      # Gradual traffic migration for staging
+      echo "🚦 Starting blue-green deployment to staging..."
       
-      if curl -f -s "$STAGING_URL/health" > /dev/null; then
-        echo "✅ Staging deployment successful and healthy!"
+      if [[ -n "$CURRENT_REVISION" ]]; then
+        # Start with 50% traffic to new revision
+        gcloud run services update-traffic shyvr-rlte-staging \
+          --region=us-central1 \
+          --to-revisions="$NEW_REVISION=50,$CURRENT_REVISION=50" \
+          --quiet
+        
+        echo "⏳ Testing new revision with 50% traffic..."
+        sleep 60
+        
+        # Get staging URL and test
+        STAGING_URL=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.url)")
+        
+        # Comprehensive health checks
+        HEALTH_CHECK_PASSED=true
+        for i in {1..5}; do
+          if ! curl -f -s -m 30 "$STAGING_URL/health" > /dev/null; then
+            echo "❌ Health check $i failed"
+            HEALTH_CHECK_PASSED=false
+            break
+          fi
+          sleep 10
+        done
+        
+        if [[ "$HEALTH_CHECK_PASSED" == "true" ]]; then
+          # Migrate 100% traffic to new revision
+          gcloud run services update-traffic shyvr-rlte-staging \
+            --region=us-central1 \
+            --to-revisions="$NEW_REVISION=100" \
+            --quiet
+          echo "✅ Staging blue-green deployment successful!"
+        else
+          # Rollback to previous revision
+          echo "🔄 Rolling back staging deployment due to health check failures..."
+          gcloud run services update-traffic shyvr-rlte-staging \
+            --region=us-central1 \
+            --to-revisions="$CURRENT_REVISION=100" \
+            --quiet
+          exit 1
+        fi
       else
-        echo "❌ Staging deployment health check failed"
-        exit 1
+        # First deployment - direct 100% traffic
+        gcloud run services update-traffic shyvr-rlte-staging \
+          --region=us-central1 \
+          --to-revisions="$NEW_REVISION=100" \
+          --quiet
+        
+        # Test first deployment
+        sleep 30
+        STAGING_URL=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.url)")
+        
+        if curl -f -s -m 30 "$STAGING_URL/health" > /dev/null; then
+          echo "✅ Initial staging deployment successful and healthy!"
+        else
+          echo "❌ Initial staging deployment health check failed"
+          exit 1
+        fi
       fi
     else
       echo "Skipping staging deployment - not on develop branch"
@@ -373,44 +431,151 @@ steps:
     if [[ "$BRANCH_NAME" == "main" ]]; then
       echo "🚀 Deploying to production environment..."
       
-      # Production deployment with full configuration
+      # Get current production revision for rollback capability
+      CURRENT_REVISION=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "")
+      
+      # Production deployment with full configuration and blue-green strategy
       gcloud run deploy shyvr-rlte \
         --image=us-central1-docker.pkg.dev/$PROJECT_ID/shyvr-ai-prod/shyvr-rlte:$SHORT_SHA \
         --region=us-central1 \
         --platform=managed \
         --port=8080 \
-        --memory=4Gi \
-        --cpu=2 \
+        --memory=6Gi \
+        --cpu=4 \
         --concurrency=50 \
-        --timeout=900 \
-        --max-instances=5 \
-        --min-instances=0 \
+        --timeout=1800 \
+        --max-instances=10 \
+        --min-instances=1 \
         --allow-unauthenticated \
-        --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,TRADING_MODE=simulation" \
+        --cpu-boost \
+        --execution-environment=gen2 \
+        --session-affinity \
+        --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true" \
         --add-cloudsql-instances="$PROJECT_ID:us-central1:shyvr-rlte-db" \
-        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,COINGECKO_API_KEY=COINGECKO_API_KEY:latest,LUNARCRUSH_API_KEY=LUNARCRUSH_API_KEY:latest" \
+        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,COINGECKO_API_KEY=COINGECKO_API_KEY:latest,LUNARCRUSH_API_KEY=LUNARCRUSH_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,JWT_SECRET=JWT_SECRET:latest" \
+        --no-traffic \
+        --tag="production-$SHORT_SHA" \
         --quiet
       
-      # Wait for deployment to be ready
-      sleep 30
+      # Get new revision
+      NEW_REVISION=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.latestCreatedRevisionName)")
       
-      # Test production deployment
-      PROD_URL=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.url)")
-      echo "Testing production deployment at $PROD_URL"
+      # Production blue-green deployment with safety checks
+      echo "🚦 Starting production blue-green deployment..."
+      echo "⚠️  Production deployment requires additional safety measures"
       
-      if curl -f -s "$PROD_URL/health" > /dev/null; then
-        echo "✅ Production deployment successful and healthy!"
+      if [[ -n "$CURRENT_REVISION" ]]; then
+        # Start with 10% traffic to new revision (more conservative for production)
+        gcloud run services update-traffic shyvr-rlte \
+          --region=us-central1 \
+          --to-revisions="$NEW_REVISION=10,$CURRENT_REVISION=90" \
+          --quiet
         
-        # Update Telegram webhook for production
-        if [[ -n "$TELEGRAM_TOKEN" ]]; then
-          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook" \
-            -d "url=$PROD_URL/webhook" \
-            -d "drop_pending_updates=true"
-          echo "📱 Telegram webhook updated"
+        echo "⏳ Testing new revision with 10% traffic for 2 minutes..."
+        sleep 120
+        
+        # Get production URL and test
+        PROD_URL=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.url)")
+        
+        # Comprehensive production health checks
+        HEALTH_CHECK_PASSED=true
+        ERROR_COUNT=0
+        
+        for i in {1..10}; do
+          if ! curl -f -s -m 30 "$PROD_URL/health" > /dev/null; then
+            echo "❌ Health check $i failed"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+            if [[ $ERROR_COUNT -ge 3 ]]; then
+              HEALTH_CHECK_PASSED=false
+              break
+            fi
+          else
+            echo "✅ Health check $i passed"
+          fi
+          sleep 15
+        done
+        
+        if [[ "$HEALTH_CHECK_PASSED" == "true" ]]; then
+          # Increase to 50% traffic
+          echo "📈 Increasing traffic to 50%..."
+          gcloud run services update-traffic shyvr-rlte \
+            --region=us-central1 \
+            --to-revisions="$NEW_REVISION=50,$CURRENT_REVISION=50" \
+            --quiet
+          
+          sleep 120
+          
+          # Final health check before full migration
+          if curl -f -s -m 30 "$PROD_URL/health" > /dev/null; then
+            # Migrate 100% traffic to new revision
+            gcloud run services update-traffic shyvr-rlte \
+              --region=us-central1 \
+              --to-revisions="$NEW_REVISION=100" \
+              --quiet
+            echo "✅ Production blue-green deployment successful!"
+            
+            # Update Telegram webhook for production
+            if [[ -n "$TELEGRAM_TOKEN" ]]; then
+              curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook" \
+                -d "url=$PROD_URL/webhook" \
+                -d "drop_pending_updates=true"
+              echo "📱 Telegram webhook updated to new production deployment"
+            fi
+          else
+            echo "🔄 Final health check failed - rolling back production deployment..."
+            gcloud run services update-traffic shyvr-rlte \
+              --region=us-central1 \
+              --to-revisions="$CURRENT_REVISION=100" \
+              --quiet
+            exit 1
+          fi
+        else
+          # Rollback to previous revision
+          echo "🔄 Rolling back production deployment due to health check failures..."
+          gcloud run services update-traffic shyvr-rlte \
+            --region=us-central1 \
+            --to-revisions="$CURRENT_REVISION=100" \
+            --quiet
+          exit 1
         fi
       else
-        echo "❌ Production deployment health check failed"
-        exit 1
+        # First production deployment - direct 100% traffic with extensive validation
+        echo "🚨 FIRST PRODUCTION DEPLOYMENT - Extra validation required"
+        gcloud run services update-traffic shyvr-rlte \
+          --region=us-central1 \
+          --to-revisions="$NEW_REVISION=100" \
+          --quiet
+        
+        # Extended validation for first deployment
+        sleep 60
+        PROD_URL=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.url)")
+        
+        # Extended health check sequence
+        VALIDATION_PASSED=true
+        for i in {1..5}; do
+          if ! curl -f -s -m 30 "$PROD_URL/health" > /dev/null; then
+            echo "❌ Initial production health check $i failed"
+            VALIDATION_PASSED=false
+          else
+            echo "✅ Initial production health check $i passed"
+          fi
+          sleep 30
+        done
+        
+        if [[ "$VALIDATION_PASSED" == "true" ]]; then
+          echo "✅ Initial production deployment successful and validated!"
+          
+          # Update Telegram webhook for production
+          if [[ -n "$TELEGRAM_TOKEN" ]]; then
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook" \
+              -d "url=$PROD_URL/webhook" \
+              -d "drop_pending_updates=true"
+            echo "📱 Telegram webhook configured for first production deployment"
+          fi
+        else
+          echo "❌ Initial production deployment validation failed"
+          exit 1
+        fi
       fi
     else
       echo "Skipping production deployment - not on main branch"
