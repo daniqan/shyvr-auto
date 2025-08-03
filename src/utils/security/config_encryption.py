@@ -43,7 +43,12 @@ class ConfigEncryption:
             salt=salt,
             iterations=100000,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(master_key.encode()))
+        # Handle both string and bytes input
+        if isinstance(master_key, str):
+            key_bytes = master_key.encode()
+        else:
+            key_bytes = master_key
+        key = base64.urlsafe_b64encode(kdf.derive(key_bytes))
         return Fernet(key)
     
     def encrypt_value(self, value: str) -> str:
