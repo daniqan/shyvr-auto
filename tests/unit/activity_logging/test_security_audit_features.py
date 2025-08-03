@@ -143,8 +143,8 @@ class TestDataIntegrityAndAudit:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()

@@ -71,8 +71,8 @@ def mock_config():
 @pytest.fixture
 async def activity_logger_instance(mock_database_pool, mock_config):
     """Activity logger instance with mocked dependencies"""
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()

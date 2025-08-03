@@ -89,8 +89,8 @@ async def test_activity_logger_basic():
     mock_config.database.pool_size = 5
     
     # Test logger initialization
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()
@@ -191,8 +191,8 @@ async def test_convenience_functions():
     mock_config.database.password = "test_password"
     mock_config.database.pool_size = 5
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         from src.activity_logging.activity_logger import activity_logger
         await activity_logger.start()
@@ -271,8 +271,8 @@ async def test_performance_tracker():
     mock_config.database.password = "test_password"
     mock_config.database.pool_size = 5
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         from src.activity_logging.activity_logger import activity_logger
         await activity_logger.start()

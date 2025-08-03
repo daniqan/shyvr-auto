@@ -197,7 +197,7 @@ class TestSafetyMetricsCollector:
         registry = MetricsRegistry()
         collector = SafetyMetricsCollector(registry)
         
-        with patch('src.logging.activity_logger.ActivityLogger') as mock_logger:
+        with patch('src.activity_logging.activity_logger.ActivityLogger') as mock_logger:
             mock_activity_logger = Mock()
             mock_logger.return_value = mock_activity_logger
             

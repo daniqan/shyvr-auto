@@ -47,8 +47,8 @@ async def test_flush_buffer():
     mock_config.database.password = "test_password"
     mock_config.database.pool_size = 5
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()

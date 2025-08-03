@@ -184,8 +184,8 @@ class TestActivityLoggerInitialization:
         """Test ActivityLogger initialization"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             
@@ -202,8 +202,8 @@ class TestActivityLoggerInitialization:
         """Test ActivityLogger start functionality"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -221,8 +221,8 @@ class TestActivityLoggerInitialization:
         """Test ActivityLogger stop functionality"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -240,8 +240,8 @@ class TestActivityLoggerCoreLogging:
         """Test basic activity logging"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -273,8 +273,8 @@ class TestActivityLoggerCoreLogging:
         """Test activity logging with full context"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -313,8 +313,8 @@ class TestActivityLoggerCoreLogging:
         """Test error logging with exception handling"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -347,8 +347,8 @@ class TestActivityLoggerCoreLogging:
         """Test performance logging"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -376,8 +376,8 @@ class TestActivityLoggerCoreLogging:
         """Test user action logging"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -408,8 +408,8 @@ class TestActivityLoggerCoreLogging:
         """Test API call logging"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -446,8 +446,8 @@ class TestGlobalConvenienceFunctions:
         """Test log_system_event convenience function"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             await activity_logger.start()
             
@@ -479,8 +479,8 @@ class TestGlobalConvenienceFunctions:
         """Test log_trade_execution convenience function"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             await activity_logger.start()
             
@@ -514,8 +514,8 @@ class TestPerformanceTracker:
         """Test performance tracker for successful operation"""
         mock_pool, mock_conn, mock_config = create_mock_setup()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             await activity_logger.start()
             

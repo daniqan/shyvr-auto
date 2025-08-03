@@ -89,8 +89,8 @@ class TestBatchProcessingPerformance:
         """Test concurrent batch processing performance"""
         max_flush_time = performance_benchmarks['batch_processing']['max_flush_time_ms']
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -205,8 +205,8 @@ class TestBatchProcessingPerformance:
     @pytest.mark.asyncio
     async def test_batch_processing_under_load(self, mock_database_pool, mock_config):
         """Test batch processing performance under system load"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -535,8 +535,8 @@ class TestInsertPerformanceRequirements:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -576,8 +576,8 @@ class TestInsertPerformanceRequirements:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -620,8 +620,8 @@ class TestInsertPerformanceRequirements:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()

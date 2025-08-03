@@ -23,8 +23,8 @@ class TestDatabaseCRUDOperations:
     @pytest.mark.asyncio
     async def test_insert_single_activity(self, mock_database_pool, mock_config):
         """Test inserting a single activity log entry"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -55,8 +55,8 @@ class TestDatabaseCRUDOperations:
     @pytest.mark.asyncio
     async def test_insert_batch_activities(self, mock_database_pool, mock_config):
         """Test inserting multiple activity log entries in batch"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -82,8 +82,8 @@ class TestDatabaseCRUDOperations:
     @pytest.mark.asyncio
     async def test_insert_with_all_fields(self, mock_database_pool, mock_config):
         """Test inserting activity with all possible fields populated"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()

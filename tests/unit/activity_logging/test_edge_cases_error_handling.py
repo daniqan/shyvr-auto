@@ -26,7 +26,7 @@ class TestDatabaseFailureHandling:
     async def test_database_connection_failure(self, mock_config):
         """Test handling when database connection fails"""
         # Mock database pool that fails to connect
-        with patch('src.logging.activity_logger.get_config', return_value=mock_config), \
+        with patch('src.activity_logging.activity_logger.get_config', return_value=mock_config), \
              patch('asyncpg.create_pool', side_effect=asyncpg.ConnectionDoesNotExistError("Connection failed")):
             
             logger = ActivityLogger()
@@ -38,7 +38,7 @@ class TestDatabaseFailureHandling:
     @pytest.mark.asyncio
     async def test_database_pool_not_initialized(self, mock_config):
         """Test operations when database pool is not initialized"""
-        with patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             logger = ActivityLogger()
             # Don't start the logger (no pool initialization)
             
@@ -75,8 +75,8 @@ class TestDatabaseFailureHandling:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -116,8 +116,8 @@ class TestDatabaseFailureHandling:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -160,8 +160,8 @@ class TestDatabaseFailureHandling:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -195,8 +195,8 @@ class TestDatabaseFailureHandling:
         mock_pool = AsyncMock()
         mock_pool.acquire.side_effect = asyncpg.TooManyConnectionsError("Pool exhausted")
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -420,8 +420,8 @@ class TestConcurrencyEdgeCases:
         mock_database_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_database_pool.acquire.return_value.__aexit__ = AsyncMock()
         
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -481,8 +481,8 @@ class TestConcurrencyEdgeCases:
     @pytest.mark.asyncio
     async def test_rapid_start_stop_cycles(self, mock_database_pool, mock_config):
         """Test rapid start/stop cycles"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             

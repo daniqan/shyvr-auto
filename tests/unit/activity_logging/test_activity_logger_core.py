@@ -128,8 +128,8 @@ class TestActivityLoggerInitialization:
     @pytest.mark.asyncio
     async def test_activity_logger_initialization(self, mock_database_pool, mock_config):
         """Test ActivityLogger initialization"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             
@@ -144,8 +144,8 @@ class TestActivityLoggerInitialization:
     @pytest.mark.asyncio
     async def test_activity_logger_start(self, mock_database_pool, mock_config):
         """Test ActivityLogger start functionality"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -161,8 +161,8 @@ class TestActivityLoggerInitialization:
     @pytest.mark.asyncio
     async def test_activity_logger_stop(self, mock_database_pool, mock_config):
         """Test ActivityLogger stop functionality"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -174,8 +174,8 @@ class TestActivityLoggerInitialization:
     @pytest.mark.asyncio
     async def test_activity_logger_double_start(self, mock_database_pool, mock_config):
         """Test that double start doesn't cause issues"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -187,8 +187,8 @@ class TestActivityLoggerInitialization:
     @pytest.mark.asyncio
     async def test_activity_logger_stop_without_start(self, mock_database_pool, mock_config):
         """Test that stop without start doesn't cause issues"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.stop()  # Should not raise exception
@@ -587,8 +587,8 @@ class TestActivityLoggerDatabaseOperations:
     @pytest.mark.asyncio
     async def test_insert_activities_success(self, mock_database_pool, mock_config):
         """Test successful database insertion"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()
@@ -623,7 +623,7 @@ class TestActivityLoggerDatabaseOperations:
     @pytest.mark.asyncio
     async def test_insert_activities_no_pool(self, mock_config):
         """Test insert when pool is not initialized"""
-        with patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             logger = ActivityLogger()
             # Don't start logger (no pool)
             
@@ -642,8 +642,8 @@ class TestActivityLoggerDatabaseOperations:
     @pytest.mark.asyncio
     async def test_insert_activities_field_mapping(self, mock_database_pool, mock_config):
         """Test that all fields are properly mapped for database insertion"""
-        with patch('src.logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
-             patch('src.logging.activity_logger.get_config', return_value=mock_config):
+        with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_database_pool), \
+             patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
             
             logger = ActivityLogger()
             await logger.start()

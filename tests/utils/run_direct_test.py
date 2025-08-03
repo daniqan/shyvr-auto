@@ -178,8 +178,8 @@ async def test_activity_logger_initialization():
     
     mock_pool, mock_conn, mock_config = create_mock_setup()
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         
@@ -200,8 +200,8 @@ async def test_activity_logger_start():
     
     mock_pool, mock_conn, mock_config = create_mock_setup()
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()
@@ -223,8 +223,8 @@ async def test_log_activity_basic():
     
     mock_pool, mock_conn, mock_config = create_mock_setup()
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()
@@ -260,8 +260,8 @@ async def test_critical_activity_immediate_flush():
     
     mock_pool, mock_conn, mock_config = create_mock_setup()
     
-    with patch('src.logging.activity_logger.get_database_pool', return_value=mock_pool), \
-         patch('src.logging.activity_logger.get_config', return_value=mock_config):
+    with patch('src.activity_logging.activity_logger.get_database_pool', return_value=mock_pool), \
+         patch('src.activity_logging.activity_logger.get_config', return_value=mock_config):
         
         logger = ActivityLogger()
         await logger.start()
