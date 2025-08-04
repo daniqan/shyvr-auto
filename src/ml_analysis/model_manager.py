@@ -22,6 +22,7 @@ from .transformers import TransformerPredictor
 from .transformers.itransformer import iTransformerPredictor
 from .transformers.patchtst import PatchTSTPredictor
 from .transformers.timesmixer import TimesMixerPredictor
+from .transformers.timesfm_wrapper import TimesFMWrapper
 from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
@@ -95,27 +96,38 @@ class ModelManager:
             # Initialize LSTM model with reduced weight for Transformer ensemble
             lstm_config = self.config.get('lstm', {})
             self._models[ModelType.LSTM] = LSTMPricePredictor(lstm_config)
-            self._model_weights[ModelType.LSTM] = 0.25  # Reduced for 4-model ensemble
+            self._model_weights[ModelType.LSTM] = 0.2  # Reduced for 6-model ensemble
             
             # Initialize basic Transformer model
             transformer_config = self.config.get('transformer', {})
             self._models[ModelType.TRANSFORMER] = TransformerPredictor(transformer_config)
-            self._model_weights[ModelType.TRANSFORMER] = 0.2  # Base Transformer weight
+            self._model_weights[ModelType.TRANSFORMER] = 0.15  # Base Transformer weight
             
             # Initialize iTransformer model (inverted attention for multivariate)
             itransformer_config = self.config.get('itransformer', transformer_config)
             self._models[ModelType.ITRANSFORMER] = iTransformerPredictor(itransformer_config)
-            self._model_weights[ModelType.ITRANSFORMER] = 0.25  # Higher weight for multivariate focus
+            self._model_weights[ModelType.ITRANSFORMER] = 0.2  # Higher weight for multivariate focus
             
             # Initialize PatchTST model (patch-based for long sequences)
             patchtst_config = self.config.get('patchtst', transformer_config)
             self._models[ModelType.PATCHTST] = PatchTSTPredictor(patchtst_config)
-            self._model_weights[ModelType.PATCHTST] = 0.2  # Good for long-horizon predictions
+            self._model_weights[ModelType.PATCHTST] = 0.15  # Good for long-horizon predictions
             
             # Initialize TimesMixer model (decomposition-based mixing)
             timesmixer_config = self.config.get('timesmixer', transformer_config)
             self._models[ModelType.TIMESMIXER] = TimesMixerPredictor(timesmixer_config)
             self._model_weights[ModelType.TIMESMIXER] = 0.1  # Experimental model, lower initial weight
+            
+            # Initialize TimesFM model (Google's foundation model for zero-shot predictions)
+            timesfm_config = self.config.get('timesfm', {
+                'model_name': 'google/timesfm-1.0-200m',
+                'prediction_length': 24,
+                'context_length': 512,
+                'use_zero_shot': True,
+                'gcp_optimized': True
+            })
+            self._models[ModelType.TIMESFM] = TimesFMWrapper(timesfm_config)
+            self._model_weights[ModelType.TIMESFM] = 0.2  # Higher weight due to foundation model capabilities
             
             # Ensure weights sum to 1.0
             total_weight = sum(self._model_weights.values())
