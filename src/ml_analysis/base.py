@@ -26,6 +26,7 @@ class ModelType(Enum):
     ITRANSFORMER = "itransformer"  # Inverted Transformer for multivariate time-series
     PATCHTST = "patchtst"          # Patch-based Transformer for time-series
     TIMESMIXER = "timesmixer"      # Times-Mixer with decomposable mixing
+    TIMESFM = "timesfm"            # Google TimesFM foundation model for time-series
     LINEAR_REGRESSION = "linear_regression"
     RANDOM_FOREST = "random_forest"
     ENSEMBLE = "ensemble"
