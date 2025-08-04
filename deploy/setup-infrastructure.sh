@@ -29,15 +29,9 @@ INFRASTRUCTURE_STAGES=(
     "setup_monitoring"
 )
 
-# Track stage status
-declare -A STAGE_STATUS
-declare -A STAGE_RESULTS
-
-# Initialize all stages as pending
-for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
-    STAGE_STATUS["$stage"]="pending"
-    STAGE_RESULTS["$stage"]=""
-done
+# Track stage status (using separate arrays for compatibility)
+STAGE_STATUS=()
+STAGE_RESULTS=()
 
 # Show usage information
 show_usage() {
@@ -210,14 +204,32 @@ initialize_infrastructure_setup() {
     util_log_success "Infrastructure setup initialized"
 }
 
+# Get stage index
+get_stage_index() {
+    local stage="$1"
+    local index=0
+    for s in "${INFRASTRUCTURE_STAGES[@]}"; do
+        if [[ "$s" == "$stage" ]]; then
+            echo $index
+            return
+        fi
+        ((index++))
+    done
+    echo -1
+}
+
 # Update stage status
 update_stage_status() {
     local stage="$1"
     local status="$2"
     local result="${3:-}"
     
-    STAGE_STATUS["$stage"]="$status"
-    STAGE_RESULTS["$stage"]="$result"
+    local index
+    index=$(get_stage_index "$stage")
+    if [[ $index -ge 0 ]]; then
+        STAGE_STATUS[$index]="$status"
+        STAGE_RESULTS[$index]="$result"
+    fi
     
     case "$status" in
         "in_progress") util_log_info "📋 Starting: $stage" ;;
@@ -228,12 +240,38 @@ update_stage_status() {
     esac
 }
 
+# Get stage status
+get_stage_status() {
+    local stage="$1"
+    local index
+    index=$(get_stage_index "$stage")
+    if [[ $index -ge 0 && $index -lt ${#STAGE_STATUS[@]} ]]; then
+        echo "${STAGE_STATUS[$index]}"
+    else
+        echo "pending"
+    fi
+}
+
+# Get stage result
+get_stage_result() {
+    local stage="$1"
+    local index
+    index=$(get_stage_index "$stage")
+    if [[ $index -ge 0 && $index -lt ${#STAGE_RESULTS[@]} ]]; then
+        echo "${STAGE_RESULTS[$index]}"
+    else
+        echo ""
+    fi
+}
+
 # Show infrastructure progress
 show_infrastructure_progress() {
     util_log_header "📊 Infrastructure Setup Progress"
     for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
-        local status="${STAGE_STATUS[$stage]}"
-        local result="${STAGE_RESULTS[$stage]}"
+        local status
+        local result
+        status=$(get_stage_status "$stage")
+        result=$(get_stage_result "$stage")
         
         case "$status" in
             "completed") echo -e "  ✅ $stage $([ -n "$result" ] && echo "($result)")" ;;
@@ -570,7 +608,8 @@ generate_infrastructure_summary() {
     local skipped_stages=0
     
     for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
-        local status="${STAGE_STATUS[$stage]}"
+        local status
+        status=$(get_stage_status "$stage")
         case "$status" in
             completed) ((completed_stages++)) ;;
             failed) ((failed_stages++)) ;;
@@ -596,8 +635,10 @@ generate_infrastructure_summary() {
     
     echo "Stage Details:"
     for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
-        local status="${STAGE_STATUS[$stage]}"
-        local result="${STAGE_RESULTS[$stage]}"
+        local status
+        local result
+        status=$(get_stage_status "$stage")
+        result=$(get_stage_result "$stage")
         
         case "$status" in
             completed) echo "  ✅ $stage: $result" ;;
@@ -679,6 +720,12 @@ main() {
     parse_arguments "$@"
     initialize_infrastructure_setup
     
+    # Initialize stage tracking arrays
+    for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
+        STAGE_STATUS+=("pending")
+        STAGE_RESULTS+=("")
+    done
+    
     # Setup cleanup handler
     trap cleanup_infrastructure_setup EXIT
     
@@ -690,7 +737,9 @@ main() {
             # Check if validation passed
             local validation_failed=false
             for stage in "${INFRASTRUCTURE_STAGES[@]}"; do
-                if [[ "${STAGE_STATUS[$stage]}" == "failed" ]]; then
+                local status
+                status=$(get_stage_status "$stage")
+                if [[ "$status" == "failed" ]]; then
                     validation_failed=true
                     break
                 fi
