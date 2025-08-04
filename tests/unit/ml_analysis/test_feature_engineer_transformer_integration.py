@@ -38,7 +38,8 @@ class TestFeatureEngineerTransformerIntegration:
             price_usd=100.0,
             market_cap=1000000,
             volume_24h=100000,
-            discovered_at=datetime.now()
+            discovered_at=datetime.now(),
+            discovery_source="test"
         )
     
     @pytest.fixture

@@ -61,7 +61,8 @@ class TestModelManagerTransformerIntegration:
             price_usd=1.0,
             market_cap=1000000,
             volume_24h=100000,
-            discovered_at=datetime.now()
+            discovered_at=datetime.now(),
+            discovery_source="test"
         )
     
     def test_transformer_models_initialization(self, mock_config):
