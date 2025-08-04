@@ -872,3 +872,436 @@ class TestQuantizationIntegration:
         assert "latency_targets_met" in validation_result
         assert "memory_budget_respected" in validation_result
         assert "accuracy_thresholds_maintained" in validation_result
+
+class TestTransformerQuantization:
+    """Test suite for Transformer-specific quantization capabilities (Phase 2.1)"""
+    
+    def test_transformer_quantization_compatibility_analysis(self):
+        """Test analysis of Transformer models for quantization compatibility"""
+        from src.ml_analysis.model_quantization import TransformerQuantizer
+        from src.ml_analysis.transformers.base import TransformerBase, TransformerConfig
+        
+        quantizer = TransformerQuantizer()
+        
+        # Create mock transformer config
+        transformer_config = TransformerConfig(
+            d_model=512,
+            n_heads=8,
+            n_layers=6,
+            d_ff=2048,
+            max_seq_length=1000
+        )
+        
+        # Create mock transformer model
+        mock_transformer = Mock(spec=TransformerBase)
+        mock_transformer.transformer_config = transformer_config
+        mock_transformer.named_modules = Mock(return_value=[
+            ("encoder.layers.0.self_attn", Mock(__class__=torch.nn.MultiheadAttention)),
+            ("encoder.layers.0.linear1", Mock(__class__=torch.nn.Linear)),
+            ("encoder.layers.0.linear2", Mock(__class__=torch.nn.Linear)),
+            ("encoder.layers.1.self_attn", Mock(__class__=torch.nn.MultiheadAttention)),
+            ("decoder.output_projection", Mock(__class__=torch.nn.Linear))
+        ])
+        
+        # Test transformer-specific analysis
+        compatibility_analysis = quantizer.analyze_transformer_quantization_compatibility(
+            transformer_model=mock_transformer,
+            preserve_attention_precision=True,
+            target_accuracy_retention=0.95
+        )
+        
+        assert "attention_layer_analysis" in compatibility_analysis
+        assert "feed_forward_layer_analysis" in compatibility_analysis
+        assert "output_projection_analysis" in compatibility_analysis
+        assert "sequence_length_impact" in compatibility_analysis
+        assert "attention_precision_requirements" in compatibility_analysis
+        assert "expected_speedup_transformer" in compatibility_analysis
+        assert "memory_reduction_transformer" in compatibility_analysis
+        
+        # Verify attention layers are marked as sensitive
+        attention_analysis = compatibility_analysis["attention_layer_analysis"]
+        assert len(attention_analysis) > 0
+        for layer_info in attention_analysis:
+            assert "precision_sensitive" in layer_info
+            assert "quantization_strategy" in layer_info
+    
+    def test_transformer_specific_quantization_strategies(self):
+        """Test development of Transformer-specific quantization strategies"""
+        from src.ml_analysis.model_quantization import TransformerQuantizationStrategy
+        
+        strategy_builder = TransformerQuantizationStrategy()
+        
+        # Mock transformer architecture analysis
+        transformer_architecture = {
+            "attention_layers": ["layer.0.attention", "layer.1.attention", "layer.2.attention"],
+            "feed_forward_layers": ["layer.0.feed_forward", "layer.1.feed_forward"],
+            "output_layers": ["output_projection"],
+            "embedding_layers": ["input_embeddings", "positional_embeddings"]
+        }
+        
+        # Test strategy creation for different transformer variants
+        for model_type in ["iTransformer", "PatchTST", "TimesMixer", "TransformerPredictor"]:
+            quantization_strategy = strategy_builder.create_transformer_strategy(
+                model_type=model_type,
+                architecture_info=transformer_architecture,
+                target_speedup=2.5,
+                max_accuracy_loss=0.05,
+                preserve_attention_patterns=True
+            )
+            
+            assert "attention_quantization_plan" in quantization_strategy
+            assert "feed_forward_quantization_plan" in quantization_strategy
+            assert "embedding_quantization_plan" in quantization_strategy
+            assert "precision_allocation" in quantization_strategy
+            assert "expected_performance_gain" in quantization_strategy
+            
+            # Verify attention layers get special treatment
+            attention_plan = quantization_strategy["attention_quantization_plan"]
+            assert "preserve_key_query_precision" in attention_plan
+            assert "value_projection_quantization" in attention_plan
+            assert "attention_output_quantization" in attention_plan
+    
+    def test_attention_layer_quantization_handling(self):
+        """Test specialized handling of attention layers during quantization"""
+        from src.ml_analysis.model_quantization import AttentionLayerQuantizer
+        
+        attention_quantizer = AttentionLayerQuantizer()
+        
+        # Mock multi-head attention layer
+        mock_attention = Mock()
+        mock_attention.num_heads = 8
+        mock_attention.embed_dim = 512
+        mock_attention.in_proj_weight = Mock()
+        mock_attention.out_proj = Mock()
+        
+        # Test attention-specific quantization
+        attention_quant_config = attention_quantizer.create_attention_quantization_config(
+            attention_layer=mock_attention,
+            preserve_attention_weights=True,
+            quantize_key_query=False,  # Keep key/query in higher precision
+            quantize_value=True,       # Value can be quantized more aggressively
+            quantize_output_proj=True
+        )
+        
+        assert "key_query_precision" in attention_quant_config
+        assert "value_precision" in attention_quant_config
+        assert "output_projection_precision" in attention_quant_config
+        assert "attention_score_handling" in attention_quant_config
+        assert "softmax_precision_requirements" in attention_quant_config
+        
+        # Test quantized attention validation
+        quantized_attention = attention_quantizer.apply_attention_quantization(
+            attention_layer=mock_attention,
+            quantization_config=attention_quant_config
+        )
+        
+        assert quantized_attention is not None
+        
+        # Test attention pattern preservation
+        pattern_preservation = attention_quantizer.validate_attention_pattern_preservation(
+            original_attention=mock_attention,
+            quantized_attention=quantized_attention,
+            test_inputs=[torch.randn(8, 100, 512) for _ in range(10)]
+        )
+        
+        assert "attention_pattern_similarity" in pattern_preservation
+        assert "attention_entropy_preservation" in pattern_preservation
+        assert "head_specialization_maintained" in pattern_preservation
+    
+    def test_transformer_model_quantization_application(self):
+        """Test application of quantization to complete Transformer models"""
+        from src.ml_analysis.model_quantization import TransformerQuantizer
+        from src.ml_analysis.transformers.itransformer import iTransformerPredictor
+        from src.ml_analysis.transformers.patchtst import PatchTSTPredictor
+        from src.ml_analysis.transformers.timesmixer import TimesMixerPredictor
+        from src.ml_analysis.transformers.transformer_predictor import TransformerPredictor
+        
+        quantizer = TransformerQuantizer()
+        
+        # Test quantization for each transformer variant
+        transformer_configs = {
+            "iTransformer": {"d_model": 512, "n_heads": 8, "n_layers": 4},
+            "PatchTST": {"d_model": 256, "n_heads": 4, "patch_length": 16},
+            "TimesMixer": {"d_model": 384, "n_mixing_layers": 3},
+            "TransformerPredictor": {"d_model": 512, "n_heads": 8, "n_layers": 6}
+        }
+        
+        for model_name, config in transformer_configs.items():
+            # Create mock transformer predictor
+            mock_predictor = Mock()
+            mock_predictor.model_type = model_name
+            mock_predictor.config = config
+            mock_predictor.is_model_trained = Mock(return_value=True)
+            
+            # Test transformer quantization
+            quantized_predictor = quantizer.quantize_transformer_model(
+                transformer_predictor=mock_predictor,
+                quantization_type="dynamic",  # or "static"
+                target_dtype=torch.qint8,
+                preserve_accuracy_threshold=0.95
+            )
+            
+            assert quantized_predictor is not None
+            
+            # Test quantized model properties
+            quant_properties = quantizer.get_quantized_transformer_properties(quantized_predictor)
+            assert "model_type" in quant_properties
+            assert "quantization_ratio" in quant_properties
+            assert "attention_layers_quantized" in quant_properties
+            assert "feed_forward_layers_quantized" in quant_properties
+            assert "memory_reduction" in quant_properties
+            assert "expected_speedup" in quant_properties
+    
+    def test_transformer_quantization_accuracy_validation(self):
+        """Test accuracy validation for quantized Transformer models"""
+        from src.ml_analysis.model_quantization import TransformerAccuracyValidator
+        from src.discovery.base import DiscoveredToken
+        
+        validator = TransformerAccuracyValidator()
+        
+        # Mock original and quantized transformers
+        mock_original_transformer = Mock()
+        mock_quantized_transformer = Mock()
+        
+        # Mock test data
+        test_tokens = [
+            DiscoveredToken(
+                address=f"token_{i}",
+                symbol=f"TEST{i}",
+                price_usd=100.0 + i,
+                market_cap=1000000.0,
+                volume_24h=50000.0
+            ) for i in range(20)
+        ]
+        
+        # Test accuracy validation
+        accuracy_validation = validator.validate_transformer_quantization_accuracy(
+            original_transformer=mock_original_transformer,
+            quantized_transformer=mock_quantized_transformer,
+            test_tokens=test_tokens,
+            accuracy_threshold=0.95,
+            max_prediction_difference=0.05
+        )
+        
+        assert "overall_accuracy_maintained" in accuracy_validation
+        assert "prediction_correlation" in accuracy_validation
+        assert "attention_pattern_consistency" in accuracy_validation
+        assert "confidence_score_consistency" in accuracy_validation
+        assert "direction_prediction_agreement" in accuracy_validation
+        assert "per_token_accuracy_analysis" in accuracy_validation
+        
+        # Test specific transformer accuracy metrics
+        transformer_metrics = validator.compute_transformer_specific_accuracy_metrics(
+            original_predictions=[],  # Mock predictions
+            quantized_predictions=[],  # Mock predictions
+            attention_weights_original=torch.randn(4, 8, 100, 100),  # Mock attention
+            attention_weights_quantized=torch.randn(4, 8, 100, 100)   # Mock attention
+        )
+        
+        assert "attention_weight_correlation" in transformer_metrics
+        assert "temporal_consistency_score" in transformer_metrics
+        assert "feature_importance_preservation" in transformer_metrics
+        assert "multi_horizon_accuracy_retention" in transformer_metrics
+    
+    def test_transformer_quantization_performance_benchmarking(self):
+        """Test performance benchmarking for quantized Transformer models"""
+        from src.ml_analysis.model_quantization import TransformerPerformanceBenchmarker
+        
+        benchmarker = TransformerPerformanceBenchmarker()
+        
+        # Mock transformer models
+        mock_fp32_transformer = Mock()
+        mock_int8_transformer = Mock()
+        mock_mixed_precision_transformer = Mock()
+        
+        # Test comprehensive performance benchmark
+        performance_benchmark = benchmarker.benchmark_transformer_quantization_performance(
+            fp32_model=mock_fp32_transformer,
+            int8_model=mock_int8_transformer,
+            mixed_precision_model=mock_mixed_precision_transformer,
+            test_sequence_lengths=[64, 128, 256, 512, 1000],
+            batch_sizes=[1, 4, 8, 16],
+            num_warmup_iterations=20,
+            num_benchmark_iterations=100
+        )
+        
+        assert "sequence_length_scaling" in performance_benchmark
+        assert "batch_size_scaling" in performance_benchmark
+        assert "attention_computation_speedup" in performance_benchmark
+        assert "memory_usage_comparison" in performance_benchmark
+        assert "throughput_analysis" in performance_benchmark
+        
+        # Verify sequence length scaling analysis
+        seq_scaling = performance_benchmark["sequence_length_scaling"]
+        for seq_len in [64, 128, 256, 512, 1000]:
+            assert str(seq_len) in seq_scaling
+            seq_data = seq_scaling[str(seq_len)]
+            assert "fp32_latency_ms" in seq_data
+            assert "int8_latency_ms" in seq_data
+            assert "mixed_precision_latency_ms" in seq_data
+            assert "speedup_int8" in seq_data
+            assert "speedup_mixed_precision" in seq_data
+        
+        # Test memory efficiency analysis
+        memory_analysis = benchmarker.analyze_transformer_memory_efficiency(
+            fp32_model=mock_fp32_transformer,
+            quantized_models={
+                "int8": mock_int8_transformer,
+                "mixed_precision": mock_mixed_precision_transformer
+            },
+            max_sequence_length=1000
+        )
+        
+        assert "model_size_reduction" in memory_analysis
+        assert "runtime_memory_savings" in memory_analysis
+        assert "attention_memory_optimization" in memory_analysis
+        assert "peak_memory_usage" in memory_analysis
+    
+    def test_flash_attention_quantization_compatibility(self):
+        """Test compatibility between Flash Attention optimization and quantization"""
+        from src.ml_analysis.model_quantization import FlashAttentionQuantizationIntegrator
+        
+        integrator = FlashAttentionQuantizationIntegrator()
+        
+        # Mock Flash Attention enabled transformer
+        mock_flash_attention_transformer = Mock()
+        mock_flash_attention_transformer.config = {"use_flash_attention": True}
+        
+        # Test Flash Attention + Quantization compatibility
+        compatibility_analysis = integrator.analyze_flash_attention_quantization_compatibility(
+            flash_attention_model=mock_flash_attention_transformer,
+            target_quantization="int8"
+        )
+        
+        assert "flash_attention_quantization_support" in compatibility_analysis
+        assert "memory_optimization_stacking" in compatibility_analysis
+        assert "performance_compound_effect" in compatibility_analysis
+        assert "implementation_challenges" in compatibility_analysis
+        
+        # Test combined optimization application
+        if compatibility_analysis["flash_attention_quantization_support"]:
+            optimized_model = integrator.apply_combined_flash_attention_quantization(
+                model=mock_flash_attention_transformer,
+                quantization_config={
+                    "attention_layers": "mixed_precision",
+                    "feed_forward_layers": "int8",
+                    "preserve_flash_attention": True
+                }
+            )
+            
+            assert optimized_model is not None
+            
+            # Test combined optimization validation
+            optimization_validation = integrator.validate_combined_optimization(
+                original_model=mock_flash_attention_transformer,
+                optimized_model=optimized_model,
+                test_inputs=[torch.randn(1, 512, 512) for _ in range(5)]
+            )
+            
+            assert "flash_attention_preserved" in optimization_validation
+            assert "quantization_applied_successfully" in optimization_validation
+            assert "combined_speedup" in optimization_validation
+            assert "memory_savings_combined" in optimization_validation
+    
+    def test_quantization_aware_training_for_transformers(self):
+        """Test quantization-aware training preparation for Transformer models"""
+        from src.ml_analysis.model_quantization import TransformerQATPreparator
+        
+        qat_preparator = TransformerQATPreparator()
+        
+        # Mock transformer model for QAT
+        mock_transformer = Mock()
+        mock_transformer.named_modules = Mock(return_value=[
+            ("encoder.layers.0.self_attn", Mock(__class__=torch.nn.MultiheadAttention)),
+            ("encoder.layers.0.feed_forward.linear1", Mock(__class__=torch.nn.Linear)),
+            ("encoder.layers.0.feed_forward.linear2", Mock(__class__=torch.nn.Linear))
+        ])
+        
+        # Test QAT preparation for transformers
+        qat_transformer = qat_preparator.prepare_transformer_for_qat(
+            transformer_model=mock_transformer,
+            qat_config={
+                "attention_qat_strategy": "conservative",  # Keep attention in higher precision longer
+                "feed_forward_qat_strategy": "aggressive",  # More aggressive quantization for FF layers
+                "embedding_qat_strategy": "moderate"
+            }
+        )
+        
+        assert qat_transformer is not None
+        
+        # Test QAT-specific fake quantization
+        fake_quant_analysis = qat_preparator.analyze_transformer_fake_quantization(qat_transformer)
+        assert "attention_fake_quant_modules" in fake_quant_analysis
+        assert "feed_forward_fake_quant_modules" in fake_quant_analysis
+        assert "embedding_fake_quant_modules" in fake_quant_analysis
+        assert "quantization_simulation_accuracy" in fake_quant_analysis
+        
+        # Test QAT training configuration for transformers
+        transformer_qat_config = qat_preparator.create_transformer_qat_training_config(
+            learning_rate=1e-4,
+            quantization_warmup_epochs=2,
+            attention_quantization_delay=5,  # Delay quantization of attention layers
+            fine_tuning_epochs=10
+        )
+        
+        assert "attention_specific_schedule" in transformer_qat_config
+        assert "layer_wise_quantization_timing" in transformer_qat_config
+        assert "precision_annealing_schedule" in transformer_qat_config
+    
+    def test_transformer_quantization_deployment_pipeline(self):
+        """Test deployment pipeline integration for quantized Transformer models"""
+        from src.ml_analysis.model_quantization import TransformerQuantizationDeploymentManager
+        
+        deployment_manager = TransformerQuantizationDeploymentManager()
+        
+        # Mock quantized transformer models
+        quantized_models = {
+            "iTransformer": Mock(),
+            "PatchTST": Mock(),
+            "TimesMixer": Mock(),
+            "TransformerPredictor": Mock()
+        }
+        
+        # Test deployment preparation
+        deployment_package = deployment_manager.prepare_quantized_transformer_deployment(
+            quantized_models=quantized_models,
+            target_environment="production",
+            optimization_level="aggressive",
+            include_fallback_models=True
+        )
+        
+        assert "quantized_model_artifacts" in deployment_package
+        assert "performance_profiles" in deployment_package
+        assert "fallback_strategy" in deployment_package
+        assert "monitoring_configuration" in deployment_package
+        assert "resource_requirements" in deployment_package
+        
+        # Test production validation
+        production_validation = deployment_manager.validate_production_quantized_transformers(
+            deployment_package=deployment_package,
+            production_workload_simulation={
+                "concurrent_predictions": 50,
+                "average_sequence_length": 200,
+                "peak_throughput_requirements": 1000  # predictions per second
+            }
+        )
+        
+        assert "throughput_requirements_met" in production_validation
+        assert "latency_sla_compliance" in production_validation
+        assert "memory_usage_within_limits" in production_validation
+        assert "accuracy_maintained_under_load" in production_validation
+        assert "fallback_mechanism_tested" in production_validation
+        
+        # Test monitoring setup for quantized transformers
+        monitoring_setup = deployment_manager.setup_quantized_transformer_monitoring(
+            deployed_models=quantized_models,
+            monitoring_metrics=[
+                "inference_latency", "memory_usage", "accuracy_drift",
+                "attention_pattern_stability", "quantization_degradation"
+            ]
+        )
+        
+        assert "performance_monitoring_config" in monitoring_setup
+        assert "accuracy_monitoring_config" in monitoring_setup
+        assert "resource_monitoring_config" in monitoring_setup
+        assert "alerting_thresholds" in monitoring_setup
