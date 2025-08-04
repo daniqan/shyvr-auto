@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import structlog
 import torch
+import torch.nn as nn
 import numpy as np
 
 logger = structlog.get_logger()
@@ -409,20 +410,27 @@ class GPULoadBalancer:
 
 
 class GPUMemoryManager:
-    """Manages GPU memory allocation and optimization"""
+    """Manages GPU memory allocation and optimization with Transformer support"""
     
     def __init__(self, device: str = "cuda:0", cache_size_mb: int = 512,
-                 enable_memory_pooling: bool = True):
+                 enable_memory_pooling: bool = True, 
+                 enable_flash_attention: bool = True,
+                 transformer_memory_optimization: bool = True):
         self.device = device
         self.cache_size_mb = cache_size_mb
         self.enable_memory_pooling = enable_memory_pooling
+        self.enable_flash_attention = enable_flash_attention
+        self.transformer_memory_optimization = transformer_memory_optimization
         self.allocated_memory = 0.0
         self.cached_memory = 0.0
         self.tensor_registry = {}
+        self.attention_cache = {}  # Cache for attention patterns
+        self.kv_cache = {}  # Key-Value cache for transformers
         self.logger = structlog.get_logger().bind(component="GPUMemoryManager")
         
         if self.device.startswith("cuda:") and torch.cuda.is_available():
             self._setup_memory_management()
+            self._setup_transformer_optimization()
     
     def _setup_memory_management(self):
         """Setup GPU memory management"""
@@ -443,6 +451,33 @@ class GPUMemoryManager:
                 
         except Exception as e:
             self.logger.error("GPU memory management setup failed", error=str(e))
+    
+    def _setup_transformer_optimization(self):
+        """Setup Transformer-specific memory optimizations"""
+        try:
+            if self.transformer_memory_optimization:
+                # Initialize attention pattern cache
+                self.attention_cache = {}
+                self.kv_cache = {}
+                
+                # Check Flash Attention availability
+                if self.enable_flash_attention:
+                    try:
+                        import flash_attn
+                        self.flash_attn_available = True
+                        self.logger.info("Flash Attention available for memory optimization")
+                    except ImportError:
+                        self.flash_attn_available = False
+                        self.logger.info("Flash Attention not available, using standard optimizations")
+                else:
+                    self.flash_attn_available = False
+                
+                self.logger.info("Transformer memory optimization enabled",
+                               flash_attention=self.flash_attn_available,
+                               device=self.device)
+                
+        except Exception as e:
+            self.logger.error("Transformer optimization setup failed", error=str(e))
     
     def get_allocated_memory(self) -> float:
         """Get currently allocated memory in MB"""
@@ -653,6 +688,241 @@ class GPUMemoryManager:
             
         except Exception as e:
             self.logger.error("Memory defragmentation failed", error=str(e))
+    
+    def estimate_transformer_memory_usage(self, batch_size: int, seq_len: int, 
+                                        d_model: int, n_heads: int, 
+                                        use_flash_attention: bool = None) -> Dict[str, float]:
+        """Estimate memory usage for Transformer model"""
+        if use_flash_attention is None:
+            use_flash_attention = self.flash_attn_available and self.enable_flash_attention
+        
+        # Memory estimates in bytes
+        # Model parameters (simplified for 6-layer transformer)
+        num_layers = 6
+        param_memory = d_model * d_model * 4 * num_layers * 4  # 4 matrices per layer, 4 bytes per float
+        
+        # Activation memory
+        activation_memory = batch_size * seq_len * d_model * 4
+        
+        # Attention memory - key difference between Flash and standard
+        if use_flash_attention:
+            # Flash Attention: O(N) memory complexity
+            attention_memory = batch_size * n_heads * seq_len * (d_model // n_heads) * 4
+        else:
+            # Standard Attention: O(N²) memory complexity
+            attention_memory = batch_size * n_heads * seq_len * seq_len * 4
+        
+        total_memory_bytes = param_memory + activation_memory + attention_memory
+        
+        return {
+            "total_memory_mb": total_memory_bytes / (1024 * 1024),
+            "parameter_memory_mb": param_memory / (1024 * 1024),
+            "activation_memory_mb": activation_memory / (1024 * 1024),
+            "attention_memory_mb": attention_memory / (1024 * 1024),
+            "memory_complexity": "O(N)" if use_flash_attention else "O(N²)",
+            "flash_attention_used": use_flash_attention
+        }
+    
+    def optimize_transformer_batch_size(self, seq_len: int, d_model: int, 
+                                      n_heads: int, target_memory_mb: Optional[float] = None) -> Dict[str, Any]:
+        """Optimize batch size for Transformer model given memory constraints"""
+        if target_memory_mb is None:
+            if self.device.startswith("cuda:") and torch.cuda.is_available():
+                device_id = int(self.device.split(":")[1])
+                props = torch.cuda.get_device_properties(device_id)
+                target_memory_mb = (props.total_memory / (1024 * 1024)) * 0.7  # 70% utilization
+            else:
+                target_memory_mb = 4000  # 4GB default for CPU
+        
+        # Binary search for optimal batch size
+        min_batch = 1
+        max_batch = 64
+        optimal_batch = 1
+        
+        while min_batch <= max_batch:
+            mid_batch = (min_batch + max_batch) // 2
+            
+            # Estimate memory for Flash Attention
+            flash_memory = self.estimate_transformer_memory_usage(
+                mid_batch, seq_len, d_model, n_heads, use_flash_attention=True
+            )
+            
+            # Estimate memory for standard attention
+            standard_memory = self.estimate_transformer_memory_usage(
+                mid_batch, seq_len, d_model, n_heads, use_flash_attention=False
+            )
+            
+            # Choose Flash Attention if available and beneficial
+            use_flash = (self.flash_attn_available and 
+                        flash_memory["total_memory_mb"] <= target_memory_mb)
+            
+            current_memory = flash_memory if use_flash else standard_memory
+            
+            if current_memory["total_memory_mb"] <= target_memory_mb:
+                optimal_batch = mid_batch
+                min_batch = mid_batch + 1
+            else:
+                max_batch = mid_batch - 1
+        
+        # Get final memory estimate
+        final_memory = self.estimate_transformer_memory_usage(
+            optimal_batch, seq_len, d_model, n_heads, 
+            use_flash_attention=self.flash_attn_available
+        )
+        
+        return {
+            "optimal_batch_size": optimal_batch,
+            "target_memory_mb": target_memory_mb,
+            "estimated_memory_usage": final_memory,
+            "memory_utilization": final_memory["total_memory_mb"] / target_memory_mb,
+            "flash_attention_recommended": self.flash_attn_available and optimal_batch > 1
+        }
+    
+    def cache_attention_pattern(self, cache_key: str, attention_weights: torch.Tensor,
+                              max_cache_size: int = 100) -> bool:
+        """Cache attention pattern for reuse"""
+        if not self.transformer_memory_optimization:
+            return False
+        
+        try:
+            # Limit cache size to prevent memory overflow
+            if len(self.attention_cache) >= max_cache_size:
+                # Remove oldest entry (FIFO)
+                oldest_key = next(iter(self.attention_cache))
+                del self.attention_cache[oldest_key]
+            
+            # Store attention pattern (detached from computation graph)
+            self.attention_cache[cache_key] = attention_weights.detach().clone()
+            
+            self.logger.debug("Cached attention pattern", 
+                            cache_key=cache_key,
+                            cache_size=len(self.attention_cache))
+            return True
+            
+        except Exception as e:
+            self.logger.error("Failed to cache attention pattern", 
+                            cache_key=cache_key, error=str(e))
+            return False
+    
+    def get_cached_attention_pattern(self, cache_key: str) -> Optional[torch.Tensor]:
+        """Retrieve cached attention pattern"""
+        if not self.transformer_memory_optimization:
+            return None
+        
+        try:
+            pattern = self.attention_cache.get(cache_key)
+            if pattern is not None:
+                self.logger.debug("Retrieved cached attention pattern", cache_key=cache_key)
+                return pattern.to(self.device)
+            return None
+            
+        except Exception as e:
+            self.logger.error("Failed to retrieve cached attention pattern", 
+                            cache_key=cache_key, error=str(e))
+            return None
+    
+    def setup_kv_cache(self, cache_key: str, max_seq_len: int, 
+                      batch_size: int, n_heads: int, head_dim: int) -> bool:
+        """Setup Key-Value cache for efficient inference"""
+        if not self.transformer_memory_optimization:
+            return False
+        
+        try:
+            cache_shape = (batch_size, n_heads, max_seq_len, head_dim)
+            
+            # Initialize empty cache tensors
+            self.kv_cache[cache_key] = {
+                "key_cache": torch.zeros(cache_shape, device=self.device, dtype=torch.float32),
+                "value_cache": torch.zeros(cache_shape, device=self.device, dtype=torch.float32),
+                "cache_position": 0,
+                "max_seq_len": max_seq_len
+            }
+            
+            self.logger.debug("Setup KV cache", 
+                            cache_key=cache_key,
+                            shape=cache_shape)
+            return True
+            
+        except Exception as e:
+            self.logger.error("Failed to setup KV cache", 
+                            cache_key=cache_key, error=str(e))
+            return False
+    
+    def update_kv_cache(self, cache_key: str, new_keys: torch.Tensor, 
+                       new_values: torch.Tensor) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+        """Update KV cache with new key-value pairs"""
+        if cache_key not in self.kv_cache:
+            return None
+        
+        try:
+            cache = self.kv_cache[cache_key]
+            pos = cache["cache_position"]
+            seq_len = new_keys.shape[2]
+            
+            # Check if we have space in cache
+            if pos + seq_len > cache["max_seq_len"]:
+                self.logger.warning("KV cache overflow, clearing cache", cache_key=cache_key)
+                cache["cache_position"] = 0
+                pos = 0
+            
+            # Update cache
+            cache["key_cache"][:, :, pos:pos+seq_len, :] = new_keys
+            cache["value_cache"][:, :, pos:pos+seq_len, :] = new_values
+            cache["cache_position"] = pos + seq_len
+            
+            # Return full cached keys and values
+            cached_keys = cache["key_cache"][:, :, :cache["cache_position"], :]
+            cached_values = cache["value_cache"][:, :, :cache["cache_position"], :]
+            
+            return cached_keys, cached_values
+            
+        except Exception as e:
+            self.logger.error("Failed to update KV cache", 
+                            cache_key=cache_key, error=str(e))
+            return None
+    
+    def clear_transformer_caches(self):
+        """Clear all transformer-specific caches"""
+        try:
+            self.attention_cache.clear()
+            self.kv_cache.clear()
+            
+            # Force garbage collection if on GPU
+            if self.device.startswith("cuda:"):
+                torch.cuda.empty_cache()
+            
+            self.logger.info("Cleared transformer caches", device=self.device)
+            
+        except Exception as e:
+            self.logger.error("Failed to clear transformer caches", error=str(e))
+    
+    def get_transformer_memory_stats(self) -> Dict[str, Any]:
+        """Get transformer-specific memory statistics"""
+        stats = {
+            "flash_attention_available": getattr(self, 'flash_attn_available', False),
+            "transformer_optimization_enabled": self.transformer_memory_optimization,
+            "attention_cache_size": len(self.attention_cache),
+            "kv_cache_count": len(self.kv_cache),
+            "device": self.device
+        }
+        
+        # Add memory usage if on GPU
+        if self.device.startswith("cuda:") and torch.cuda.is_available():
+            try:
+                device_id = int(self.device.split(":")[1])
+                allocated = torch.cuda.memory_allocated(device_id) / (1024 * 1024)
+                cached = torch.cuda.memory_reserved(device_id) / (1024 * 1024)
+                
+                stats.update({
+                    "allocated_memory_mb": allocated,
+                    "cached_memory_mb": cached,
+                    "memory_utilization": allocated / max(cached, 1)
+                })
+                
+            except Exception as e:
+                self.logger.error("Failed to get GPU memory stats", error=str(e))
+        
+        return stats
 
 
 class CPUFallbackManager:
