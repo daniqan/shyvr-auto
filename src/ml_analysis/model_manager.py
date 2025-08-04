@@ -206,6 +206,8 @@ class ModelManager:
             metadata={"token": token.address, "use_ensemble": use_ensemble}
         ) as tracker:
             try:
+                start_time = datetime.now()
+                
                 if use_ensemble and len(self._models) > 1:
                     result = await self._ensemble_prediction(token, historical_data)
                 else:
@@ -213,11 +215,14 @@ class ModelManager:
                     best_model = self._get_best_model()
                     result = await best_model.analyze_token(token, historical_data)
                 
+                # Calculate inference time
+                inference_time_ms = (datetime.now() - start_time).total_seconds() * 1000
+                
                 # Cache the result
                 self._ensemble_cache[cache_key] = (datetime.now(), result)
                 
-                # Update model performance tracking
-                await self._update_performance_tracking(result)
+                # Update model performance tracking with inference time
+                await self._update_performance_tracking(result, inference_time_ms)
                 
                 # Log successful analysis
                 await activity_logger.log_activity(
@@ -528,8 +533,8 @@ class ModelManager:
         
         return trained_models[best_model_type]
     
-    async def _update_performance_tracking(self, result: PredictionResult):
-        """Update model performance metrics"""
+    async def _update_performance_tracking(self, result: PredictionResult, inference_time_ms: float = 0.0):
+        """Update model performance metrics with Transformer-specific monitoring"""
         try:
             model_type = result.model_type
             if model_type not in self._model_performance:
@@ -547,13 +552,65 @@ class ModelManager:
                 new_accuracy = ((current_accuracy * (prediction_count - 1)) + result.model_accuracy) / prediction_count
                 self._model_performance[model_type]['accuracy'] = new_accuracy
             
+            # Update inference time tracking
+            if inference_time_ms > 0:
+                current_time = self._model_performance[model_type].get('avg_inference_time_ms', 0.0)
+                prediction_count = self._model_performance[model_type]['predictions_made']
+                
+                # Running average for inference time
+                new_avg_time = ((current_time * (prediction_count - 1)) + inference_time_ms) / prediction_count
+                self._model_performance[model_type]['avg_inference_time_ms'] = new_avg_time
+            
+            # Update memory usage for Transformer models
+            if model_type in [ModelType.TRANSFORMER, ModelType.ITRANSFORMER, ModelType.PATCHTST, ModelType.TIMESMIXER]:
+                memory_usage = await self._get_model_memory_usage(model_type)
+                self._model_performance[model_type]['memory_usage_mb'] = memory_usage
+            
             self._model_performance[model_type]['last_updated'] = datetime.now().timestamp()
             
         except Exception as e:
             self.logger.error("Performance tracking update failed", error=str(e))
     
-    async def _update_model_weights(self):
-        """Update model weights based on performance with time decay and recency weighting"""
+    async def _get_model_memory_usage(self, model_type: ModelType) -> float:
+        """Get memory usage for a specific model in MB"""
+        try:
+            import psutil
+            import gc
+            import torch
+            
+            model = self._models.get(model_type)
+            if model is None:
+                return 0.0
+            
+            # For PyTorch models, get GPU memory if available
+            if hasattr(model, 'model') and hasattr(model.model, 'parameters'):
+                try:
+                    # Calculate model parameter memory
+                    param_size = sum(p.numel() * p.element_size() for p in model.model.parameters())
+                    
+                    # Check GPU memory if using CUDA
+                    if torch.cuda.is_available() and next(model.model.parameters()).is_cuda:
+                        gpu_memory = torch.cuda.memory_allocated() / (1024 * 1024)  # Convert to MB
+                        return max(param_size / (1024 * 1024), gpu_memory)
+                    else:
+                        return param_size / (1024 * 1024)  # Convert to MB
+                        
+                except Exception:
+                    pass
+            
+            # Fallback: estimate based on process memory
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            
+            # Rough estimate: divide by number of models for per-model usage
+            return memory_mb / len(self._models)
+            
+        except Exception as e:
+            self.logger.debug("Failed to get memory usage", model_type=model_type.value, error=str(e))
+            return 0.0
+    
+    async def _update_model_weights(self, market_regime: str = "normal"):
+        """Update model weights based on performance with Transformer-aware considerations"""
         try:
             current_time = datetime.now().timestamp()
             
@@ -561,6 +618,8 @@ class ModelManager:
                 accuracy = performance['accuracy']
                 prediction_count = performance['predictions_made']
                 last_updated = performance['last_updated']
+                memory_usage = performance.get('memory_usage_mb', 0.0)
+                inference_time = performance.get('avg_inference_time_ms', 0.0)
                 
                 # Calculate time-based decay factor (performance degrades over time)
                 time_since_update = current_time - last_updated
@@ -575,12 +634,26 @@ class ModelManager:
                 # Recency bonus: models that have been updated recently get a small bonus
                 recency_bonus = 1.0 if hours_since_update < 1 else max(0.9, 1.0 - (hours_since_update / 24))
                 
-                # Combined weight calculation
-                base_weight = accuracy * (0.3 + 0.7 * experience_factor)  # Base weight from accuracy and experience
-                time_adjusted_weight = base_weight * decay_factor * recency_bonus
+                # Transformer-specific efficiency factors
+                efficiency_factor = 1.0
+                if model_type in [ModelType.TRANSFORMER, ModelType.ITRANSFORMER, ModelType.PATCHTST, ModelType.TIMESMIXER]:
+                    # Memory efficiency penalty for high memory usage (>2GB)
+                    memory_penalty = max(0.8, 1.0 - (memory_usage / 2048))  # Penalty starts at 2GB
+                    
+                    # Inference speed bonus for fast models (<100ms)
+                    speed_bonus = 1.1 if inference_time < 100 else max(0.9, 1.0 - (inference_time / 1000))
+                    
+                    efficiency_factor = memory_penalty * speed_bonus
+                
+                # Market regime-aware weighting
+                regime_factor = self._get_regime_factor(model_type, market_regime)
+                
+                # Combined weight calculation with new factors
+                base_weight = accuracy * (0.3 + 0.7 * experience_factor)
+                adjusted_weight = base_weight * decay_factor * recency_bonus * efficiency_factor * regime_factor
                 
                 # Ensure minimum weight to prevent models from being completely ignored
-                self._model_weights[model_type] = max(time_adjusted_weight, 0.05)
+                self._model_weights[model_type] = max(adjusted_weight, 0.02)  # Lower minimum for more models
             
             # Normalize weights to sum to 1.0
             total_weight = sum(self._model_weights.values())
@@ -588,18 +661,69 @@ class ModelManager:
                 for model_type in self._model_weights:
                     self._model_weights[model_type] /= total_weight
             
-            self.logger.info("Model weights updated", 
+            self.logger.info("Enhanced model weights updated", 
                            weights=self._model_weights,
+                           market_regime=market_regime,
                            performance_metrics={
                                mt.value: {
                                    'accuracy': perf['accuracy'],
                                    'predictions': perf['predictions_made'],
-                                   'hours_since_update': (current_time - perf['last_updated']) / 3600
+                                   'hours_since_update': (current_time - perf['last_updated']) / 3600,
+                                   'memory_mb': perf.get('memory_usage_mb', 0),
+                                   'inference_ms': perf.get('avg_inference_time_ms', 0)
                                } for mt, perf in self._model_performance.items()
                            })
             
         except Exception as e:
             self.logger.error("Model weight update failed", error=str(e))
+    
+    def _get_regime_factor(self, model_type: ModelType, market_regime: str) -> float:
+        """Get regime-specific weighting factor for different model types"""
+        try:
+            # Define model strengths in different market regimes
+            regime_strengths = {
+                "bull": {
+                    ModelType.LSTM: 0.9,  # LSTM less effective in trending markets
+                    ModelType.TRANSFORMER: 1.1,  # Better at capturing trends
+                    ModelType.ITRANSFORMER: 1.2,  # Excellent for multivariate trend detection
+                    ModelType.PATCHTST: 1.1,  # Good for long-term trends
+                    ModelType.TIMESMIXER: 1.0  # Balanced performance
+                },
+                "bear": {
+                    ModelType.LSTM: 1.0,  # LSTM handles bear markets reasonably
+                    ModelType.TRANSFORMER: 1.1,  # Good at pattern recognition
+                    ModelType.ITRANSFORMER: 1.3,  # Best for correlated selloffs
+                    ModelType.PATCHTST: 1.0,  # Stable performance
+                    ModelType.TIMESMIXER: 1.2  # Good at decomposing market stress
+                },
+                "sideways": {
+                    ModelType.LSTM: 1.1,  # LSTM good at range-bound markets
+                    ModelType.TRANSFORMER: 1.0,  # Neutral performance
+                    ModelType.ITRANSFORMER: 1.0,  # Less advantage in low correlation
+                    ModelType.PATCHTST: 0.9,  # Less effective in choppy markets
+                    ModelType.TIMESMIXER: 1.2  # Excellent at noise filtering
+                },
+                "volatile": {
+                    ModelType.LSTM: 0.8,  # LSTM struggles with high volatility
+                    ModelType.TRANSFORMER: 1.1,  # Better attention to volatility patterns
+                    ModelType.ITRANSFORMER: 1.3,  # Best for volatility clustering
+                    ModelType.PATCHTST: 1.0,  # Stable under volatility
+                    ModelType.TIMESMIXER: 1.4  # Excellent volatility decomposition
+                },
+                "normal": {
+                    ModelType.LSTM: 1.0,
+                    ModelType.TRANSFORMER: 1.0,
+                    ModelType.ITRANSFORMER: 1.0,
+                    ModelType.PATCHTST: 1.0,
+                    ModelType.TIMESMIXER: 1.0
+                }
+            }
+            
+            return regime_strengths.get(market_regime, regime_strengths["normal"]).get(model_type, 1.0)
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate regime factor", error=str(e))
+            return 1.0
     
     async def _save_model(self, model_type: ModelType):
         """Save a trained model to disk with preservation support"""
