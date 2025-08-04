@@ -35,6 +35,12 @@ from .timesmixer import (
     FutureMultipredictorMixing,
     MovingAverageDecomposition
 )
+from .timesfm_wrapper import (
+    TimesFMWrapper,
+    TimesFMConfig,
+    CryptoTimesFMTokenizer,
+    GCPTimesFMOptimizer
+)
 
 __all__ = [
     # Base components
@@ -74,4 +80,9 @@ __all__ = [
     'PastDecomposableMixing',
     'FutureMultipredictorMixing',
     'MovingAverageDecomposition',
+    # TimesFM
+    'TimesFMWrapper',
+    'TimesFMConfig',
+    'CryptoTimesFMTokenizer',
+    'GCPTimesFMOptimizer',
 ]
