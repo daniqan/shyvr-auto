@@ -654,6 +654,791 @@ class FeatureEngineer:
         
         return is_valid
 
+    def calculate_multi_scale_temporal_features(self, price_data: pd.DataFrame) -> dict:
+        """
+        Calculate multi-scale temporal features for Transformer models
+        
+        Args:
+            price_data: DataFrame with timestamp, OHLCV data
+            
+        Returns:
+            Dictionary containing features at different time scales
+        """
+        try:
+            if len(price_data) < 48:  # Need at least 48 hours for meaningful patterns
+                self.logger.warning("Insufficient data for multi-scale temporal features",
+                                  rows=len(price_data))
+                return self._get_default_temporal_features()
+            
+            # Ensure timestamp column exists and is datetime
+            if 'timestamp' in price_data.columns:
+                price_data = price_data.copy()
+                price_data['timestamp'] = pd.to_datetime(price_data['timestamp'])
+                price_data.set_index('timestamp', inplace=True)
+            
+            features = {}
+            
+            # Extract features at different scales
+            features['minute_features'] = self.extract_minute_level_features(price_data)
+            features['hour_features'] = self.extract_hour_level_features(price_data)
+            features['day_features'] = self.extract_day_level_features(price_data)
+            
+            # Add temporal momentum patterns
+            features['momentum_patterns'] = self.calculate_temporal_momentum_patterns(price_data)
+            
+            # Add volatility regime indicators
+            features['volatility_regimes'] = self.calculate_volatility_regime_indicators(price_data)
+            
+            self.logger.info("Multi-scale temporal features calculated",
+                           features_count=sum(len(v) if isinstance(v, dict) else 1 for v in features.values()))
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate multi-scale temporal features", error=str(e))
+            return self._get_default_temporal_features()
+    
+    def extract_minute_level_features(self, price_data: pd.DataFrame) -> dict:
+        """Extract minute-level temporal features"""
+        try:
+            # Resample to minute-level if not already
+            if hasattr(price_data.index, 'freq') and price_data.index.freq is None:
+                minute_data = price_data.resample('1min').agg({
+                    'open': 'first',
+                    'high': 'max', 
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+            else:
+                minute_data = price_data
+            
+            if len(minute_data) < 60:  # Need at least an hour of minute data
+                return {'minute_volatility': 0.0, 'minute_volume_profile': 0.5}
+            
+            # Calculate minute-level features
+            minute_returns = minute_data['close'].pct_change().dropna()
+            
+            features = {
+                'minute_volatility': float(minute_returns.std() * np.sqrt(1440)),  # Annualized
+                'minute_skewness': float(minute_returns.skew()) if len(minute_returns) > 10 else 0.0,
+                'minute_kurtosis': float(minute_returns.kurtosis()) if len(minute_returns) > 10 else 0.0,
+                'minute_volume_profile': float(minute_data['volume'].tail(60).mean() / minute_data['volume'].mean()) if minute_data['volume'].mean() > 0 else 1.0,
+                'minute_price_acceleration': float(minute_returns.diff().tail(10).mean()) if len(minute_returns) > 10 else 0.0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to extract minute-level features", error=str(e))
+            return {'minute_volatility': 0.0, 'minute_volume_profile': 0.5}
+    
+    def extract_hour_level_features(self, price_data: pd.DataFrame) -> dict:
+        """Extract hour-level temporal features"""
+        try:
+            # Resample to hourly if not already
+            hourly_data = price_data.resample('1h').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min', 
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+            
+            if len(hourly_data) < 24:  # Need at least a day of hourly data
+                return self._get_default_hour_features()
+            
+            # Calculate hourly features
+            hourly_returns = hourly_data['close'].pct_change().dropna()
+            hourly_volumes = hourly_data['volume']
+            
+            # Hour-of-day patterns
+            hourly_data['hour'] = hourly_data.index.hour
+            hour_volume_pattern = hourly_data.groupby('hour')['volume'].mean()
+            current_hour = hourly_data.index[-1].hour
+            hour_volume_ratio = float(hour_volume_pattern.loc[current_hour] / hour_volume_pattern.mean()) if hour_volume_pattern.mean() > 0 else 1.0
+            
+            # Intraday momentum
+            intraday_momentum = float(hourly_returns.tail(6).mean())  # Last 6 hours
+            
+            # Volume-weighted features
+            vwap_1h = float((hourly_data['close'] * hourly_data['volume']).sum() / hourly_data['volume'].sum()) if hourly_data['volume'].sum() > 0 else float(hourly_data['close'].iloc[-1])
+            current_price = float(hourly_data['close'].iloc[-1])
+            vwap_deviation = (current_price - vwap_1h) / vwap_1h if vwap_1h > 0 else 0.0
+            
+            features = {
+                'hourly_volatility': float(hourly_returns.std() * np.sqrt(24 * 365)),  # Annualized
+                'hourly_trend_strength': float(abs(hourly_returns.tail(24).mean())) if len(hourly_returns) >= 24 else 0.0,
+                'hour_volume_ratio': hour_volume_ratio,
+                'intraday_momentum': intraday_momentum,
+                'vwap_1h_deviation': float(vwap_deviation),
+                'hourly_range_ratio': float((hourly_data['high'].iloc[-1] - hourly_data['low'].iloc[-1]) / hourly_data['close'].iloc[-1]) if hourly_data['close'].iloc[-1] > 0 else 0.0,
+                'volume_trend_1h': float(hourly_volumes.tail(6).mean() / hourly_volumes.tail(24).mean()) if len(hourly_volumes) >= 24 and hourly_volumes.tail(24).mean() > 0 else 1.0,
+                'price_momentum_6h': float(hourly_returns.tail(6).sum()),
+                'price_momentum_12h': float(hourly_returns.tail(12).sum()) if len(hourly_returns) >= 12 else 0.0,
+                'price_momentum_24h': float(hourly_returns.tail(24).sum()) if len(hourly_returns) >= 24 else 0.0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to extract hour-level features", error=str(e))
+            return self._get_default_hour_features()
+    
+    def extract_day_level_features(self, price_data: pd.DataFrame) -> dict:
+        """Extract day-level temporal features"""
+        try:
+            # Resample to daily if not already
+            daily_data = price_data.resample('1D').agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last', 
+                'volume': 'sum'
+            }).dropna()
+            
+            if len(daily_data) < 7:  # Need at least a week of daily data
+                return self._get_default_day_features()
+            
+            # Calculate daily features
+            daily_returns = daily_data['close'].pct_change().dropna()
+            
+            # Day-of-week patterns
+            daily_data['dayofweek'] = daily_data.index.dayofweek
+            dow_volume_pattern = daily_data.groupby('dayofweek')['volume'].mean()
+            current_dow = daily_data.index[-1].dayofweek
+            dow_volume_ratio = float(dow_volume_pattern.loc[current_dow] / dow_volume_pattern.mean()) if dow_volume_pattern.mean() > 0 else 1.0
+            
+            # Weekly patterns
+            weekly_trend = float(daily_returns.tail(7).mean()) if len(daily_returns) >= 7 else 0.0
+            
+            features = {
+                'daily_volatility': float(daily_returns.std() * np.sqrt(365)),  # Annualized
+                'weekly_trend': weekly_trend,
+                'dow_volume_ratio': dow_volume_ratio,
+                'daily_range_avg_7d': float(((daily_data['high'] - daily_data['low']) / daily_data['close']).tail(7).mean()) if len(daily_data) >= 7 else 0.0,
+                'daily_volume_trend_7d': float(daily_data['volume'].tail(7).mean() / daily_data['volume'].tail(30).mean()) if len(daily_data) >= 30 and daily_data['volume'].tail(30).mean() > 0 else 1.0,
+                'consecutive_days_direction': self._calculate_consecutive_days(daily_returns),
+                'max_daily_return_7d': float(daily_returns.tail(7).max()) if len(daily_returns) >= 7 else 0.0,
+                'min_daily_return_7d': float(daily_returns.tail(7).min()) if len(daily_returns) >= 7 else 0.0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to extract day-level features", error=str(e))
+            return self._get_default_day_features()
+    
+    def calculate_temporal_momentum_patterns(self, price_data: pd.DataFrame) -> dict:
+        """Calculate temporal momentum patterns across different scales"""
+        try:
+            if len(price_data) < 48:
+                return {'momentum_consistency': 0.0, 'momentum_acceleration': 0.0}
+            
+            # Get returns at different frequencies
+            returns_1h = price_data['close'].resample('1h').last().pct_change().dropna()
+            returns_4h = price_data['close'].resample('4h').last().pct_change().dropna()
+            returns_1d = price_data['close'].resample('1D').last().pct_change().dropna()
+            
+            # Calculate momentum consistency across scales
+            momentum_1h = returns_1h.tail(24).mean() if len(returns_1h) >= 24 else 0.0
+            momentum_4h = returns_4h.tail(6).mean() if len(returns_4h) >= 6 else 0.0  
+            momentum_1d = returns_1d.tail(7).mean() if len(returns_1d) >= 7 else 0.0
+            
+            # Momentum consistency (same direction across scales)
+            momentum_signs = [np.sign(momentum_1h), np.sign(momentum_4h), np.sign(momentum_1d)]
+            momentum_consistency = float(abs(sum(momentum_signs)) / 3.0)
+            
+            # Momentum acceleration (increasing momentum over time)
+            short_momentum = float(returns_1h.tail(6).mean()) if len(returns_1h) >= 6 else 0.0
+            medium_momentum = float(returns_1h.tail(24).mean()) if len(returns_1h) >= 24 else 0.0
+            momentum_acceleration = float(short_momentum - medium_momentum)
+            
+            return {
+                'momentum_consistency': momentum_consistency,
+                'momentum_acceleration': momentum_acceleration,
+                'momentum_1h': float(momentum_1h),
+                'momentum_4h': float(momentum_4h), 
+                'momentum_1d': float(momentum_1d)
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate temporal momentum patterns", error=str(e))
+            return {'momentum_consistency': 0.0, 'momentum_acceleration': 0.0}
+    
+    def calculate_volatility_regime_indicators(self, price_data: pd.DataFrame) -> dict:
+        """Calculate volatility regime indicators"""
+        try:
+            if len(price_data) < 48:
+                return {'volatility_regime': 'medium', 'regime_persistence': 0.5}
+            
+            # Calculate returns
+            returns = price_data['close'].pct_change().dropna()
+            
+            if len(returns) < 24:
+                return {'volatility_regime': 'medium', 'regime_persistence': 0.5}
+            
+            # Rolling volatility at different windows
+            vol_6h = returns.rolling(6).std() * np.sqrt(24 * 365)  # Annualized
+            vol_24h = returns.rolling(24).std() * np.sqrt(24 * 365)
+            vol_168h = returns.rolling(168).std() * np.sqrt(24 * 365) if len(returns) >= 168 else vol_24h
+            
+            # Current volatility regime
+            current_vol = float(vol_24h.iloc[-1]) if not pd.isna(vol_24h.iloc[-1]) else 0.5
+            historical_vol = float(vol_168h.mean()) if len(vol_168h) > 0 and not pd.isna(vol_168h.mean()) else current_vol
+            
+            # Classify regime
+            if current_vol > historical_vol * 1.5:
+                regime = 'high_vol'
+                regime_score = min(current_vol / historical_vol, 3.0) / 3.0
+            elif current_vol < historical_vol * 0.7:
+                regime = 'low_vol'
+                regime_score = max(0.0, (historical_vol * 0.7 - current_vol) / (historical_vol * 0.7))
+            else:
+                regime = 'medium'
+                regime_score = 0.5
+            
+            # Regime persistence (how long has this regime lasted)
+            vol_threshold_high = historical_vol * 1.5
+            vol_threshold_low = historical_vol * 0.7
+            
+            recent_vols = vol_24h.tail(48) if len(vol_24h) >= 48 else vol_24h.tail(len(vol_24h))
+            
+            if regime == 'high_vol':
+                persistence_periods = (recent_vols > vol_threshold_high).sum()
+            elif regime == 'low_vol':
+                persistence_periods = (recent_vols < vol_threshold_low).sum()
+            else:
+                persistence_periods = ((recent_vols >= vol_threshold_low) & (recent_vols <= vol_threshold_high)).sum()
+            
+            regime_persistence = float(persistence_periods / len(recent_vols))
+            
+            return {
+                'volatility_regime': regime,
+                'regime_score': float(regime_score),
+                'regime_persistence': regime_persistence,
+                'current_vol_ratio': float(current_vol / historical_vol) if historical_vol > 0 else 1.0,
+                'vol_trend_6h_24h': float(vol_6h.iloc[-1] / vol_24h.iloc[-1]) if not pd.isna(vol_6h.iloc[-1]) and not pd.isna(vol_24h.iloc[-1]) and vol_24h.iloc[-1] > 0 else 1.0
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate volatility regime indicators", error=str(e))
+            return {'volatility_regime': 'medium', 'regime_persistence': 0.5}
+    
+    def _get_default_temporal_features(self) -> dict:
+        """Get default temporal features when calculation fails"""
+        return {
+            'minute_features': {'minute_volatility': 0.0, 'minute_volume_profile': 0.5},
+            'hour_features': self._get_default_hour_features(),
+            'day_features': self._get_default_day_features(),
+            'momentum_patterns': {'momentum_consistency': 0.0, 'momentum_acceleration': 0.0},
+            'volatility_regimes': {'volatility_regime': 'medium', 'regime_persistence': 0.5}
+        }
+    
+    def _get_default_hour_features(self) -> dict:
+        """Get default hour-level features"""
+        return {
+            'hourly_volatility': 0.5,
+            'hourly_trend_strength': 0.0,
+            'hour_volume_ratio': 1.0,
+            'intraday_momentum': 0.0,
+            'vwap_1h_deviation': 0.0,
+            'hourly_range_ratio': 0.02,
+            'volume_trend_1h': 1.0,
+            'price_momentum_6h': 0.0,
+            'price_momentum_12h': 0.0,
+            'price_momentum_24h': 0.0
+        }
+    
+    def _get_default_day_features(self) -> dict:
+        """Get default day-level features"""
+        return {
+            'daily_volatility': 0.5,
+            'weekly_trend': 0.0,
+            'dow_volume_ratio': 1.0,
+            'daily_range_avg_7d': 0.03,
+            'daily_volume_trend_7d': 1.0,
+            'consecutive_days_direction': 0,
+            'max_daily_return_7d': 0.0,
+            'min_daily_return_7d': 0.0
+        }
+    
+    def _calculate_consecutive_days(self, daily_returns: pd.Series) -> int:
+        """Calculate consecutive days in the same direction"""
+        if len(daily_returns) < 2:
+            return 0
+        
+        recent_returns = daily_returns.tail(7)  # Look at last 7 days
+        consecutive = 0
+        current_direction = None
+        
+        for ret in reversed(recent_returns.tolist()):
+            direction = 1 if ret > 0 else -1 if ret < 0 else 0
+            
+            if current_direction is None:
+                current_direction = direction
+                consecutive = 1 if direction != 0 else 0
+            elif direction == current_direction and direction != 0:
+                consecutive += 1
+            else:
+                break
+        
+        return consecutive
+
+    def calculate_cross_asset_correlations(self, price_data: Dict[str, pd.DataFrame], tokens: List[DiscoveredToken]) -> dict:
+        """
+        Calculate cross-asset correlation features for multivariate Transformer inputs
+        
+        Args:
+            price_data: Dictionary mapping token addresses to price DataFrames
+            tokens: List of tokens to analyze
+            
+        Returns:
+            Dictionary containing correlation features
+        """
+        try:
+            if len(price_data) < 2:
+                self.logger.warning("Need at least 2 assets for correlation analysis", assets=len(price_data))
+                return self._get_default_correlation_features()
+            
+            # Align timestamps and extract returns
+            aligned_returns = self._align_multivariate_returns(price_data, tokens)
+            
+            if aligned_returns.empty or len(aligned_returns.columns) < 2:
+                return self._get_default_correlation_features()
+            
+            # Calculate correlation matrix
+            correlation_matrix = self.calculate_correlation_matrix(aligned_returns)
+            
+            # Calculate rolling correlations
+            rolling_corr = self.calculate_rolling_correlations(aligned_returns, window=24)  # 24-hour window
+            
+            # Calculate correlation regime features
+            regime_features = self.calculate_correlation_regime_features(aligned_returns)
+            
+            return {
+                'correlation_matrix': correlation_matrix,
+                'rolling_correlations': rolling_corr,
+                'regime_features': regime_features,
+                'num_assets': len(aligned_returns.columns)
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate cross-asset correlations", error=str(e))
+            return self._get_default_correlation_features()
+    
+    def calculate_correlation_matrix(self, returns_data: pd.DataFrame) -> dict:
+        """Calculate correlation matrix and derived statistics"""
+        try:
+            if len(returns_data) < 10 or len(returns_data.columns) < 2:
+                return {'mean_correlation': 0.0, 'max_correlation': 0.0, 'correlation_stability': 0.5}
+            
+            # Calculate correlation matrix
+            corr_matrix = returns_data.corr()
+            
+            # Extract upper triangle (excluding diagonal)
+            mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+            upper_triangle = corr_matrix.where(mask)
+            
+            # Calculate statistics
+            correlations = upper_triangle.stack().dropna()
+            
+            if len(correlations) == 0:
+                return {'mean_correlation': 0.0, 'max_correlation': 0.0, 'correlation_stability': 0.5}
+            
+            features = {
+                'mean_correlation': float(correlations.mean()),
+                'max_correlation': float(correlations.max()),
+                'min_correlation': float(correlations.min()),
+                'correlation_std': float(correlations.std()),
+                'positive_correlations_ratio': float((correlations > 0).sum() / len(correlations)),
+                'high_correlation_pairs': int((correlations.abs() > 0.7).sum()),
+                'correlation_stability': float(1.0 - correlations.std()) if correlations.std() < 1.0 else 0.0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate correlation matrix", error=str(e))
+            return {'mean_correlation': 0.0, 'max_correlation': 0.0, 'correlation_stability': 0.5}
+    
+    def calculate_rolling_correlations(self, returns_data: pd.DataFrame, window: int = 24) -> dict:
+        """Calculate rolling correlation features"""
+        try:
+            if len(returns_data) < window * 2 or len(returns_data.columns) < 2:
+                return {'rolling_corr_mean': 0.0, 'rolling_corr_trend': 0.0}
+            
+            # Calculate rolling correlations for each pair
+            rolling_corrs = {}
+            columns = list(returns_data.columns)
+            
+            for i in range(len(columns)):
+                for j in range(i + 1, len(columns)):
+                    col1, col2 = columns[i], columns[j]
+                    rolling_corr = returns_data[col1].rolling(window).corr(returns_data[col2])
+                    rolling_corrs[f"{col1}_{col2}"] = rolling_corr.dropna()
+            
+            if not rolling_corrs:
+                return {'rolling_corr_mean': 0.0, 'rolling_corr_trend': 0.0}
+            
+            # Aggregate rolling correlations
+            all_rolling_corrs = pd.concat(rolling_corrs.values(), axis=1)
+            mean_rolling_corr = all_rolling_corrs.mean(axis=1)
+            
+            features = {
+                'rolling_corr_mean': float(mean_rolling_corr.tail(1).iloc[0]) if len(mean_rolling_corr) > 0 else 0.0,
+                'rolling_corr_trend': float(mean_rolling_corr.tail(6).mean() - mean_rolling_corr.tail(24).mean()) if len(mean_rolling_corr) >= 24 else 0.0,
+                'rolling_corr_volatility': float(mean_rolling_corr.tail(24).std()) if len(mean_rolling_corr) >= 24 else 0.0,
+                'correlation_regime_changes': int((mean_rolling_corr.diff().abs() > 0.1).sum()) if len(mean_rolling_corr) > 1 else 0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate rolling correlations", error=str(e))
+            return {'rolling_corr_mean': 0.0, 'rolling_corr_trend': 0.0}
+    
+    def calculate_correlation_regime_features(self, returns_data: pd.DataFrame) -> dict:
+        """Calculate correlation regime features"""
+        try:
+            if len(returns_data) < 48 or len(returns_data.columns) < 2:
+                return {'correlation_regime': 'medium', 'regime_strength': 0.5}
+            
+            # Calculate recent correlation
+            recent_corr = returns_data.tail(24).corr()
+            mask = np.triu(np.ones_like(recent_corr, dtype=bool), k=1)
+            recent_correlations = recent_corr.where(mask).stack().dropna()
+            
+            # Calculate historical correlation
+            historical_corr = returns_data.corr()
+            historical_correlations = historical_corr.where(mask).stack().dropna()
+            
+            if len(recent_correlations) == 0 or len(historical_correlations) == 0:
+                return {'correlation_regime': 'medium', 'regime_strength': 0.5}
+            
+            # Determine correlation regime
+            recent_mean = recent_correlations.mean()
+            historical_mean = historical_correlations.mean()
+            
+            if recent_mean > 0.7:
+                regime = 'high_correlation'
+                regime_strength = min(recent_mean, 1.0)
+            elif recent_mean < 0.3:
+                regime = 'low_correlation'  
+                regime_strength = max(0.0, 1.0 - recent_mean)
+            else:
+                regime = 'medium_correlation'
+                regime_strength = 0.5
+            
+            # Calculate regime persistence
+            rolling_corr = returns_data.rolling(24).corr().groupby(level=1).mean()
+            if len(rolling_corr) > 0:
+                recent_regime_periods = 0
+                for _, corr_row in rolling_corr.tail(48).iterrows():
+                    corr_values = corr_row.dropna()
+                    if len(corr_values) > 0:
+                        period_mean = corr_values.mean()
+                        if regime == 'high_correlation' and period_mean > 0.7:
+                            recent_regime_periods += 1
+                        elif regime == 'low_correlation' and period_mean < 0.3:
+                            recent_regime_periods += 1
+                        elif regime == 'medium_correlation' and 0.3 <= period_mean <= 0.7:
+                            recent_regime_periods += 1
+                
+                regime_persistence = recent_regime_periods / min(48, len(rolling_corr))
+            else:
+                regime_persistence = 0.5
+            
+            return {
+                'correlation_regime': regime,
+                'regime_strength': float(regime_strength),
+                'regime_persistence': float(regime_persistence),
+                'correlation_change': float(recent_mean - historical_mean),
+                'correlation_dispersion': float(recent_correlations.std()) if len(recent_correlations) > 1 else 0.0
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate correlation regime features", error=str(e))
+            return {'correlation_regime': 'medium', 'regime_strength': 0.5}
+    
+    def _align_multivariate_returns(self, price_data: Dict[str, pd.DataFrame], tokens: List[DiscoveredToken]) -> pd.DataFrame:
+        """Align multivariate price data and calculate returns"""
+        try:
+            returns_dict = {}
+            
+            for token in tokens:
+                if token.address not in price_data:
+                    continue
+                
+                df = price_data[token.address].copy()
+                
+                # Ensure datetime index
+                if 'timestamp' in df.columns:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    df.set_index('timestamp', inplace=True)
+                elif not isinstance(df.index, pd.DatetimeIndex):
+                    continue
+                
+                # Calculate returns
+                if 'close' in df.columns:
+                    returns = df['close'].pct_change().dropna()
+                    returns_dict[token.symbol or token.address] = returns
+            
+            if not returns_dict:
+                return pd.DataFrame()
+            
+            # Align timestamps
+            aligned_returns = pd.DataFrame(returns_dict)
+            aligned_returns = aligned_returns.dropna()
+            
+            return aligned_returns
+            
+        except Exception as e:
+            self.logger.error("Failed to align multivariate returns", error=str(e))
+            return pd.DataFrame()
+    
+    def _get_default_correlation_features(self) -> dict:
+        """Get default correlation features when calculation fails"""
+        return {
+            'correlation_matrix': {'mean_correlation': 0.0, 'max_correlation': 0.0, 'correlation_stability': 0.5},
+            'rolling_correlations': {'rolling_corr_mean': 0.0, 'rolling_corr_trend': 0.0},
+            'regime_features': {'correlation_regime': 'medium', 'regime_strength': 0.5},
+            'num_assets': 1
+        }
+
+    def detect_market_regime(self, price_data: pd.DataFrame) -> dict:
+        """
+        Detect current market regime based on price action and volatility
+        
+        Args:
+            price_data: DataFrame with OHLCV data
+            
+        Returns:
+            Dictionary containing regime information
+        """
+        try:
+            if len(price_data) < 48:
+                return {'current_regime': 'sideways', 'regime_probability': 0.5}
+            
+            # Calculate returns
+            returns = price_data['close'].pct_change().dropna()
+            
+            if len(returns) < 24:
+                return {'current_regime': 'sideways', 'regime_probability': 0.5}
+            
+            # Calculate momentum and volatility metrics
+            short_momentum = returns.tail(24).mean()  # 24h momentum
+            medium_momentum = returns.tail(168).mean() if len(returns) >= 168 else short_momentum  # 1 week
+            
+            volatility = returns.tail(24).std()
+            historical_vol = returns.std()
+            
+            # Trend strength
+            trend_strength = abs(short_momentum) / (volatility + 1e-8)
+            
+            # Regime classification
+            regime_scores = {
+                'bull': 0.0,
+                'bear': 0.0,
+                'sideways': 0.0,
+                'high_vol': 0.0,
+                'low_vol': 0.0
+            }
+            
+            # Bull/Bear classification
+            if short_momentum > 0.005 and trend_strength > 0.5:  # Strong upward momentum
+                regime_scores['bull'] = min(trend_strength, 2.0) / 2.0
+            elif short_momentum < -0.005 and trend_strength > 0.5:  # Strong downward momentum
+                regime_scores['bear'] = min(trend_strength, 2.0) / 2.0
+            else:
+                regime_scores['sideways'] = 1.0 - trend_strength
+            
+            # Volatility classification
+            vol_ratio = volatility / (historical_vol + 1e-8)
+            if vol_ratio > 1.5:
+                regime_scores['high_vol'] = min(vol_ratio - 1.0, 1.0)
+            elif vol_ratio < 0.7:
+                regime_scores['low_vol'] = min(1.5 - vol_ratio, 1.0)
+            
+            # Select dominant regime
+            current_regime = max(regime_scores, key=regime_scores.get)
+            regime_probability = regime_scores[current_regime]
+            
+            # Calculate regime transition probabilities
+            transition_probs = self.calculate_regime_transition_probabilities(returns)
+            
+            # Additional regime features
+            regime_info = {
+                'current_regime': current_regime,
+                'regime_probability': float(regime_probability),
+                'momentum_score': float(short_momentum),
+                'trend_strength': float(trend_strength),
+                'volatility_ratio': float(vol_ratio),
+                'regime_stability': float(1.0 - transition_probs.get('transition_entropy', 0.5)),
+                'momentum_acceleration': float(short_momentum - medium_momentum)
+            }
+            
+            return regime_info
+            
+        except Exception as e:
+            self.logger.error("Failed to detect market regime", error=str(e))
+            return {'current_regime': 'sideways', 'regime_probability': 0.5}
+    
+    def calculate_regime_transition_probabilities(self, returns: pd.Series) -> dict:
+        """Calculate regime transition probabilities"""
+        try:
+            if len(returns) < 48:
+                return {'transition_entropy': 0.5}
+            
+            # Create regime history based on rolling momentum
+            rolling_momentum = returns.rolling(24).mean()
+            rolling_vol = returns.rolling(24).std()
+            
+            regime_history = []
+            for i in range(len(rolling_momentum)):
+                if pd.isna(rolling_momentum.iloc[i]) or pd.isna(rolling_vol.iloc[i]):
+                    continue
+                
+                momentum = rolling_momentum.iloc[i]
+                vol = rolling_vol.iloc[i]
+                
+                # Simple regime classification
+                if momentum > 0.003:
+                    regime = 'bull'
+                elif momentum < -0.003:
+                    regime = 'bear'
+                else:
+                    regime = 'sideways'
+                
+                regime_history.append(regime)
+            
+            if len(regime_history) < 10:
+                return {'transition_entropy': 0.5}
+            
+            # Calculate transition matrix
+            transitions = {}
+            for i in range(len(regime_history) - 1):
+                current = regime_history[i]
+                next_regime = regime_history[i + 1]
+                
+                if current not in transitions:
+                    transitions[current] = {}
+                if next_regime not in transitions[current]:
+                    transitions[current][next_regime] = 0
+                
+                transitions[current][next_regime] += 1
+            
+            # Calculate transition entropy (measure of regime stability)
+            total_transitions = sum(sum(next_states.values()) for next_states in transitions.values())
+            if total_transitions == 0:
+                return {'transition_entropy': 0.5}
+            
+            entropy = 0.0
+            for current_regime, next_states in transitions.items():
+                regime_total = sum(next_states.values())
+                for next_regime, count in next_states.items():
+                    prob = count / regime_total
+                    if prob > 0:
+                        entropy -= prob * np.log2(prob)
+            
+            # Normalize entropy
+            max_entropy = np.log2(3)  # Maximum entropy for 3 regimes
+            normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+            
+            return {
+                'transition_entropy': float(normalized_entropy),
+                'regime_persistence': float(1.0 - normalized_entropy),
+                'total_transitions': int(total_transitions)
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate regime transition probabilities", error=str(e))
+            return {'transition_entropy': 0.5}
+    
+    def calculate_volatility_clustering_features(self, price_data: pd.DataFrame) -> dict:
+        """Calculate volatility clustering and GARCH-like features"""
+        try:
+            if len(price_data) < 48:
+                return {'volatility_clustering': 0.5, 'garch_effect': 0.0}
+            
+            returns = price_data['close'].pct_change().dropna()
+            
+            if len(returns) < 24:
+                return {'volatility_clustering': 0.5, 'garch_effect': 0.0}
+            
+            # Calculate squared returns (proxy for volatility)
+            squared_returns = returns ** 2
+            
+            # Calculate volatility clustering using autocorrelation of squared returns
+            lag_1_corr = squared_returns.autocorr(lag=1) if len(squared_returns) > 1 else 0.0
+            lag_2_corr = squared_returns.autocorr(lag=2) if len(squared_returns) > 2 else 0.0
+            lag_3_corr = squared_returns.autocorr(lag=3) if len(squared_returns) > 3 else 0.0
+            
+            # Average autocorrelation as clustering measure
+            volatility_clustering = (lag_1_corr + lag_2_corr + lag_3_corr) / 3.0
+            
+            # GARCH effect: high volatility followed by high volatility
+            rolling_vol = returns.rolling(6).std()
+            vol_persistence = rolling_vol.autocorr(lag=1) if len(rolling_vol.dropna()) > 1 else 0.0
+            
+            # Volatility regime switching
+            high_vol_threshold = returns.std() * 1.5
+            low_vol_threshold = returns.std() * 0.7
+            
+            vol_regimes = []
+            for vol in rolling_vol.dropna():
+                if vol > high_vol_threshold:
+                    vol_regimes.append('high')
+                elif vol < low_vol_threshold:
+                    vol_regimes.append('low')
+                else:
+                    vol_regimes.append('medium')
+            
+            # Calculate regime persistence  
+            regime_changes = sum(1 for i in range(1, len(vol_regimes)) if vol_regimes[i] != vol_regimes[i-1])
+            regime_persistence = 1.0 - (regime_changes / max(len(vol_regimes) - 1, 1))
+            
+            return {
+                'volatility_clustering': float(volatility_clustering) if not pd.isna(volatility_clustering) else 0.5,
+                'garch_effect': float(vol_persistence) if not pd.isna(vol_persistence) else 0.0,
+                'volatility_regime_persistence': float(regime_persistence),
+                'current_vol_regime': vol_regimes[-1] if vol_regimes else 'medium',
+                'vol_lag1_autocorr': float(lag_1_corr) if not pd.isna(lag_1_corr) else 0.0
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate volatility clustering features", error=str(e))
+            return {'volatility_clustering': 0.5, 'garch_effect': 0.0}
+    
+    def calculate_market_stress_indicators(self, market_data: dict) -> dict:
+        """Calculate market stress and risk indicators"""
+        try:
+            # This would integrate with market-wide data when available
+            # For now, provide reasonable defaults
+            
+            stress_indicators = {
+                'market_stress_level': 0.3,  # Low-medium stress
+                'risk_off_sentiment': 0.0,   # Neutral
+                'flight_to_quality': 0.0,    # No flight to quality
+                'correlation_stress': 0.2,   # Low correlation stress
+                'liquidity_stress': 0.1,     # Low liquidity stress
+                'volatility_spike_risk': 0.25  # Low spike risk
+            }
+            
+            self.logger.info("Market stress indicators calculated with placeholder values")
+            return stress_indicators
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate market stress indicators", error=str(e))
+            return {
+                'market_stress_level': 0.5,
+                'risk_off_sentiment': 0.0,
+                'flight_to_quality': 0.0,
+                'correlation_stress': 0.5,
+                'liquidity_stress': 0.5,
+                'volatility_spike_risk': 0.5
+            }
+
     async def close(self):
         """Close market data aggregator and cleanup resources"""
         if self.market_aggregator:
