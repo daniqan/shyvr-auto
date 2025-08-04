@@ -13,6 +13,7 @@ REPOSITORY=${REPOSITORY:-"shyvr-ai-prod"}
 ENVIRONMENT=${1:-"staging"}
 SKIP_TESTS=${SKIP_TESTS:-false}
 FORCE_DEPLOY=${FORCE_DEPLOY:-false}
+SKIP_INFRASTRUCTURE=${SKIP_INFRASTRUCTURE:-false}
 
 # Deployment configuration
 DEPLOYMENT_ID=$(date +"%Y%m%d-%H%M%S")
@@ -36,6 +37,7 @@ log_header() { echo -e "${PURPLE}[PIPELINE]${NC} $1" | tee -a "$DEPLOYMENT_LOG";
 
 # Pipeline stages status
 PIPELINE_STAGES=(
+    "infrastructure_setup"
     "pre_deployment_validation"
     "security_scan"
     "build_and_test"
@@ -91,6 +93,68 @@ show_pipeline_progress() {
         esac
     done
     echo ""
+}
+
+# Stage 0: Infrastructure setup
+stage_infrastructure_setup() {
+    if [[ "$SKIP_INFRASTRUCTURE" == "true" ]]; then
+        log_warning "Skipping infrastructure setup (SKIP_INFRASTRUCTURE=true)"
+        update_stage_status "infrastructure_setup" "completed"
+        return 0
+    fi
+    
+    update_stage_status "infrastructure_setup" "in_progress"
+    log_header "🏗️ Stage 0: Infrastructure Setup"
+    
+    # Determine infrastructure setup mode based on environment
+    local infra_mode
+    case "$ENVIRONMENT" in
+        "production")
+            # In production, only validate - don't create missing infrastructure
+            infra_mode="validate"
+            log_info "Production environment: validating existing infrastructure"
+            ;;
+        "staging")
+            # In staging, create missing infrastructure
+            infra_mode="setup-if-needed"
+            log_info "Staging environment: creating missing infrastructure"
+            ;;
+        *)
+            # For other environments, create missing infrastructure
+            infra_mode="setup-if-needed"
+            log_info "Development environment: creating missing infrastructure"
+            ;;
+    esac
+    
+    # Run infrastructure setup
+    local script_dir="$(dirname "$0")"
+    if [[ ! -f "$script_dir/setup-infrastructure.sh" ]]; then
+        log_error "Infrastructure setup script not found: $script_dir/setup-infrastructure.sh"
+        update_stage_status "infrastructure_setup" "failed"
+        return 1
+    fi
+    
+    log_info "Running infrastructure setup in $infra_mode mode"
+    
+    if "$script_dir/setup-infrastructure.sh" \
+        --project-id "$PROJECT_ID" \
+        --region "$REGION" \
+        --environment "$ENVIRONMENT" \
+        --mode "$infra_mode"; then
+        
+        log_success "Infrastructure setup completed successfully"
+        update_stage_status "infrastructure_setup" "completed"
+        return 0
+    else
+        if [[ "$infra_mode" == "validate" ]]; then
+            log_error "Infrastructure validation failed - missing or misconfigured components"
+            log_error "Please fix infrastructure issues before deploying to production"
+        else
+            log_error "Infrastructure setup failed - cannot proceed with deployment"
+        fi
+        update_stage_status "infrastructure_setup" "failed"
+        return 1
+    fi
 }
 
 # Stage 1: Pre-deployment validation
@@ -438,6 +502,9 @@ main() {
     done
     
     # Execute pipeline stages
+    stage_infrastructure_setup || exit 1
+    show_pipeline_progress
+    
     stage_pre_deployment_validation || exit 1
     show_pipeline_progress
     
@@ -478,9 +545,10 @@ if [[ $# -eq 0 ]]; then
     echo "  production  - Deploy to production environment"
     echo ""
     echo "Environment Variables:"
-    echo "  SKIP_TESTS=true     - Skip testing stages"
-    echo "  FORCE_DEPLOY=true   - Skip validation failures"
-    echo "  IMAGE_TAG=<tag>     - Use specific image tag"
+    echo "  SKIP_TESTS=true         - Skip testing stages"
+    echo "  SKIP_INFRASTRUCTURE=true - Skip infrastructure setup stage"
+    echo "  FORCE_DEPLOY=true       - Skip validation failures"
+    echo "  IMAGE_TAG=<tag>         - Use specific image tag"
     echo ""
     echo "Examples:"
     echo "  $0 staging"
