@@ -141,14 +141,69 @@ class MultiHeadAttention(nn.Module):
                         attention_mask: Optional[torch.Tensor] = None,
                         causal_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Flash Attention implementation for memory efficiency
-        Simplified version - in production, would use optimized CUDA kernels
+        Flash Attention implementation with real Flash Attention when available
+        Falls back to memory-efficient chunked computation when not available
+        """
+        # Try to use real Flash Attention if available
+        try:
+            import flash_attn
+            from flash_attn import flash_attn_func
+            
+            # Reshape for Flash Attention: [batch, seq_len, n_heads, head_dim]
+            batch_size, n_heads, seq_len_q, d_k = Q.shape
+            seq_len_k = K.shape[2]
+            
+            Q_flash = Q.transpose(1, 2)  # [batch, seq_len_q, n_heads, d_k]
+            K_flash = K.transpose(1, 2)  # [batch, seq_len_k, n_heads, d_k]
+            V_flash = V.transpose(1, 2)  # [batch, seq_len_k, n_heads, d_k]
+            
+            # Determine if causal
+            is_causal = causal_mask is not None
+            
+            # Flash Attention call
+            output_flash = flash_attn_func(
+                Q_flash, K_flash, V_flash,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                softmax_scale=1.0 / self.scale,
+                causal=is_causal
+            )
+            
+            # Reshape back: [batch, n_heads, seq_len_q, d_k]
+            output = output_flash.transpose(1, 2)
+            
+            # Flash Attention doesn't return attention weights
+            # Create approximate weights for compatibility (optional)
+            attention_weights = torch.zeros(batch_size, n_heads, seq_len_q, seq_len_k,
+                                          device=Q.device, dtype=Q.dtype)
+            
+            logger.debug("Used real Flash Attention", 
+                        batch_size=batch_size, seq_len=seq_len_q)
+            
+            return output, attention_weights
+            
+        except ImportError:
+            logger.debug("Flash Attention not available, using chunked fallback")
+            return self._chunked_attention_fallback(Q, K, V, attention_mask, causal_mask)
+        except Exception as e:
+            logger.warning("Flash Attention failed, falling back to chunked computation", error=str(e))
+            return self._chunked_attention_fallback(Q, K, V, attention_mask, causal_mask)
+    
+    def _chunked_attention_fallback(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
+                                   attention_mask: Optional[torch.Tensor] = None,
+                                   causal_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Memory-efficient chunked attention fallback when Flash Attention is not available
         """
         batch_size, n_heads, seq_len_q, d_k = Q.shape
         seq_len_k = K.shape[2]
         
-        # For our implementation, we'll use chunked computation to simulate flash attention benefits
-        chunk_size = min(64, seq_len_q)  # Process in chunks
+        # Adaptive chunk size based on sequence length and available memory
+        if seq_len_q <= 128:
+            chunk_size = seq_len_q  # No chunking for short sequences
+        elif seq_len_q <= 512:
+            chunk_size = 64
+        else:
+            chunk_size = 32  # Smaller chunks for very long sequences
         
         output = torch.zeros_like(Q)
         attention_weights = torch.zeros(batch_size, n_heads, seq_len_q, seq_len_k, 
