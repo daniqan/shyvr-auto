@@ -25,9 +25,9 @@ logger = structlog.get_logger()
 
 @dataclass
 class MLEnhancedMarketState(MarketState):
-    """Market state enhanced with ML predictions"""
+    """Market state enhanced with ML predictions and Transformer features"""
     
-    # ML prediction features
+    # Core ML prediction features
     ml_prediction_1h: Optional[float] = None
     ml_prediction_4h: Optional[float] = None
     ml_prediction_24h: Optional[float] = None
@@ -35,11 +35,25 @@ class MLEnhancedMarketState(MarketState):
     ml_direction: Optional[str] = None
     volatility_forecast: Optional[float] = None
     
+    # Transformer-specific features
+    prediction_uncertainty: Optional[float] = None  # Ensemble uncertainty
+    model_consensus: Optional[float] = None  # Agreement between models
+    attention_focus: Optional[float] = None  # Main attention weight
+    temporal_importance: Optional[float] = None  # Time-based attention
+    cross_asset_correlation: Optional[float] = None  # Multi-asset attention
+    regime_confidence: Optional[float] = None  # Market regime certainty
+    
+    # Multi-model insights
+    transformer_weight: Optional[float] = None  # Combined Transformer influence
+    lstm_weight: Optional[float] = None  # LSTM influence
+    ensemble_diversity: Optional[float] = None  # Model diversity score
+    
     @classmethod
     def from_prediction(cls, prediction: PredictionResult, 
                        current_portfolio_value: float,
-                       position_size: float) -> 'MLEnhancedMarketState':
-        """Create ML-enhanced market state from prediction result"""
+                       position_size: float,
+                       model_weights: Optional[Dict] = None) -> 'MLEnhancedMarketState':
+        """Create ML-enhanced market state from prediction result with Transformer features"""
         token = prediction.token
         
         # Base market state features
@@ -62,25 +76,118 @@ class MLEnhancedMarketState(MarketState):
             cash_balance=current_portfolio_value * (1.0 - abs(position_size))  # Estimate cash based on position
         )
         
-        # Create enhanced state with ML features
+        # Extract Transformer-specific features
+        transformer_features = cls._extract_transformer_features(prediction, model_weights)
+        
+        # Create enhanced state with all features
         enhanced_state = cls(
             **base_state.__dict__,
+            # Core ML features
             ml_prediction_1h=prediction.price_prediction_1h,
             ml_prediction_4h=prediction.price_prediction_4h,
             ml_prediction_24h=prediction.price_prediction_24h,
             ml_confidence=prediction.confidence,
             ml_direction=prediction.direction.value if prediction.direction else None,
-            volatility_forecast=prediction.volatility_forecast
+            volatility_forecast=prediction.volatility_forecast,
+            # Transformer features
+            **transformer_features
         )
         
         return enhanced_state
     
+    @classmethod
+    def _extract_transformer_features(cls, prediction: PredictionResult, 
+                                    model_weights: Optional[Dict] = None) -> Dict[str, Optional[float]]:
+        """Extract Transformer-specific features from prediction result"""
+        features = {
+            'prediction_uncertainty': None,
+            'model_consensus': None,
+            'attention_focus': None,
+            'temporal_importance': None,
+            'cross_asset_correlation': None,
+            'regime_confidence': None,
+            'transformer_weight': None,
+            'lstm_weight': None,
+            'ensemble_diversity': None
+        }
+        
+        try:
+            # Extract prediction uncertainty if available
+            features['prediction_uncertainty'] = getattr(prediction, 'prediction_uncertainty', None)
+            
+            # Calculate model consensus from features_used if ensemble
+            if hasattr(prediction, 'features_used') and prediction.features_used:
+                ensemble_features = [f for f in prediction.features_used if 'ensemble' in f.lower()]
+                if ensemble_features:
+                    # Extract number of models from ensemble info
+                    for feature in ensemble_features:
+                        if 'models' in feature:
+                            try:
+                                num_models = int(feature.split('_')[1])
+                                features['model_consensus'] = min(1.0, num_models / 5.0)  # Normalize by max expected models
+                            except (ValueError, IndexError):
+                                pass
+            
+            # Extract attention-related features from metadata if available
+            if hasattr(prediction, 'model_metadata') and prediction.model_metadata:
+                metadata = prediction.model_metadata
+                features['attention_focus'] = metadata.get('max_attention_weight', None)
+                features['temporal_importance'] = metadata.get('temporal_attention_score', None)
+                features['cross_asset_correlation'] = metadata.get('cross_asset_attention', None)
+                features['regime_confidence'] = metadata.get('regime_certainty', None)
+            
+            # Calculate model type weights if available
+            if model_weights:
+                from src.ml_analysis.base import ModelType
+                
+                # Sum Transformer model weights
+                transformer_types = [ModelType.TRANSFORMER, ModelType.ITRANSFORMER, 
+                                   ModelType.PATCHTST, ModelType.TIMESMIXER]
+                transformer_weight = sum(model_weights.get(mt, 0.0) for mt in transformer_types 
+                                       if mt in model_weights)
+                features['transformer_weight'] = transformer_weight
+                features['lstm_weight'] = model_weights.get(ModelType.LSTM, 0.0)
+                
+                # Calculate ensemble diversity (standard deviation of weights)
+                if len(model_weights) > 1:
+                    weights = list(model_weights.values())
+                    mean_weight = sum(weights) / len(weights)
+                    variance = sum((w - mean_weight) ** 2 for w in weights) / len(weights)
+                    features['ensemble_diversity'] = variance ** 0.5  # Standard deviation
+            
+            # Set reasonable defaults for missing values
+            for key, value in features.items():
+                if value is None:
+                    if key in ['prediction_uncertainty', 'ensemble_diversity']:
+                        features[key] = 0.1  # Low uncertainty/diversity as default
+                    elif key in ['model_consensus', 'attention_focus', 'temporal_importance']:
+                        features[key] = 0.5  # Medium confidence as default
+                    elif key in ['transformer_weight', 'lstm_weight']:
+                        features[key] = 0.2  # Default weight distribution
+                    else:
+                        features[key] = 0.0  # Zero for other features
+                        
+        except Exception as e:
+            logger.warning("Failed to extract Transformer features", error=str(e))
+            # Return defaults on error
+            for key in features:
+                if key in ['prediction_uncertainty', 'ensemble_diversity']:
+                    features[key] = 0.1
+                elif key in ['model_consensus', 'attention_focus', 'temporal_importance']:
+                    features[key] = 0.5
+                elif key in ['transformer_weight', 'lstm_weight']:
+                    features[key] = 0.2
+                else:
+                    features[key] = 0.0
+        
+        return features
+    
     def to_feature_vector(self) -> np.ndarray:
-        """Convert enhanced market state to feature vector for RL"""
+        """Convert enhanced market state to feature vector for RL with Transformer features"""
         # Get base RL features (19 features)
         base_features = super().to_vector()
         
-        # Add ML prediction features (6 additional features)
+        # Core ML prediction features (6 features)
         ml_features = [
             self.ml_prediction_1h or self.price_usd,
             self.ml_prediction_4h or self.price_usd,
@@ -90,10 +197,24 @@ class MLEnhancedMarketState(MarketState):
             self.volatility_forecast or 0.1
         ]
         
-        # Combine base + ML features (25 total features)
+        # Transformer-specific features (9 additional features)
+        transformer_features = [
+            min(max(self.prediction_uncertainty or 0.1, 0.0), 1.0),  # Uncertainty [0,1]
+            min(max(self.model_consensus or 0.5, 0.0), 1.0),  # Consensus [0,1]
+            min(max(self.attention_focus or 0.5, 0.0), 1.0),  # Attention focus [0,1]
+            min(max(self.temporal_importance or 0.5, 0.0), 1.0),  # Temporal importance [0,1]
+            min(max(self.cross_asset_correlation or 0.0, -1.0), 1.0),  # Correlation [-1,1]
+            min(max(self.regime_confidence or 0.5, 0.0), 1.0),  # Regime confidence [0,1]
+            min(max(self.transformer_weight or 0.2, 0.0), 1.0),  # Transformer weight [0,1]
+            min(max(self.lstm_weight or 0.2, 0.0), 1.0),  # LSTM weight [0,1]
+            min(max(self.ensemble_diversity or 0.1, 0.0), 1.0)  # Diversity [0,1]
+        ]
+        
+        # Combine all features (19 + 6 + 9 = 34 total features)
         combined_features = np.concatenate([
             base_features,
-            np.array(ml_features, dtype=np.float32)
+            np.array(ml_features, dtype=np.float32),
+            np.array(transformer_features, dtype=np.float32)
         ])
         
         return combined_features
@@ -166,18 +287,28 @@ class MLRLBridge:
     
     def predict_and_act(self, portfolio_value: float, 
                        positions: Dict[str, float]) -> List[Dict[str, Any]]:
-        """Get integrated ML predictions and RL actions"""
+        """Get integrated ML predictions and RL actions with Transformer features"""
         # Get ML predictions
         ml_predictions = self.get_ml_predictions()
         
+        # Get model weights from ML analyzer if available
+        model_weights = None
+        if hasattr(self.ml_analyzer, 'get_model_performance'):
+            try:
+                performance_data = self.ml_analyzer.get_model_performance()
+                model_weights = performance_data.get('weights', None)
+            except Exception as e:
+                self.logger.warning("Failed to get model weights", error=str(e))
+        
         results = []
         for prediction in ml_predictions:
-            # Create enhanced market state
+            # Create enhanced market state with Transformer features
             position_size = positions.get(prediction.token.address, 0.0)
             enhanced_state = MLEnhancedMarketState.from_prediction(
                 prediction=prediction,
                 current_portfolio_value=portfolio_value,
-                position_size=position_size
+                position_size=position_size,
+                model_weights=model_weights
             )
             
             # Get RL action (handle async)
@@ -186,13 +317,17 @@ class MLRLBridge:
             else:
                 rl_action = self.rl_agent.predict_action(enhanced_state)
             
-            # Combine results
+            # Combine results with enhanced information
             result = {
                 'token': prediction.token,
                 'ml_prediction': prediction,
                 'rl_action': rl_action,
                 'enhanced_state': enhanced_state,
-                'confidence': prediction.confidence
+                'confidence': prediction.confidence,
+                # Add Transformer-specific insights
+                'transformer_confidence': enhanced_state.transformer_weight or 0.0,
+                'model_consensus': enhanced_state.model_consensus or 0.5,
+                'prediction_uncertainty': enhanced_state.prediction_uncertainty or 0.1
             }
             results.append(result)
         
