@@ -55,7 +55,11 @@ class TestMultiHeadAttention:
         key = torch.randn(batch_size, seq_len, d_model)
         value = torch.randn(batch_size, seq_len, d_model)
         
-        output, attention_weights = attention_module(query, key, value)
+        # Set to eval mode to disable dropout for consistent testing
+        attention_module.eval()
+        
+        with torch.no_grad():
+            output, attention_weights = attention_module(query, key, value)
         
         # Check output shape
         assert output.shape == (batch_size, seq_len, d_model)
@@ -67,6 +71,9 @@ class TestMultiHeadAttention:
         assert torch.allclose(attention_weights.sum(dim=-1), torch.ones_like(attention_weights.sum(dim=-1)), atol=1e-5)
         assert (attention_weights >= 0).all()
         assert (attention_weights <= 1).all()
+        
+        # Reset to training mode
+        attention_module.train()
     
     def test_self_attention(self, attention_module):
         """Test self-attention case (Q=K=V)"""
