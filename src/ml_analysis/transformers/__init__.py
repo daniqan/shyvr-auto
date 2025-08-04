@@ -24,6 +24,18 @@ from .temporal_embeddings import (
 )
 from .transformer_predictor import TransformerPredictor
 
+# Specific transformer implementations
+from .itransformer import iTransformerNetwork, iTransformerPredictor, InvertedAttentionConfig
+from .patchtst import PatchTSTNetwork, PatchTSTPredictor, PatchTSTConfig
+from .timesmixer import (
+    TimesMixerNetwork, 
+    TimesMixerPredictor, 
+    TimesMixerConfig,
+    PastDecomposableMixing,
+    FutureMultipredictorMixing,
+    MovingAverageDecomposition
+)
+
 __all__ = [
     # Base components
     'TransformerBase',
@@ -47,4 +59,19 @@ __all__ = [
     'VolatilityRegimeEncoder',
     # Model implementations
     'TransformerPredictor',
+    # iTransformer
+    'iTransformerNetwork',
+    'iTransformerPredictor', 
+    'InvertedAttentionConfig',
+    # PatchTST
+    'PatchTSTNetwork',
+    'PatchTSTPredictor',
+    'PatchTSTConfig',
+    # TimesMixer
+    'TimesMixerNetwork',
+    'TimesMixerPredictor',
+    'TimesMixerConfig',
+    'PastDecomposableMixing',
+    'FutureMultipredictorMixing',
+    'MovingAverageDecomposition',
 ]
