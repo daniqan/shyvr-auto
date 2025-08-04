@@ -11,6 +11,7 @@ import pandas as pd
 import structlog
 
 from src.discovery.base import DiscoveredToken
+from src.utils.base import Chain
 from .base import TechnicalIndicators, MarketFeatures, FeatureEngineeringError
 from .market_data_aggregator import MarketDataAggregator
 
@@ -1438,6 +1439,375 @@ class FeatureEngineer:
                 'liquidity_stress': 0.5,
                 'volatility_spike_risk': 0.5
             }
+
+    def apply_transformer_normalization(self, features: np.ndarray) -> np.ndarray:
+        """
+        Apply attention-friendly normalization schemes
+        
+        Args:
+            features: Feature array to normalize
+            
+        Returns:
+            Normalized features suitable for attention mechanisms
+        """
+        try:
+            # Replace NaN/Inf with zeros first
+            features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+            
+            # Apply robust scaling to handle outliers
+            features = self._apply_robust_scaling(features)
+            
+            # Apply layer normalization
+            features = self._apply_layer_normalization(features)
+            
+            # Final clipping for attention stability
+            features = np.clip(features, -5.0, 5.0)
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to apply transformer normalization", error=str(e))
+            return np.zeros_like(features)
+    
+    def calculate_attention_scaling_factors(self, feature_matrix: np.ndarray) -> dict:
+        """Calculate scaling factors optimized for attention mechanisms"""
+        try:
+            scaling_factors = {}
+            
+            # Calculate per-feature statistics
+            for i in range(feature_matrix.shape[1]):
+                feature_col = feature_matrix[:, i]
+                
+                # Robust statistics
+                median = np.median(feature_col)
+                mad = np.median(np.abs(feature_col - median))  # Median Absolute Deviation
+                q75, q25 = np.percentile(feature_col, [75, 25])
+                iqr = q75 - q25
+                
+                scaling_factors[f'feature_{i}'] = {
+                    'median': float(median),
+                    'mad': float(mad),
+                    'iqr': float(iqr),
+                    'robust_scale': float(iqr if iqr > 0 else mad if mad > 0 else 1.0)
+                }
+            
+            return scaling_factors
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate attention scaling factors", error=str(e))
+            return {}
+    
+    def _apply_robust_scaling(self, features: np.ndarray) -> np.ndarray:
+        """Apply robust scaling using median and IQR"""
+        if len(features.shape) == 1:
+            median = np.median(features)
+            q75, q25 = np.percentile(features, [75, 25])
+            iqr = q75 - q25
+            return (features - median) / (iqr + 1e-8)
+        else:
+            # Apply per-feature scaling
+            scaled = features.copy()
+            for i in range(features.shape[1]):
+                col = features[:, i]
+                median = np.median(col)
+                q75, q25 = np.percentile(col, [75, 25])
+                iqr = q75 - q25
+                scaled[:, i] = (col - median) / (iqr + 1e-8)
+            return scaled
+    
+    def _apply_layer_normalization(self, features: np.ndarray) -> np.ndarray:
+        """Apply layer normalization across feature dimension"""
+        if len(features.shape) == 1:
+            mean = np.mean(features)
+            std = np.std(features)
+            return (features - mean) / (std + 1e-8)
+        else:
+            # Apply across feature dimension
+            mean = np.mean(features, axis=1, keepdims=True)
+            std = np.std(features, axis=1, keepdims=True)
+            return (features - mean) / (std + 1e-8)
+
+    # Crypto-Specific Features
+    def calculate_funding_rate_features(self, symbol: str) -> dict:
+        """Calculate funding rate features for crypto derivatives"""
+        try:
+            # Placeholder implementation - would integrate with real funding rate APIs
+            # For now, return simulated funding rate features
+            
+            funding_features = {
+                'current_funding_rate': np.random.normal(0.0001, 0.0005),  # Typical funding rates
+                'funding_rate_trend_1h': np.random.normal(0.0, 0.0001),
+                'funding_rate_trend_8h': np.random.normal(0.0, 0.0002),
+                'funding_rate_volatility': abs(np.random.normal(0.0002, 0.0001)),
+                'funding_payments_expected': np.random.normal(0.0, 0.001),
+                'funding_rate_percentile': np.random.uniform(0.1, 0.9)
+            }
+            
+            self.logger.info("Funding rate features calculated", symbol=symbol)
+            return funding_features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate funding rate features", symbol=symbol, error=str(e))
+            return self._get_default_funding_features()
+    
+    def calculate_basis_spread_features(self, spot_prices: pd.Series, futures_prices: pd.Series) -> dict:
+        """Calculate basis spread features between spot and futures"""
+        try:
+            if len(spot_prices) != len(futures_prices) or len(spot_prices) < 24:
+                return self._get_default_basis_features()
+            
+            # Calculate basis spread
+            basis_spread = futures_prices - spot_prices
+            basis_spread_pct = (futures_prices - spot_prices) / spot_prices * 100
+            
+            # Calculate features
+            features = {
+                'current_basis_spread': float(basis_spread.iloc[-1]),
+                'basis_spread_pct': float(basis_spread_pct.iloc[-1]),
+                'basis_spread_mean_24h': float(basis_spread.tail(24).mean()),
+                'basis_spread_std_24h': float(basis_spread.tail(24).std()),
+                'basis_spread_trend': float(basis_spread.tail(6).mean() - basis_spread.tail(24).mean()),
+                'contango_indicator': 1.0 if basis_spread.iloc[-1] > 0 else 0.0,
+                'backwardation_indicator': 1.0 if basis_spread.iloc[-1] < 0 else 0.0,
+                'basis_spread_percentile': float((basis_spread.iloc[-1] > basis_spread).sum() / len(basis_spread))
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate basis spread features", error=str(e))
+            return self._get_default_basis_features()
+    
+    def calculate_arbitrage_indicators(self, exchange_prices: Dict[str, pd.Series]) -> dict:
+        """Calculate cross-exchange arbitrage indicators"""
+        try:
+            if len(exchange_prices) < 2:
+                return self._get_default_arbitrage_features()
+            
+            # Convert to DataFrame for easier handling
+            price_df = pd.DataFrame(exchange_prices)
+            price_df = price_df.dropna()
+            
+            if len(price_df) < 10:
+                return self._get_default_arbitrage_features()
+            
+            # Calculate arbitrage opportunities
+            max_prices = price_df.max(axis=1)
+            min_prices = price_df.min(axis=1)
+            arbitrage_spread = (max_prices - min_prices) / min_prices * 100
+            
+            # Calculate features
+            features = {
+                'current_arbitrage_spread': float(arbitrage_spread.iloc[-1]),
+                'max_arbitrage_spread_24h': float(arbitrage_spread.tail(24).max()) if len(arbitrage_spread) >= 24 else float(arbitrage_spread.max()),
+                'mean_arbitrage_spread': float(arbitrage_spread.mean()),
+                'arbitrage_opportunity_frequency': float((arbitrage_spread > 0.1).sum() / len(arbitrage_spread)),  # >0.1% spread
+                'price_dispersion': float(price_df.iloc[-1].std() / price_df.iloc[-1].mean()),
+                'exchange_count': len(exchange_prices),
+                'arbitrage_trend': float(arbitrage_spread.tail(6).mean() - arbitrage_spread.tail(24).mean()) if len(arbitrage_spread) >= 24 else 0.0
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate arbitrage indicators", error=str(e))
+            return self._get_default_arbitrage_features()
+    
+    def calculate_trading_session_features(self, price_data: pd.DataFrame) -> dict:
+        """Calculate trading session-based features"""
+        try:
+            if 'timestamp' in price_data.columns:
+                price_data = price_data.copy()
+                price_data['timestamp'] = pd.to_datetime(price_data['timestamp'])
+                price_data.set_index('timestamp', inplace=True)
+            
+            if not isinstance(price_data.index, pd.DatetimeIndex):
+                return self._get_default_session_features()
+            
+            # Add time-based features
+            price_data['hour'] = price_data.index.hour
+            price_data['day_of_week'] = price_data.index.dayofweek
+            
+            # Define trading sessions (UTC times)
+            asian_session = (price_data['hour'] >= 0) & (price_data['hour'] < 8)
+            european_session = (price_data['hour'] >= 8) & (price_data['hour'] < 16)
+            us_session = (price_data['hour'] >= 16) & (price_data['hour'] < 24)
+            
+            # Calculate session-based features
+            current_hour = price_data.index[-1].hour
+            
+            features = {
+                'is_asian_session': 1.0 if 0 <= current_hour < 8 else 0.0,
+                'is_european_session': 1.0 if 8 <= current_hour < 16 else 0.0,
+                'is_us_session': 1.0 if 16 <= current_hour < 24 else 0.0,
+                'current_hour': float(current_hour),
+                'is_weekend': 1.0 if price_data.index[-1].dayofweek >= 5 else 0.0,
+                'session_volume_ratio': self._calculate_session_volume_ratio(price_data, current_hour),
+                'session_volatility_ratio': self._calculate_session_volatility_ratio(price_data, current_hour),
+                'hours_until_major_session': self._calculate_hours_to_major_session(current_hour)
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate trading session features", error=str(e))
+            return self._get_default_session_features()
+    
+    def calculate_block_time_features(self, chain: Chain) -> dict:
+        """Calculate blockchain-specific timing features"""
+        try:
+            # Chain-specific block time characteristics
+            block_times = {
+                Chain.ETHEREUM: 12.0,  # ~12 seconds
+                Chain.SOLANA: 0.4,     # ~400ms
+                Chain.BASE: 2.0,       # ~2 seconds
+                Chain.POLYGON: 2.0,    # ~2 seconds
+                Chain.BSC: 3.0,        # ~3 seconds
+            }
+            
+            base_block_time = block_times.get(chain, 15.0)  # Default to 15s
+            
+            # Simulate block time variability and network congestion effects
+            current_block_time = base_block_time * np.random.uniform(0.8, 1.5)
+            network_congestion = np.random.uniform(0.0, 1.0)
+            
+            features = {
+                'chain_block_time': float(base_block_time),
+                'current_block_time_estimate': float(current_block_time),
+                'block_time_variability': float(abs(current_block_time - base_block_time) / base_block_time),
+                'network_congestion_estimate': float(network_congestion),
+                'blocks_per_hour': float(3600 / current_block_time),
+                'transaction_finality_time': float(current_block_time * 6),  # Assume 6 confirmations
+                'chain_efficiency_score': float(1.0 / (current_block_time + 1))
+            }
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to calculate block time features", chain=chain, error=str(e))
+            return self._get_default_block_features()
+    
+    def _calculate_session_volume_ratio(self, price_data: pd.DataFrame, current_hour: int) -> float:
+        """Calculate volume ratio for current session vs average"""
+        try:
+            if 'volume' not in price_data.columns or len(price_data) < 24:
+                return 1.0
+            
+            # Get current session
+            if 0 <= current_hour < 8:
+                session_mask = (price_data['hour'] >= 0) & (price_data['hour'] < 8)
+            elif 8 <= current_hour < 16:
+                session_mask = (price_data['hour'] >= 8) & (price_data['hour'] < 16)
+            else:
+                session_mask = (price_data['hour'] >= 16) & (price_data['hour'] < 24)
+            
+            session_volume = price_data[session_mask]['volume'].mean()
+            overall_volume = price_data['volume'].mean()
+            
+            return float(session_volume / overall_volume) if overall_volume > 0 else 1.0
+            
+        except Exception:
+            return 1.0
+    
+    def _calculate_session_volatility_ratio(self, price_data: pd.DataFrame, current_hour: int) -> float:
+        """Calculate volatility ratio for current session vs average"""
+        try:
+            if 'close' not in price_data.columns or len(price_data) < 24:
+                return 1.0
+            
+            returns = price_data['close'].pct_change().dropna()
+            
+            # Get current session
+            if 0 <= current_hour < 8:
+                session_mask = (price_data['hour'] >= 0) & (price_data['hour'] < 8)
+            elif 8 <= current_hour < 16:
+                session_mask = (price_data['hour'] >= 8) & (price_data['hour'] < 16)
+            else:
+                session_mask = (price_data['hour'] >= 16) & (price_data['hour'] < 24)
+            
+            session_returns = returns[session_mask[1:]]  # Adjust for pct_change offset
+            session_vol = session_returns.std() if len(session_returns) > 1 else 0.0
+            overall_vol = returns.std()
+            
+            return float(session_vol / overall_vol) if overall_vol > 0 else 1.0
+            
+        except Exception:
+            return 1.0
+    
+    def _calculate_hours_to_major_session(self, current_hour: int) -> float:
+        """Calculate hours until next major trading session opens"""
+        # Major sessions: US market open (14:30 UTC), Asian market open (23:00 UTC)
+        major_sessions = [14.5, 23.0]  # 14:30 and 23:00 UTC
+        
+        hours_to_sessions = []
+        for session_hour in major_sessions:
+            if current_hour <= session_hour:
+                hours_to_sessions.append(session_hour - current_hour)
+            else:
+                hours_to_sessions.append(24 - current_hour + session_hour)
+        
+        return float(min(hours_to_sessions))
+    
+    def _get_default_funding_features(self) -> dict:
+        """Default funding rate features"""
+        return {
+            'current_funding_rate': 0.0001,
+            'funding_rate_trend_1h': 0.0,
+            'funding_rate_trend_8h': 0.0,
+            'funding_rate_volatility': 0.0002,
+            'funding_payments_expected': 0.0,
+            'funding_rate_percentile': 0.5
+        }
+    
+    def _get_default_basis_features(self) -> dict:
+        """Default basis spread features"""
+        return {
+            'current_basis_spread': 0.0,
+            'basis_spread_pct': 0.0,
+            'basis_spread_mean_24h': 0.0,
+            'basis_spread_std_24h': 0.0,
+            'basis_spread_trend': 0.0,
+            'contango_indicator': 0.0,
+            'backwardation_indicator': 0.0,
+            'basis_spread_percentile': 0.5
+        }
+    
+    def _get_default_arbitrage_features(self) -> dict:
+        """Default arbitrage features"""
+        return {
+            'current_arbitrage_spread': 0.0,
+            'max_arbitrage_spread_24h': 0.0,
+            'mean_arbitrage_spread': 0.0,
+            'arbitrage_opportunity_frequency': 0.0,
+            'price_dispersion': 0.0,
+            'exchange_count': 1,
+            'arbitrage_trend': 0.0
+        }
+    
+    def _get_default_session_features(self) -> dict:
+        """Default trading session features"""
+        return {
+            'is_asian_session': 0.0,
+            'is_european_session': 0.0,
+            'is_us_session': 0.0,
+            'current_hour': 12.0,
+            'is_weekend': 0.0,
+            'session_volume_ratio': 1.0,
+            'session_volatility_ratio': 1.0,
+            'hours_until_major_session': 6.0
+        }
+    
+    def _get_default_block_features(self) -> dict:
+        """Default block time features"""
+        return {
+            'chain_block_time': 15.0,
+            'current_block_time_estimate': 15.0,
+            'block_time_variability': 0.1,
+            'network_congestion_estimate': 0.3,
+            'blocks_per_hour': 240.0,
+            'transaction_finality_time': 90.0,
+            'chain_efficiency_score': 0.06
+        }
 
     async def close(self):
         """Close market data aggregator and cleanup resources"""
