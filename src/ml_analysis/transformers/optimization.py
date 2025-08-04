@@ -594,6 +594,372 @@ class AutoregressiveGenerator(nn.Module):
         return total_stats
 
 
+# Phase 2.1: Dynamic Batching Configuration and Implementation
+
+@dataclass
+class DynamicBatchingConfig:
+    """Configuration for dynamic batching optimization"""
+    max_batch_size: int = 8
+    min_batch_size: int = 1
+    batch_timeout_ms: int = 100
+    sequence_padding_strategy: str = "longest"  # "longest", "fixed", "bucketing"
+    memory_limit_mb: int = 512
+    enable_adaptive_sizing: bool = True
+    fixed_sequence_length: int = 128
+    bucketing_strategy: str = "power_of_two"  # "uniform", "power_of_two", "adaptive"
+    
+    def __post_init__(self):
+        if self.sequence_padding_strategy not in ["longest", "fixed", "bucketing"]:
+            raise ValueError(f"Invalid sequence padding strategy: {self.sequence_padding_strategy}")
+        if self.max_batch_size <= 0:
+            raise ValueError("max_batch_size must be positive")
+        if self.min_batch_size <= 0:
+            raise ValueError("min_batch_size must be positive")
+        if self.min_batch_size > self.max_batch_size:
+            raise ValueError("min_batch_size cannot be greater than max_batch_size")
+
+
+class SequenceLengthBatcher:
+    """Batches sequences by length for optimal processing"""
+    
+    def __init__(self, config: DynamicBatchingConfig):
+        self.config = config
+        self.sequence_buckets = {}
+        self.batching_stats = {
+            "total_requests_processed": 0,
+            "average_batch_size": 0.0,
+            "bucket_utilization": {},
+            "padding_efficiency": 0.0
+        }
+        self.bucket_boundaries = self._initialize_buckets()
+        self.logger = structlog.get_logger().bind(component="SequenceLengthBatcher")
+        
+    def _initialize_buckets(self) -> List[int]:
+        """Initialize sequence length buckets"""
+        if self.config.bucketing_strategy == "power_of_two":
+            # Powers of 2: 8, 16, 32, 64, 128, 256, 512
+            return [2**i for i in range(3, 10)]
+        elif self.config.bucketing_strategy == "uniform":
+            # Uniform intervals: every 32 tokens up to 512
+            return list(range(32, 513, 32))
+        else:  # adaptive
+            # Default reasonable buckets
+            return [16, 32, 64, 128, 256, 512]
+            
+    def get_bucket_tolerance(self) -> int:
+        """Get bucket tolerance for grouping similar lengths"""
+        return 8  # Allow sequences within 8 tokens to be grouped
+        
+    def create_sequence_buckets(self, requests: List[Any]) -> Dict[str, List[Any]]:
+        """Create sequence buckets from requests"""
+        buckets = defaultdict(list)
+        
+        for request in requests:
+            seq_len = getattr(request, 'sequence_length', len(request.sequence_data))
+            bucket_key = self._find_best_bucket(seq_len)
+            buckets[bucket_key].append(request)
+            
+        return dict(buckets)
+        
+    def _find_best_bucket(self, seq_len: int) -> str:
+        """Find the best bucket for a given sequence length"""
+        for boundary in self.bucket_boundaries:
+            if seq_len <= boundary:
+                return f"bucket_{boundary}"
+        return f"bucket_{self.bucket_boundaries[-1]}"  # Largest bucket
+        
+    def create_padded_batch(self, requests: List[Any]) -> torch.Tensor:
+        """Create padded batch tensor from requests"""
+        if not requests:
+            return torch.empty(0)
+            
+        # Get sequence data from requests
+        sequences = []
+        for request in requests:
+            if hasattr(request, 'sequence_data'):
+                sequences.append(request.sequence_data)
+            else:
+                # Fallback for test data
+                sequences.append(torch.randn(getattr(request, 'sequence_length', 10), 128))
+                
+        # Determine target length based on strategy
+        if self.config.sequence_padding_strategy == "longest":
+            target_length = max(seq.shape[0] for seq in sequences)
+        elif self.config.sequence_padding_strategy == "fixed":
+            target_length = self.config.fixed_sequence_length
+        else:  # bucketing
+            target_length = max(seq.shape[0] for seq in sequences)
+            
+        # Pad sequences
+        padded_sequences = []
+        for seq in sequences:
+            if seq.shape[0] < target_length:
+                padding = torch.zeros(target_length - seq.shape[0], seq.shape[1])
+                padded_seq = torch.cat([seq, padding], dim=0)
+            else:
+                padded_seq = seq[:target_length]  # Truncate if too long
+            padded_sequences.append(padded_seq)
+            
+        return torch.stack(padded_sequences)
+        
+    def create_padded_batch_with_mask(self, requests: List[Any]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Create padded batch with attention mask"""
+        if not requests:
+            return torch.empty(0), torch.empty(0)
+            
+        padded_batch = self.create_padded_batch(requests)
+        batch_size, max_seq_len = padded_batch.shape[:2]
+        
+        # Create attention mask
+        attention_mask = torch.zeros(batch_size, max_seq_len, dtype=torch.bool)
+        
+        for i, request in enumerate(requests):
+            actual_length = getattr(request, 'sequence_length', 10)
+            attention_mask[i, :actual_length] = True
+            
+        return padded_batch, attention_mask
+        
+    def process_requests_adaptive(self, requests: List[Any]):
+        """Process requests with adaptive bucket adjustment"""
+        # Update statistics
+        self.batching_stats["total_requests_processed"] += len(requests)
+        
+        # Simple adaptive logic - could be more sophisticated
+        sequence_lengths = [getattr(req, 'sequence_length', 10) for req in requests]
+        if len(set(sequence_lengths)) > len(self.bucket_boundaries) * 0.8:
+            # Too many different lengths - add more buckets
+            new_boundary = int(np.mean(sequence_lengths))
+            if new_boundary not in self.bucket_boundaries:
+                self.bucket_boundaries.append(new_boundary)
+                self.bucket_boundaries.sort()
+                
+    def get_bucket_boundaries(self) -> List[int]:
+        """Get current bucket boundaries"""
+        return self.bucket_boundaries.copy()
+        
+    def get_batching_statistics(self) -> Dict[str, Any]:
+        """Get batching statistics"""
+        return self.batching_stats.copy()
+
+
+class MultiAssetBatcher:
+    """Batches requests from multiple assets"""
+    
+    def __init__(self, config: DynamicBatchingConfig):
+        self.config = config
+        self.asset_queues = defaultdict(list)
+        self.batching_metrics = {
+            "requests_by_asset": defaultdict(int),
+            "batch_distribution": {},
+            "load_balance_score": 0.0
+        }
+        self.logger = structlog.get_logger().bind(component="MultiAssetBatcher")
+        
+    def create_mixed_asset_batches(self, requests: List[Any]) -> List[Any]:
+        """Create mixed asset batches"""
+        if not requests:
+            return []
+            
+        batches = []
+        current_batch = []
+        
+        for request in requests:
+            current_batch.append(request)
+            
+            if len(current_batch) >= self.config.max_batch_size:
+                batch_obj = type('Batch', (), {
+                    'requests': current_batch.copy(),
+                    'batch_size': len(current_batch)
+                })()
+                batches.append(batch_obj)
+                current_batch.clear()
+                
+        # Add remaining requests as final batch
+        if current_batch:
+            batch_obj = type('Batch', (), {
+                'requests': current_batch.copy(),
+                'batch_size': len(current_batch)
+            })()
+            batches.append(batch_obj)
+            
+        return batches
+        
+    def create_priority_ordered_batches(self, requests: List[Any]) -> List[Any]:
+        """Create batches ordered by priority"""
+        # Sort by priority (higher first)
+        sorted_requests = sorted(requests, key=lambda x: getattr(x, 'priority', 1), reverse=True)
+        return self.create_mixed_asset_batches(sorted_requests)
+        
+    def create_load_balanced_batches(self, requests: List[Any]) -> List[Any]:
+        """Create load-balanced batches across assets"""
+        # Group by asset
+        asset_groups = defaultdict(list)
+        for request in requests:
+            asset_id = getattr(request, 'asset_id', 'unknown')
+            asset_groups[asset_id].append(request)
+            
+        # Create balanced batches
+        batches = []
+        remaining_requests = dict(asset_groups)
+        
+        while any(remaining_requests.values()):
+            current_batch = []
+            
+            # Try to get requests from each asset
+            for asset_id in list(remaining_requests.keys()):
+                if remaining_requests[asset_id] and len(current_batch) < self.config.max_batch_size:
+                    current_batch.append(remaining_requests[asset_id].pop(0))
+                    
+                # Remove empty asset groups
+                if not remaining_requests[asset_id]:
+                    del remaining_requests[asset_id]
+                    
+            if current_batch:
+                batch_obj = type('Batch', (), {
+                    'requests': current_batch,
+                    'batch_size': len(current_batch)
+                })()
+                batches.append(batch_obj)
+                
+        return batches
+        
+    def create_temporal_ordered_batches(self, requests: List[Any]) -> List[Any]:
+        """Create batches ordered by timestamp (newest first)"""
+        sorted_requests = sorted(requests, key=lambda x: getattr(x, 'timestamp', 0), reverse=True)
+        return self.create_mixed_asset_batches(sorted_requests)
+        
+    def create_similarity_based_batches(self, requests: List[Any]) -> List[Any]:
+        """Create batches based on asset similarity"""
+        # Simple similarity: group crypto vs stocks
+        crypto_assets = ["BTC", "ETH", "ADA", "DOT", "SOL"]
+        stock_assets = ["AAPL", "GOOGL", "MSFT", "TSLA", "AMZN"]
+        
+        crypto_requests = []
+        stock_requests = []
+        other_requests = []
+        
+        for request in requests:
+            asset_id = getattr(request, 'asset_id', 'unknown')
+            if asset_id in crypto_assets:
+                crypto_requests.append(request)
+            elif asset_id in stock_assets:
+                stock_requests.append(request)
+            else:
+                other_requests.append(request)
+                
+        # Create batches for each group
+        batches = []
+        for group in [crypto_requests, stock_requests, other_requests]:
+            if group:
+                batches.extend(self.create_mixed_asset_batches(group))
+                
+        return batches
+
+
+class AdaptiveBatchProcessor:
+    """Adaptive batch processor with dynamic sizing"""
+    
+    def __init__(self, config: DynamicBatchingConfig):
+        self.config = config
+        self.performance_history = []
+        self.current_batch_size = config.max_batch_size
+        self.adaptation_metrics = {
+            "adaptations_made": 0,
+            "performance_improvements": 0,
+            "last_adaptation_time": None
+        }
+        self.logger = structlog.get_logger().bind(component="AdaptiveBatchProcessor")
+        
+    async def adapt_batch_size(self, performance_data: Dict[str, Any]):
+        """Adapt batch size based on performance"""
+        current_latency = performance_data.get("average_latency_ms", 0)
+        current_memory = performance_data.get("memory_usage_mb", 0)
+        
+        # Simple adaptation logic
+        if current_latency > 150:  # Too slow
+            self.current_batch_size = max(1, int(self.current_batch_size * 0.8))
+        elif current_latency < 50 and current_memory < self.config.memory_limit_mb * 0.7:  # Can handle more
+            self.current_batch_size = min(self.config.max_batch_size, int(self.current_batch_size * 1.2))
+            
+        self.adaptation_metrics["adaptations_made"] += 1
+        self.adaptation_metrics["last_adaptation_time"] = datetime.now()
+        
+    async def adapt_timeout(self, request_rate_data: Dict[str, Any]):
+        """Adapt timeout based on request rate"""
+        requests_per_second = request_rate_data.get("requests_per_second", 10)
+        
+        if requests_per_second < 5:  # Low rate - increase timeout
+            self.config.batch_timeout_ms = min(500, int(self.config.batch_timeout_ms * 1.5))
+        elif requests_per_second > 20:  # High rate - decrease timeout
+            self.config.batch_timeout_ms = max(10, int(self.config.batch_timeout_ms * 0.8))
+            
+    async def adapt_to_memory_pressure(self, memory_data: Dict[str, Any]):
+        """Adapt to memory pressure"""
+        memory_pressure = memory_data.get("memory_pressure", 0.5)
+        
+        if memory_pressure > 0.8:  # High pressure
+            self.current_batch_size = max(1, int(self.current_batch_size * 0.6))
+        elif memory_pressure < 0.4:  # Low pressure
+            self.current_batch_size = min(self.config.max_batch_size, int(self.current_batch_size * 1.1))
+            
+    def add_performance_data(self, performance_data: Dict[str, Any]):
+        """Add performance data to history"""
+        performance_data["timestamp"] = datetime.now()
+        self.performance_history.append(performance_data)
+        
+        # Keep only recent history
+        if len(self.performance_history) > 100:
+            self.performance_history = self.performance_history[-100:]
+            
+    def analyze_performance_trends(self) -> Dict[str, str]:
+        """Analyze performance trends"""
+        if len(self.performance_history) < 5:
+            return {"latency_trend": "insufficient_data", "throughput_trend": "insufficient_data"}
+            
+        recent_data = self.performance_history[-5:]
+        
+        # Simple trend analysis
+        latencies = [d.get("latency_ms", 0) for d in recent_data]
+        throughputs = [d.get("throughput", 0) for d in recent_data]
+        
+        latency_trend = "increasing" if latencies[-1] > latencies[0] else "decreasing"
+        throughput_trend = "increasing" if throughputs[-1] > throughputs[0] else "decreasing"
+        
+        return {"latency_trend": latency_trend, "throughput_trend": throughput_trend}
+        
+    def select_adaptation_strategy(self, scenario: Dict[str, Any]) -> str:
+        """Select adaptation strategy based on scenario"""
+        latency = scenario.get("latency_ms", 0)
+        memory = scenario.get("memory_mb", 0)
+        error_rate = scenario.get("error_rate", 0)
+        
+        if error_rate > 0.02:
+            return "error_reduction"
+        elif latency > 150:
+            return "reduce_batch_size"
+        elif memory > self.config.memory_limit_mb * 0.8:
+            return "memory_optimization"
+        else:
+            return "increase_timeout"
+            
+    def create_time_constrained_batches(self, requests: List[Any]) -> List[Any]:
+        """Create batches with time constraints"""
+        batches = []
+        current_batch = []
+        
+        for request in requests:
+            current_batch.append(request)
+            
+            if len(current_batch) >= self.current_batch_size:
+                batches.append(current_batch.copy())
+                current_batch.clear()
+                
+        if current_batch:
+            batches.append(current_batch)
+            
+        return batches
+
+
 @dataclass
 class FlashAttentionConfig:
     """Configuration for Flash Attention optimization"""
@@ -1327,6 +1693,551 @@ def benchmark_attention_performance(batch_sizes: List[int] = [1, 2, 4],
     }
 
 
+# Phase 2.1: Model Compilation and ONNX Export
+
+@dataclass
+class ModelCompilationConfig:
+    """Configuration for torch.compile optimization"""
+    mode: str = "reduce-overhead"  # "default", "reduce-overhead", "max-autotune"
+    backend: str = "inductor"  # "inductor", "aot_eager", "cudagraphs"
+    dynamic: bool = True
+    fullgraph: bool = False
+    disable: bool = False
+    options: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        valid_modes = ["default", "reduce-overhead", "max-autotune"]
+        if self.mode not in valid_modes:
+            raise ValueError(f"Invalid mode: {self.mode}. Must be one of {valid_modes}")
+        
+        valid_backends = ["inductor", "aot_eager", "cudagraphs", "onnxrt"]
+        if self.backend not in valid_backends:
+            raise ValueError(f"Invalid backend: {self.backend}. Must be one of {valid_backends}")
+
+
+@dataclass 
+class ONNXExportConfig:
+    """Configuration for ONNX export"""
+    export_params: bool = True
+    verbose: bool = False
+    training: bool = False
+    input_names: Optional[List[str]] = None
+    output_names: Optional[List[str]] = None
+    dynamic_axes: Optional[Dict[str, Dict[int, str]]] = None
+    opset_version: int = 17
+    do_constant_folding: bool = True
+    keep_initializers_as_inputs: bool = False
+    custom_opsets: Optional[Dict[str, int]] = None
+    export_modules_as_functions: bool = False
+    
+    def __post_init__(self):
+        if self.opset_version < 11:
+            raise ValueError("ONNX opset version must be >= 11 for transformer support")
+        
+        if self.input_names is None:
+            self.input_names = ["input_ids", "attention_mask"]
+        if self.output_names is None:
+            self.output_names = ["logits"]
+        if self.dynamic_axes is None:
+            self.dynamic_axes = {
+                "input_ids": {0: "batch_size", 1: "sequence_length"},
+                "attention_mask": {0: "batch_size", 1: "sequence_length"},
+                "logits": {0: "batch_size", 1: "sequence_length"}
+            }
+
+
+class ModelCompiler:
+    """Handles torch.compile optimization for transformer models"""
+    
+    def __init__(self, config: ModelCompilationConfig):
+        self.config = config
+        self.compiled_models = {}
+        self.compilation_stats = {
+            "total_compilations": 0,
+            "successful_compilations": 0,
+            "failed_compilations": 0,
+            "compilation_times": [],
+            "performance_improvements": {}
+        }
+        self.logger = structlog.get_logger().bind(component="ModelCompiler")
+        
+    def compile_model(self, model: nn.Module, model_id: str = "default") -> nn.Module:
+        """Compile model with torch.compile"""
+        if self.config.disable:
+            self.logger.info("Model compilation disabled", model_id=model_id)
+            return model
+            
+        try:
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
+            
+            self.logger.info("Compiling model", model_id=model_id, backend=self.config.backend)
+            start_time = time.time()
+            
+            # Don't pass options if it's empty to avoid conflicts with mode
+            compile_kwargs = {
+                "backend": self.config.backend,
+                "dynamic": self.config.dynamic,
+                "fullgraph": self.config.fullgraph
+            }
+            
+            if self.config.options:
+                compile_kwargs["options"] = self.config.options
+            else:
+                compile_kwargs["mode"] = self.config.mode
+            
+            compiled_model = torch.compile(model, **compile_kwargs)
+            
+            compilation_time = time.time() - start_time
+            self.compilation_stats["compilation_times"].append(compilation_time)
+            self.compilation_stats["total_compilations"] += 1
+            self.compilation_stats["successful_compilations"] += 1
+            
+            self.compiled_models[model_id] = {
+                "model": compiled_model,
+                "original_model": model,
+                "compilation_time": compilation_time,
+                "config": self.config
+            }
+            
+            self.logger.info("Model compilation successful", 
+                           model_id=model_id, 
+                           compilation_time=compilation_time)
+            
+            return compiled_model
+            
+        except Exception as e:
+            self.compilation_stats["total_compilations"] += 1
+            self.compilation_stats["failed_compilations"] += 1
+            
+            self.logger.error("Model compilation failed", 
+                            model_id=model_id, 
+                            error=str(e))
+            
+            if self.config.backend == "inductor":
+                # Try fallback to eager backend
+                self.logger.info("Attempting fallback to eager backend", model_id=model_id)
+                try:
+                    fallback_config = ModelCompilationConfig(
+                        mode="default",
+                        backend="aot_eager",
+                        dynamic=self.config.dynamic
+                    )
+                    fallback_compiler = ModelCompiler(fallback_config)
+                    return fallback_compiler.compile_model(model, f"{model_id}_fallback")
+                except Exception as fallback_error:
+                    self.logger.error("Fallback compilation also failed", 
+                                    model_id=model_id, 
+                                    error=str(fallback_error))
+            
+            return model  # Return original model if compilation fails
+            
+    def benchmark_compilation_performance(self, model: nn.Module, 
+                                        sample_input: torch.Tensor,
+                                        model_id: str = "benchmark") -> Dict[str, Any]:
+        """Benchmark performance improvement from compilation"""
+        
+        # Benchmark original model
+        original_times = []
+        for _ in range(10):
+            start_time = time.time()
+            with torch.no_grad():
+                _ = model(sample_input)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            original_times.append((time.time() - start_time) * 1000)
+        
+        # Compile and benchmark compiled model
+        compiled_model = self.compile_model(model, model_id)
+        
+        # Warmup compiled model
+        for _ in range(3):
+            with torch.no_grad():
+                _ = compiled_model(sample_input)
+        
+        compiled_times = []
+        for _ in range(10):
+            start_time = time.time()
+            with torch.no_grad():
+                _ = compiled_model(sample_input)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            compiled_times.append((time.time() - start_time) * 1000)
+        
+        original_avg = np.mean(original_times)
+        compiled_avg = np.mean(compiled_times)
+        speedup = original_avg / compiled_avg if compiled_avg > 0 else 1.0
+        
+        performance_data = {
+            "original_time_ms": original_avg,
+            "compiled_time_ms": compiled_avg,
+            "speedup": speedup,
+            "original_std": np.std(original_times),
+            "compiled_std": np.std(compiled_times),
+            "backend": self.config.backend,
+            "mode": self.config.mode
+        }
+        
+        self.compilation_stats["performance_improvements"][model_id] = performance_data
+        
+        return performance_data
+        
+    def get_compilation_statistics(self) -> Dict[str, Any]:
+        """Get compilation statistics"""
+        success_rate = (self.compilation_stats["successful_compilations"] / 
+                       max(self.compilation_stats["total_compilations"], 1))
+        
+        avg_compilation_time = (np.mean(self.compilation_stats["compilation_times"]) 
+                               if self.compilation_stats["compilation_times"] else 0.0)
+        
+        return {
+            "total_compilations": self.compilation_stats["total_compilations"],
+            "successful_compilations": self.compilation_stats["successful_compilations"],
+            "failed_compilations": self.compilation_stats["failed_compilations"],
+            "success_rate": success_rate,
+            "average_compilation_time": avg_compilation_time,
+            "compiled_models": list(self.compiled_models.keys()),
+            "performance_improvements": self.compilation_stats["performance_improvements"]
+        }
+
+
+class ONNXExporter:
+    """Handles ONNX export for transformer models"""
+    
+    def __init__(self, config: ONNXExportConfig):
+        self.config = config
+        self.export_stats = {
+            "total_exports": 0,
+            "successful_exports": 0,
+            "failed_exports": 0,
+            "exported_models": {},
+            "export_times": []
+        }
+        self.logger = structlog.get_logger().bind(component="ONNXExporter")
+        
+    def export_model(self, model: nn.Module, sample_input: torch.Tensor,
+                    export_path: str, model_id: str = "default") -> bool:
+        """Export model to ONNX format"""
+        try:
+            import torch.onnx
+            
+            self.logger.info("Exporting model to ONNX", 
+                           model_id=model_id, 
+                           export_path=export_path)
+            
+            # Set model to evaluation mode
+            model.eval()
+            
+            start_time = time.time()
+            
+            # Handle different input formats
+            if isinstance(sample_input, torch.Tensor):
+                sample_inputs = (sample_input,)
+            elif isinstance(sample_input, (list, tuple)):
+                sample_inputs = tuple(sample_input)
+            else:
+                raise ValueError("sample_input must be tensor, list, or tuple")
+            
+            with torch.no_grad():
+                # Handle training mode enum properly
+                training_mode = torch.onnx.TrainingMode.TRAINING if self.config.training else torch.onnx.TrainingMode.EVAL
+                
+                torch.onnx.export(
+                    model,
+                    sample_inputs,
+                    export_path,
+                    export_params=self.config.export_params,
+                    verbose=self.config.verbose,
+                    training=training_mode,
+                    input_names=self.config.input_names,
+                    output_names=self.config.output_names,
+                    dynamic_axes=self.config.dynamic_axes,
+                    opset_version=self.config.opset_version,
+                    do_constant_folding=self.config.do_constant_folding,
+                    keep_initializers_as_inputs=self.config.keep_initializers_as_inputs,
+                    custom_opsets=self.config.custom_opsets,
+                    export_modules_as_functions=self.config.export_modules_as_functions
+                )
+            
+            export_time = time.time() - start_time
+            
+            self.export_stats["total_exports"] += 1
+            self.export_stats["successful_exports"] += 1
+            self.export_stats["export_times"].append(export_time)
+            self.export_stats["exported_models"][model_id] = {
+                "export_path": export_path,
+                "export_time": export_time,
+                "config": self.config
+            }
+            
+            self.logger.info("ONNX export successful", 
+                           model_id=model_id, 
+                           export_time=export_time,
+                           file_size_mb=self._get_file_size_mb(export_path))
+            
+            return True
+            
+        except Exception as e:
+            self.export_stats["total_exports"] += 1
+            self.export_stats["failed_exports"] += 1
+            
+            self.logger.error("ONNX export failed", 
+                            model_id=model_id, 
+                            error=str(e))
+            return False
+            
+    def _get_file_size_mb(self, file_path: str) -> float:
+        """Get file size in MB"""
+        try:
+            import os
+            return os.path.getsize(file_path) / (1024 * 1024)
+        except Exception:
+            return 0.0
+            
+    def validate_onnx_model(self, onnx_path: str) -> Dict[str, Any]:
+        """Validate exported ONNX model"""
+        try:
+            import onnx
+            import onnxruntime as ort
+            
+            # Load and check ONNX model
+            onnx_model = onnx.load(onnx_path)
+            onnx.checker.check_model(onnx_model)
+            
+            # Create ONNX Runtime session
+            providers = ['CPUExecutionProvider']
+            if torch.cuda.is_available():
+                providers.insert(0, 'CUDAExecutionProvider')
+                
+            session = ort.InferenceSession(onnx_path, providers=providers)
+            
+            # Get model info
+            input_info = [(inp.name, inp.shape, inp.type) for inp in session.get_inputs()]
+            output_info = [(out.name, out.shape, out.type) for out in session.get_outputs()]
+            
+            validation_result = {
+                "valid": True,
+                "input_info": input_info,
+                "output_info": output_info,
+                "providers": session.get_providers(),
+                "opset_version": onnx_model.opset_import[0].version if onnx_model.opset_import else None
+            }
+            
+            self.logger.info("ONNX model validation successful", onnx_path=onnx_path)
+            return validation_result
+            
+        except Exception as e:
+            self.logger.error("ONNX model validation failed", 
+                            onnx_path=onnx_path, 
+                            error=str(e))
+            return {
+                "valid": False,
+                "error": str(e)
+            }
+            
+    def benchmark_onnx_performance(self, original_model: nn.Module, 
+                                 onnx_path: str,
+                                 sample_input: torch.Tensor) -> Dict[str, Any]:
+        """Benchmark ONNX model performance vs PyTorch"""
+        try:
+            import onnxruntime as ort
+            
+            # Benchmark PyTorch model
+            original_model.eval()
+            pytorch_times = []
+            
+            for _ in range(10):
+                start_time = time.time()
+                with torch.no_grad():
+                    pytorch_output = original_model(sample_input)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                pytorch_times.append((time.time() - start_time) * 1000)
+            
+            # Benchmark ONNX model
+            providers = ['CPUExecutionProvider']
+            if torch.cuda.is_available():
+                providers.insert(0, 'CUDAExecutionProvider')
+                
+            session = ort.InferenceSession(onnx_path, providers=providers)
+            
+            # Prepare ONNX input
+            if isinstance(sample_input, torch.Tensor):
+                onnx_input = {session.get_inputs()[0].name: sample_input.cpu().numpy()}
+            else:
+                onnx_input = {inp.name: tensor.cpu().numpy() 
+                             for inp, tensor in zip(session.get_inputs(), sample_input)}
+            
+            onnx_times = []
+            for _ in range(10):
+                start_time = time.time()
+                onnx_output = session.run(None, onnx_input)
+                onnx_times.append((time.time() - start_time) * 1000)
+            
+            pytorch_avg = np.mean(pytorch_times)
+            onnx_avg = np.mean(onnx_times)
+            speedup = pytorch_avg / onnx_avg if onnx_avg > 0 else 1.0
+            
+            return {
+                "pytorch_time_ms": pytorch_avg,
+                "onnx_time_ms": onnx_avg,
+                "speedup": speedup,
+                "pytorch_std": np.std(pytorch_times),
+                "onnx_std": np.std(onnx_times),
+                "providers": session.get_providers()
+            }
+            
+        except Exception as e:
+            self.logger.error("ONNX performance benchmark failed", error=str(e))
+            return {"error": str(e)}
+            
+    def get_export_statistics(self) -> Dict[str, Any]:
+        """Get export statistics"""
+        success_rate = (self.export_stats["successful_exports"] / 
+                       max(self.export_stats["total_exports"], 1))
+        
+        avg_export_time = (np.mean(self.export_stats["export_times"]) 
+                          if self.export_stats["export_times"] else 0.0)
+        
+        return {
+            "total_exports": self.export_stats["total_exports"],
+            "successful_exports": self.export_stats["successful_exports"],
+            "failed_exports": self.export_stats["failed_exports"],
+            "success_rate": success_rate,
+            "average_export_time": avg_export_time,
+            "exported_models": list(self.export_stats["exported_models"].keys())
+        }
+
+
+class TransformerOptimizationPipeline:
+    """Complete optimization pipeline for transformer models"""
+    
+    def __init__(self, 
+                 compilation_config: Optional[ModelCompilationConfig] = None,
+                 onnx_config: Optional[ONNXExportConfig] = None,
+                 kv_cache_config: Optional[KVCacheConfig] = None,
+                 batching_config: Optional[DynamicBatchingConfig] = None):
+        
+        self.compilation_config = compilation_config or ModelCompilationConfig()
+        self.onnx_config = onnx_config or ONNXExportConfig()
+        self.kv_cache_config = kv_cache_config or KVCacheConfig()
+        self.batching_config = batching_config or DynamicBatchingConfig()
+        
+        self.compiler = ModelCompiler(self.compilation_config)
+        self.onnx_exporter = ONNXExporter(self.onnx_config)
+        self.kv_cache_manager = KVCacheManager(self.kv_cache_config)
+        self.sequence_batcher = SequenceLengthBatcher(self.batching_config)
+        
+        self.optimization_history = []
+        self.logger = structlog.get_logger().bind(component="TransformerOptimizationPipeline")
+        
+    def optimize_model(self, model: nn.Module, 
+                      sample_input: torch.Tensor,
+                      model_id: str = "default",
+                      export_onnx: bool = True,
+                      onnx_path: Optional[str] = None) -> Dict[str, Any]:
+        """Complete model optimization pipeline"""
+        
+        optimization_results = {
+            "model_id": model_id,
+            "original_model": model,
+            "optimized_model": None,
+            "compilation_results": {},
+            "onnx_export_results": {},
+            "optimization_time": 0.0,
+            "success": False
+        }
+        
+        start_time = time.time()
+        
+        try:
+            # Step 1: Compile model
+            self.logger.info("Starting model compilation", model_id=model_id)
+            compiled_model = self.compiler.compile_model(model, model_id)
+            
+            # Step 2: Benchmark compilation performance
+            compilation_benchmark = self.compiler.benchmark_compilation_performance(
+                model, sample_input, model_id
+            )
+            optimization_results["compilation_results"] = compilation_benchmark
+            
+            # Step 3: Export to ONNX if requested
+            if export_onnx:
+                if onnx_path is None:
+                    onnx_path = f"{model_id}_optimized.onnx"
+                    
+                self.logger.info("Starting ONNX export", model_id=model_id, path=onnx_path)
+                export_success = self.onnx_exporter.export_model(
+                    compiled_model, sample_input, onnx_path, model_id
+                )
+                
+                if export_success:
+                    # Validate ONNX model
+                    validation_results = self.onnx_exporter.validate_onnx_model(onnx_path)
+                    
+                    # Benchmark ONNX performance
+                    onnx_benchmark = self.onnx_exporter.benchmark_onnx_performance(
+                        model, onnx_path, sample_input
+                    )
+                    
+                    optimization_results["onnx_export_results"] = {
+                        "export_success": True,
+                        "onnx_path": onnx_path,
+                        "validation": validation_results,
+                        "performance": onnx_benchmark
+                    }
+                else:
+                    optimization_results["onnx_export_results"] = {
+                        "export_success": False,
+                        "error": "Export failed"
+                    }
+            
+            optimization_results["optimized_model"] = compiled_model
+            optimization_results["success"] = True
+            
+        except Exception as e:
+            self.logger.error("Model optimization failed", 
+                            model_id=model_id, 
+                            error=str(e))
+            optimization_results["error"] = str(e)
+            optimization_results["optimized_model"] = model  # Return original
+            
+        optimization_results["optimization_time"] = time.time() - start_time
+        self.optimization_history.append(optimization_results)
+        
+        return optimization_results
+        
+    def get_optimization_summary(self) -> Dict[str, Any]:
+        """Get summary of all optimizations"""
+        if not self.optimization_history:
+            return {"message": "No optimizations performed"}
+            
+        successful_optimizations = [opt for opt in self.optimization_history if opt["success"]]
+        failed_optimizations = [opt for opt in self.optimization_history if not opt["success"]]
+        
+        compilation_stats = self.compiler.get_compilation_statistics()
+        export_stats = self.onnx_exporter.get_export_statistics()
+        
+        # Calculate average improvements
+        speedups = []
+        for opt in successful_optimizations:
+            if "compilation_results" in opt and "speedup" in opt["compilation_results"]:
+                speedups.append(opt["compilation_results"]["speedup"])
+        
+        avg_speedup = np.mean(speedups) if speedups else 1.0
+        
+        return {
+            "total_optimizations": len(self.optimization_history),
+            "successful_optimizations": len(successful_optimizations),
+            "failed_optimizations": len(failed_optimizations),
+            "success_rate": len(successful_optimizations) / len(self.optimization_history),
+            "average_speedup": avg_speedup,
+            "compilation_statistics": compilation_stats,
+            "export_statistics": export_stats,
+            "optimized_models": [opt["model_id"] for opt in successful_optimizations]
+        }
+
+
 if __name__ == "__main__":
     # Example usage and testing
     
@@ -1344,3 +2255,38 @@ if __name__ == "__main__":
     benchmark_results = benchmark_attention_performance()
     print(f"Benchmark Summary: {benchmark_results['summary']}")
     print(f"Recommendations: {benchmark_results['recommendations']}")
+    
+    # Model compilation example
+    print("\nTesting Model Compilation...")
+    compilation_config = ModelCompilationConfig(
+        mode="reduce-overhead",
+        backend="inductor",
+        dynamic=True
+    )
+    compiler = ModelCompiler(compilation_config)
+    
+    # Create simple test model
+    test_model = nn.Sequential(
+        nn.Linear(512, 512),
+        nn.ReLU(),
+        nn.Linear(512, 1000)
+    )
+    
+    sample_input = torch.randn(1, 512)
+    compiled_model = compiler.compile_model(test_model, "test_model")
+    print(f"Compilation Statistics: {compiler.get_compilation_statistics()}")
+    
+    # ONNX export example
+    print("\nTesting ONNX Export...")
+    onnx_config = ONNXExportConfig(
+        input_names=["input"],
+        output_names=["output"],
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}
+    )
+    exporter = ONNXExporter(onnx_config)
+    
+    export_success = exporter.export_model(
+        test_model, sample_input, "test_model.onnx", "test_model"
+    )
+    print(f"Export Success: {export_success}")
+    print(f"Export Statistics: {exporter.get_export_statistics()}")
