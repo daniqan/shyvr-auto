@@ -715,7 +715,16 @@ class iTransformerPredictor(MLAnalyzerBase):
             seq_data = data.iloc[i-self.sequence_length:i]
             
             # Create dummy token for sequence preparation
-            dummy_token = DiscoveredToken(address="dummy", name="DUMMY", symbol="DUMMY")
+            from src.utils.base import Chain
+            from datetime import datetime
+            dummy_token = DiscoveredToken(
+                address="dummy", 
+                name="DUMMY", 
+                symbol="DUMMY",
+                chain=Chain.ETHEREUM,
+                discovered_at=datetime.now(),
+                discovery_source="training"
+            )
             sequence = self._prepare_multivariate_sequence(seq_data, dummy_token)
             
             # Target values (price changes) - simplified for now
