@@ -185,7 +185,7 @@ run_blue_green_only() {
     if "$SCRIPT_DIR/blue_green_deployment.sh" "$ENVIRONMENT" "$IMAGE_TAG"; then
         log_success "Blue-green deployment completed"
         
-        log_info "Running post-deployment validation...")
+        log_info "Running post-deployment validation..."
         if "$SCRIPT_DIR/validate_deployment.sh"; then
             log_success "Blue-green deployment validated successfully"
         else
@@ -212,7 +212,7 @@ run_rollback() {
         fi
     fi
     
-    log_info "Executing rollback...")
+    log_info "Executing rollback..."
     if "$SCRIPT_DIR/automated_rollback.sh" "$ENVIRONMENT" "previous"; then
         log_success "Rollback completed successfully"
     else
