@@ -513,6 +513,147 @@ class FeatureEngineer:
         
         self.logger.info("Feature cache cleared")
     
+    def create_transformer_sequences(self, token: DiscoveredToken, price_data: pd.DataFrame, 
+                                   sequence_length: int = 60, prediction_horizons: List[int] = [1, 4, 24]) -> dict:
+        """
+        Create sequence-based features for Transformer models
+        
+        Args:
+            token: Token to analyze
+            price_data: Historical price data
+            sequence_length: Length of input sequences
+            prediction_horizons: Prediction horizons in hours
+            
+        Returns:
+            Dictionary containing input sequences and targets
+        """
+        try:
+            if len(price_data) < sequence_length + max(prediction_horizons):
+                self.logger.warning("Insufficient data for sequence creation", 
+                                  data_length=len(price_data),
+                                  required_length=sequence_length + max(prediction_horizons))
+                return {'input_sequences': np.array([]), 'target_sequences': np.array([])}
+            
+            sequences = []
+            targets = []
+            
+            # Create sliding windows
+            for i in range(sequence_length, len(price_data) - max(prediction_horizons)):
+                # Input sequence
+                seq_data = price_data.iloc[i-sequence_length:i].copy()
+                
+                # Basic features for each timestep
+                seq_features = []
+                for _, row in seq_data.iterrows():
+                    features = [
+                        row.get('close', 0) / 100.0,  # Normalized price
+                        row.get('volume', 0) / 1000000.0,  # Normalized volume
+                        row.get('high', 0) / 100.0,
+                        row.get('low', 0) / 100.0,
+                        row.get('open', 0) / 100.0,
+                    ]
+                    seq_features.append(features)
+                
+                sequences.append(seq_features)
+                
+                # Target values (price changes for different horizons)
+                current_price = price_data.iloc[i]['close']
+                horizon_targets = []
+                for h in prediction_horizons:
+                    if i + h < len(price_data):
+                        future_price = price_data.iloc[i + h]['close']
+                        price_change = (future_price - current_price) / current_price
+                        horizon_targets.append(price_change)
+                    else:
+                        horizon_targets.append(0.0)
+                
+                targets.append(horizon_targets)
+            
+            input_sequences = np.array(sequences, dtype=np.float32)
+            target_sequences = np.array(targets, dtype=np.float32)
+            
+            self.logger.info("Transformer sequences created", 
+                           input_shape=input_sequences.shape,
+                           target_shape=target_sequences.shape)
+            
+            return {
+                'input_sequences': input_sequences,
+                'target_sequences': target_sequences,
+                'sequence_length': sequence_length,
+                'prediction_horizons': prediction_horizons
+            }
+            
+        except Exception as e:
+            self.logger.error("Failed to create transformer sequences", error=str(e))
+            return {'input_sequences': np.array([]), 'target_sequences': np.array([])}
+    
+    def normalize_for_attention(self, indicators: TechnicalIndicators, 
+                              market_features: MarketFeatures) -> np.ndarray:
+        """
+        Normalize features for attention mechanisms
+        
+        Args:
+            indicators: Technical indicators
+            market_features: Market features
+            
+        Returns:
+            Normalized feature array suitable for attention
+        """
+        try:
+            # Get feature vectors
+            tech_vector = indicators.to_feature_vector()
+            market_vector = market_features.to_feature_vector()
+            
+            # Combine features
+            combined = np.concatenate([tech_vector, market_vector])
+            
+            # Apply attention-friendly normalization
+            # 1. Replace NaN/Inf with zeros
+            combined = np.nan_to_num(combined, nan=0.0, posinf=0.0, neginf=0.0)
+            
+            # 2. Clip extreme values
+            combined = np.clip(combined, -10.0, 10.0)
+            
+            # 3. Apply tanh scaling to keep values in [-1, 1] range
+            combined = np.tanh(combined)
+            
+            return combined
+            
+        except Exception as e:
+            self.logger.error("Failed to normalize features for attention", error=str(e))
+            # Return default normalized vector
+            return np.zeros(50, dtype=np.float32)  # Reasonable default size
+    
+    def validate_sequence_length(self, sequence_length: int, model_type: str) -> bool:
+        """
+        Validate sequence length for different Transformer model types
+        
+        Args:
+            sequence_length: Proposed sequence length
+            model_type: Type of transformer model
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        model_requirements = {
+            'transformer': {'min_seq_len': 10, 'max_seq_len': 1000},
+            'itransformer': {'min_seq_len': 20, 'max_seq_len': 500},
+            'patchtst': {'min_seq_len': 32, 'max_seq_len': 1000}
+        }
+        
+        if model_type not in model_requirements:
+            return True  # Unknown model type, assume valid
+        
+        req = model_requirements[model_type]
+        is_valid = req['min_seq_len'] <= sequence_length <= req['max_seq_len']
+        
+        # Special validation for PatchTST - sequence length should be divisible by patch length
+        if model_type == 'patchtst' and is_valid:
+            patch_len = 16  # Default patch length
+            is_valid = sequence_length >= patch_len and sequence_length % patch_len == 0
+        
+        return is_valid
+
     async def close(self):
         """Close market data aggregator and cleanup resources"""
         if self.market_aggregator:

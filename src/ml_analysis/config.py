@@ -5,7 +5,7 @@ Handles API keys, endpoints, and settings for crypto market data sources
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 import structlog
 from pathlib import Path
 import yaml
@@ -356,3 +356,183 @@ def get_market_data_config() -> MarketDataConfig:
 def reload_market_data_config() -> MarketDataConfig:
     """Reload market data configuration from sources"""
     return get_config_manager().reload_config()
+
+
+@dataclass
+class TransformerModelConfig:
+    """Configuration for Transformer models"""
+    # Architecture parameters
+    d_model: int = 128
+    nhead: int = 8
+    num_layers: int = 4
+    dim_feedforward: int = 512
+    dropout: float = 0.1
+    activation: str = "relu"
+    
+    # Sequence parameters
+    max_seq_length: int = 100
+    input_dim: int = 20
+    prediction_horizons: List[int] = field(default_factory=lambda: [1, 4, 24])
+    
+    # Training parameters
+    learning_rate: float = 0.001
+    weight_decay: float = 0.01
+    epochs: int = 50
+    batch_size: int = 32
+    
+    # Model-specific parameters
+    model_specific: Dict[str, Any] = field(default_factory=dict)
+    
+    def validate(self) -> bool:
+        """Validate configuration parameters"""
+        if self.d_model <= 0 or self.d_model % self.nhead != 0:
+            logger.error("d_model must be positive and divisible by nhead")
+            return False
+        
+        if self.nhead <= 0:
+            logger.error("nhead must be positive")
+            return False
+        
+        if self.num_layers <= 0:
+            logger.error("num_layers must be positive")
+            return False
+        
+        if not 0 <= self.dropout <= 1:
+            logger.error("dropout must be between 0 and 1")
+            return False
+        
+        if self.max_seq_length <= 0:
+            logger.error("max_seq_length must be positive")
+            return False
+        
+        if self.learning_rate <= 0:
+            logger.error("learning_rate must be positive")
+            return False
+        
+        return True
+
+
+@dataclass
+class ITransformerConfig(TransformerModelConfig):
+    """Configuration for iTransformer (Inverted Transformer)"""
+    # iTransformer specific parameters
+    invert_time_attention: bool = True
+    multivariate_projection: bool = True
+    variate_embedding_dim: Optional[int] = None
+    
+    def __post_init__(self):
+        if self.variate_embedding_dim is None:
+            self.variate_embedding_dim = self.d_model
+
+
+@dataclass
+class PatchTSTConfig(TransformerModelConfig):
+    """Configuration for PatchTST (Patch Time Series Transformer)"""
+    # PatchTST specific parameters
+    patch_len: int = 16
+    stride: int = 8
+    channel_independence: bool = True
+    individual_head: bool = True
+    
+    def validate(self) -> bool:
+        """Extended validation for PatchTST"""
+        if not super().validate():
+            return False
+        
+        if self.patch_len <= 0:
+            logger.error("patch_len must be positive")
+            return False
+        
+        if self.stride <= 0 or self.stride > self.patch_len:
+            logger.error("stride must be positive and <= patch_len")
+            return False
+        
+        if self.max_seq_length < self.patch_len:
+            logger.error("max_seq_length must be >= patch_len")
+            return False
+        
+        return True
+
+
+@dataclass
+class MLModelConfigs:
+    """Container for all ML model configurations"""
+    lstm: Dict[str, Any] = field(default_factory=dict)
+    transformer: TransformerModelConfig = field(default_factory=TransformerModelConfig)
+    itransformer: ITransformerConfig = field(default_factory=ITransformerConfig)
+    patchtst: PatchTSTConfig = field(default_factory=PatchTSTConfig)
+    ensemble: Dict[str, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'MLModelConfigs':
+        """Create MLModelConfigs from dictionary"""
+        configs = cls()
+        
+        if 'lstm' in config_dict:
+            configs.lstm = config_dict['lstm']
+        
+        if 'transformer' in config_dict:
+            transformer_dict = config_dict['transformer']
+            configs.transformer = TransformerModelConfig(**transformer_dict)
+        
+        if 'itransformer' in config_dict:
+            itransformer_dict = config_dict['itransformer']
+            configs.itransformer = ITransformerConfig(**itransformer_dict)
+        
+        if 'patchtst' in config_dict:
+            patchtst_dict = config_dict['patchtst']
+            configs.patchtst = PatchTSTConfig(**patchtst_dict)
+        
+        if 'ensemble' in config_dict:
+            configs.ensemble = config_dict['ensemble']
+        
+        return configs
+    
+    def validate_all(self) -> bool:
+        """Validate all model configurations"""
+        all_valid = True
+        
+        if not self.transformer.validate():
+            logger.error("Transformer configuration validation failed")
+            all_valid = False
+        
+        if not self.itransformer.validate():
+            logger.error("iTransformer configuration validation failed")
+            all_valid = False
+        
+        if not self.patchtst.validate():
+            logger.error("PatchTST configuration validation failed")
+            all_valid = False
+        
+        return all_valid
+
+
+def get_ml_model_configs(config_dict: Optional[Dict[str, Any]] = None) -> MLModelConfigs:
+    """
+    Get ML model configurations from config dictionary or global config
+    
+    Args:
+        config_dict: Optional configuration dictionary
+        
+    Returns:
+        MLModelConfigs instance
+    """
+    if config_dict is None:
+        # Get from global config if available
+        try:
+            from src.utils.config import get_config
+            global_config = get_config()
+            ml_config = global_config.ml.models if hasattr(global_config, 'ml') else {}
+        except ImportError:
+            logger.warning("Could not import global config, using defaults")
+            ml_config = {}
+    else:
+        ml_config = config_dict.get('models', {})
+    
+    configs = MLModelConfigs.from_dict(ml_config)
+    
+    # Validate configurations
+    if not configs.validate_all():
+        logger.warning("Some model configurations failed validation")
+    
+    return configs

@@ -18,6 +18,7 @@ from .base import (
 )
 from .lstm_model import LSTMPricePredictor
 from .feature_engineer import FeatureEngineer
+from .transformers import TransformerPredictor
 from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
@@ -91,7 +92,12 @@ class ModelManager:
             # Initialize LSTM model
             lstm_config = self.config.get('lstm', {})
             self._models[ModelType.LSTM] = LSTMPricePredictor(lstm_config)
-            self._model_weights[ModelType.LSTM] = 1.0
+            self._model_weights[ModelType.LSTM] = 0.4  # Reduce weight to make room for Transformers
+            
+            # Initialize Transformer model
+            transformer_config = self.config.get('transformer', {})
+            self._models[ModelType.TRANSFORMER] = TransformerPredictor(transformer_config)
+            self._model_weights[ModelType.TRANSFORMER] = 0.6  # Higher weight for newer model
             
             # Initialize performance tracking
             for model_type in self._models.keys():
@@ -102,7 +108,7 @@ class ModelManager:
                 }
             
             self.logger.info("Models initialized", 
-                           models=list(self._models.keys()),
+                           models=[mt.value for mt in self._models.keys()],
                            model_dir=str(self.model_dir))
             
         except Exception as e:

@@ -258,12 +258,43 @@ ml:
       nhead: 8
       num_layers: 4
       dropout: 0.1
+      dim_feedforward: 512
+      activation: "relu"
+      max_seq_length: 100
+      input_dim: 20
+      prediction_horizons: [1, 4, 24]
+      learning_rate: 0.001
+      weight_decay: 0.01
+      epochs: 50
+      
+    itransformer:
+      d_model: 128
+      nhead: 8
+      num_layers: 4
+      dropout: 0.1
+      dim_feedforward: 512
+      max_seq_length: 100
+      input_dim: 20
+      invert_time_attention: true
+      multivariate_projection: true
+      
+    patchtst:
+      d_model: 128
+      nhead: 8
+      num_layers: 4
+      dropout: 0.1
+      dim_feedforward: 512
+      patch_len: 16
+      stride: 8
+      max_seq_length: 200
+      channel_independence: true
       
     ensemble:
       weights:
-        lstm: 0.4
-        transformer: 0.3
-        xgboost: 0.3
+        lstm: 0.3
+        transformer: 0.4
+        itransformer: 0.2
+        patchtst: 0.1
       
   training:
     batch_size: 32

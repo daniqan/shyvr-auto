@@ -22,6 +22,7 @@ from .temporal_embeddings import (
     MarketRegimeEncoder,
     VolatilityRegimeEncoder
 )
+from .transformer_predictor import TransformerPredictor
 
 __all__ = [
     # Base components
@@ -44,4 +45,6 @@ __all__ = [
     'TradingSessionEncoder',
     'MarketRegimeEncoder',
     'VolatilityRegimeEncoder',
+    # Model implementations
+    'TransformerPredictor',
 ]
