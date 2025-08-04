@@ -1,28 +1,39 @@
 #!/bin/bash
 # Comprehensive Secret Manager setup for Shyvr RLTE
 # Handles all API keys and sensitive configuration systematically
-# Enhanced to read from .env files for automated deployment
+# Enhanced with deploy-utils.sh integration and production-ready features
 
-set -e
+set -euo pipefail
 
-# Configuration
-PROJECT_ID="shvyr-ai-bots"
-REGION="us-central1"
+# Source deployment utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/deploy-utils.sh"
+
+# Configuration with defaults from deploy-utils.sh
+PROJECT_ID="${DEFAULT_PROJECT_ID}"
+REGION="${DEFAULT_REGION}"
+DRY_RUN=false
+VALIDATE_ONLY=false
 
 # Environment file configuration
 ENV_FILE=""
 ENV_TEMP_FILE=""
+
+# Track created secrets for summary
+CREATED_SECRETS=()
+UPDATED_SECRETS=()
+SKIPPED_SECRETS=()
 
 # Function to load environment variables from .env file
 load_env_file() {
     local env_file=$1
     
     if [[ ! -f "$env_file" ]]; then
-        echo -e "${YELLOW}⚠ Environment file not found: $env_file${NC}"
+        util_log_warning "Environment file not found: $env_file"
         return 1
     fi
     
-    echo -e "${BLUE}📁 Loading environment variables from: $env_file${NC}"
+    util_log_info "Loading environment variables from: $env_file"
     
     # Create a temporary file to store processed env vars
     ENV_TEMP_FILE=$(mktemp)
@@ -53,7 +64,7 @@ load_env_file() {
         fi
     done < "$env_file"
     
-    echo -e "${GREEN}✅ Loaded $count environment variables${NC}"
+    util_log_success "Loaded $count environment variables"
 }
 
 # Function to get value from environment file or return empty
@@ -81,54 +92,110 @@ cleanup_env_temp() {
 # Set up cleanup trap
 trap cleanup_env_temp EXIT
 
+# Show usage information
+show_usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Comprehensive Secret Manager setup for Shyvr RLTE production deployment.
+
+OPTIONS:
+    --env-file FILE       Load secrets from environment file
+    --project-id PROJECT  GCP project ID (default: $PROJECT_ID)
+    --region REGION       GCP region (default: $REGION)
+    --dry-run            Show what would be done without executing
+    --validate-only      Only validate existing secrets
+    --help, -h           Show this help message
+
+EXAMPLES:
+    # Interactive setup
+    $0
+    
+    # Load from environment file
+    $0 --env-file .env.production
+    
+    # Dry run to see what would be created
+    $0 --env-file .env.production --dry-run
+    
+    # Validate existing secrets
+    $0 --validate-only
+
+EOF
+}
+
 # Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --env-file)
-            ENV_FILE="$2"
-            shift 2
-            ;;
-        --project)
-            PROJECT_ID="$2"
-            shift 2
-            ;;
-        --help)
-            echo "Usage: $0 [options]"
-            echo "Options:"
-            echo "  --env-file FILE    Load secrets from environment file"
-            echo "  --project PROJECT  GCP project ID (default: shvyr-ai-bots)"
-            echo "  --help            Show this help"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --env-file)
+                ENV_FILE="$2"
+                shift 2
+                ;;
+            --project-id)
+                PROJECT_ID="$2"
+                shift 2
+                ;;
+            --region)
+                REGION="$2"
+                shift 2
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --validate-only)
+                VALIDATE_ONLY=true
+                shift
+                ;;
+            --help|-h)
+                show_usage
+                exit 0
+                ;;
+            *)
+                util_log_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+}
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+# Main initialization
+initialize_setup() {
+    util_log_header "🔐 Setting up Secret Manager for Shyvr RLTE"
+    util_log_info "Comprehensive API key and sensitive configuration management"
+    
+    # Validate prerequisites
+    if ! check_required_tools; then
+        util_log_error "Prerequisites check failed"
+        exit 1
+    fi
+    
+    if ! check_gcp_auth "$PROJECT_ID"; then
+        util_log_error "GCP authentication check failed"
+        exit 1
+    fi
+    
+    # Set project context
+    gcloud config set project "$PROJECT_ID" --quiet
+    util_log_success "Using project: $PROJECT_ID"
+}
 
-echo -e "${BLUE}🔐 Setting up Secret Manager for Shyvr RLTE${NC}"
-echo -e "${PURPLE}🤖 Comprehensive API key and sensitive configuration management${NC}"
-
-# Load environment file if specified
-if [[ -n "$ENV_FILE" ]]; then
-    load_env_file "$ENV_FILE"
-    echo -e "${GREEN}✅ Environment file loaded - will use values when available${NC}"
-    echo -e "${YELLOW}💡 Secrets not found in env file will prompt for manual input${NC}"
-    echo
-fi
-
-# Enable Secret Manager API
-echo -e "${YELLOW}📦 Enabling Secret Manager API...${NC}"
-gcloud services enable secretmanager.googleapis.com --project=$PROJECT_ID
+# Enable required APIs
+enable_secret_manager_api() {
+    util_log_info "Enabling Secret Manager API"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        util_log_info "[DRY RUN] Would enable secretmanager.googleapis.com"
+        return 0
+    fi
+    
+    if gcloud services enable secretmanager.googleapis.com --project="$PROJECT_ID" --quiet; then
+        util_log_success "Secret Manager API enabled"
+    else
+        util_log_warning "Secret Manager API may already be enabled"
+    fi
+}
 
 # Core System Secrets (Required)
 REQUIRED_SECRETS=(
@@ -183,6 +250,45 @@ SOCIAL_SECRETS=(
     "X_API_SECRET|X (Twitter) API secret"
 )
 
+# Function to validate existing secrets
+validate_existing_secrets() {
+    util_log_info "Validating existing secrets"
+    
+    local all_secrets=()
+    all_secrets+=("${REQUIRED_SECRETS[@]}")
+    all_secrets+=("${BLOCKCHAIN_SECRETS[@]}")
+    all_secrets+=("${AI_SECRETS[@]}")
+    all_secrets+=("${MARKET_SECRETS[@]}")
+    all_secrets+=("${SOCIAL_SECRETS[@]}")
+    
+    local validation_passed=true
+    local total_secrets=0
+    local available_secrets=0
+    
+    for secret_entry in "${all_secrets[@]}"; do
+        local secret_name="${secret_entry%%|*}"
+        ((total_secrets++))
+        
+        if validate_secret "$secret_name" "$PROJECT_ID"; then
+            util_log_success "✓ $secret_name: Available"
+            ((available_secrets++))
+        else
+            util_log_warning "⚠ $secret_name: Missing or inaccessible"
+            validation_passed=false
+        fi
+    done
+    
+    util_log_info "Validation summary: $available_secrets/$total_secrets secrets available"
+    
+    if [[ "$validation_passed" == "true" ]]; then
+        util_log_success "All secrets validation passed"
+        return 0
+    else
+        util_log_warning "Some secrets are missing or inaccessible"
+        return 1
+    fi
+}
+
 # Function to create or update a secret
 create_or_update_secret() {
     local secret_name=$1
@@ -190,7 +296,7 @@ create_or_update_secret() {
     local is_required=${3:-false}
     local secret_value=""
     
-    echo -e "${BLUE}Processing secret: $secret_name${NC}"
+    util_log_info "Processing secret: $secret_name"
     
     # First, try to get value from environment file
     local env_value
@@ -220,71 +326,98 @@ create_or_update_secret() {
             "ETHEREUM_RPC_URL")
                 env_value=$(get_env_value "ETH_RPC_URL")
                 ;;
-            # Add more mappings if needed
         esac
     fi
     
     # Check if secret already exists
-    if gcloud secrets describe "$secret_name" --project=$PROJECT_ID --quiet 2>/dev/null; then
-        echo -e "${YELLOW}  ⚠ Secret $secret_name already exists${NC}"
+    if gcloud secrets describe "$secret_name" --project="$PROJECT_ID" --quiet 2>/dev/null; then
+        util_log_warning "Secret $secret_name already exists"
         
         if [[ -n "$env_value" && "$env_value" != "your_"* ]]; then
-            echo -e "${GREEN}  📁 Using value from environment file${NC}"
+            util_log_info "Using value from environment file"
             secret_value="$env_value"
         else
+            if [[ "$DRY_RUN" == "true" ]]; then
+                util_log_info "[DRY RUN] Would prompt to update existing secret"
+                return 0
+            fi
+            
             # Prompt for update
             read -p "  Update existing secret? (y/n): " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
-                echo -e "${BLUE}  📝 Enter new value for $secret_name:${NC}"
-                echo -e "${YELLOW}  Description: $description${NC}"
+                util_log_info "Enter new value for $secret_name:"
+                util_log_info "Description: $description"
                 read -s secret_value
             else
-                echo -e "${YELLOW}  ⚠ Skipped update for: $secret_name${NC}"
+                util_log_warning "Skipped update for: $secret_name"
+                SKIPPED_SECRETS+=("$secret_name")
                 return 0
             fi
         fi
         
         if [[ -n "$secret_value" ]]; then
-            echo "$secret_value" | gcloud secrets versions add "$secret_name" --data-file=- --project=$PROJECT_ID
-            echo -e "${GREEN}  ✓ Updated secret: $secret_name${NC}"
+            if [[ "$DRY_RUN" == "true" ]]; then
+                util_log_info "[DRY RUN] Would update secret: $secret_name"
+            else
+                echo "$secret_value" | gcloud secrets versions add "$secret_name" --data-file=- --project="$PROJECT_ID" --quiet
+                util_log_success "Updated secret: $secret_name"
+                UPDATED_SECRETS+=("$secret_name")
+            fi
         else
-            echo -e "${YELLOW}  ⚠ Skipped empty value for: $secret_name${NC}"
+            util_log_warning "Skipped empty value for: $secret_name"
+            SKIPPED_SECRETS+=("$secret_name")
         fi
     else
-        echo -e "${GREEN}  + Creating new secret: $secret_name${NC}"
-        echo -e "${YELLOW}  Description: $description${NC}"
+        util_log_info "Creating new secret: $secret_name"
+        util_log_info "Description: $description"
         
         if [[ "$is_required" == "true" ]]; then
-            echo -e "${RED}  ⚠ REQUIRED SECRET - Must provide value${NC}"
+            util_log_warning "REQUIRED SECRET - Must provide value"
         fi
         
         # Use environment value if available and not a placeholder
         if [[ -n "$env_value" && "$env_value" != "your"* ]]; then
-            echo -e "${GREEN}  📁 Using value from environment file${NC}"
+            util_log_info "Using value from environment file"
             secret_value="$env_value"
         else
             if [[ -n "$env_value" ]]; then
-                echo -e "${YELLOW}  ⚠ Found placeholder value in env file: $env_value${NC}"
+                util_log_warning "Found placeholder value in env file: $env_value"
             fi
-            echo -e "${BLUE}  📝 Enter value for $secret_name (press Enter to skip):${NC}"
-            read -s secret_value
+            
+            if [[ "$DRY_RUN" == "true" ]]; then
+                util_log_info "[DRY RUN] Would prompt for secret value"
+                secret_value="placeholder-value"
+            else
+                util_log_info "Enter value for $secret_name (press Enter to skip):"
+                read -s secret_value
+            fi
         fi
         
         if [[ -n "$secret_value" ]]; then
-            # Create the secret
-            gcloud secrets create "$secret_name" \
-                --project=$PROJECT_ID \
-                --data-file=<(echo -n "$secret_value") \
-                --quiet
-            
-            echo -e "${GREEN}  ✓ Created secret: $secret_name${NC}"
+            if [[ "$DRY_RUN" == "true" ]]; then
+                util_log_info "[DRY RUN] Would create secret: $secret_name"
+                CREATED_SECRETS+=("$secret_name")
+            else
+                # Create the secret
+                if gcloud secrets create "$secret_name" \
+                    --project="$PROJECT_ID" \
+                    --data-file=<(echo -n "$secret_value") \
+                    --quiet; then
+                    util_log_success "Created secret: $secret_name"
+                    CREATED_SECRETS+=("$secret_name")
+                else
+                    util_log_error "Failed to create secret: $secret_name"
+                    return 1
+                fi
+            fi
         else
             if [[ "$is_required" == "true" ]]; then
-                echo -e "${RED}  ❌ ERROR: Required secret $secret_name cannot be empty${NC}"
+                util_log_error "Required secret $secret_name cannot be empty"
                 return 1
             else
-                echo -e "${YELLOW}  ⚠ Skipped optional secret: $secret_name${NC}"
+                util_log_warning "Skipped optional secret: $secret_name"
+                SKIPPED_SECRETS+=("$secret_name")
             fi
         fi
     fi
@@ -296,7 +429,7 @@ setup_secret_category() {
     local secrets_array_name=$2
     local is_required=${3:-false}
     
-    echo -e "${PURPLE}📋 Setting up $category_name secrets...${NC}"
+    util_log_header "Setting up $category_name secrets"
     
     # Use eval to reference the array by name
     eval "local secrets=(\"\${${secrets_array_name}[@]}\")"
@@ -307,58 +440,118 @@ setup_secret_category() {
         create_or_update_secret "$secret_name" "$description" "$is_required"
     done
     
-    echo -e "${GREEN}✅ Completed $category_name secrets setup${NC}"
-    echo
+    util_log_success "Completed $category_name secrets setup"
+}
+
+# List all created secrets
+list_secrets() {
+    util_log_info "Listing all secrets in project"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        util_log_info "[DRY RUN] Would list all secrets in project"
+        return 0
+    fi
+    
+    gcloud secrets list --project="$PROJECT_ID" --format="table(name:label='Secret Name',createTime:label='Created')"
+}
+
+# Generate IAM permissions for Cloud Run
+setup_iam_permissions() {
+    util_log_info "Setting up IAM permissions for Cloud Run service"
+    
+    local service_account="shyvr-rlte@$PROJECT_ID.iam.gserviceaccount.com"
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        util_log_info "[DRY RUN] Would grant Secret Manager access to service account: $service_account"
+        return 0
+    fi
+    
+    util_log_info "Granting Secret Manager access to service account: $service_account"
+    
+    # Grant access to all secrets for the service account
+    if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:$service_account" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet; then
+        util_log_success "IAM permissions configured"
+    else
+        util_log_warning "IAM permissions may already be configured"
+    fi
 }
 
 # Main setup process
-echo -e "${YELLOW}🚀 Starting comprehensive secret setup...${NC}"
-echo
+main_setup_process() {
+    util_log_info "Starting comprehensive secret setup"
+    
+    # Setup required secrets first
+    setup_secret_category "Core System (Required)" "REQUIRED_SECRETS" true
+    
+    # Setup optional secret categories
+    setup_secret_category "Blockchain & RPC" "BLOCKCHAIN_SECRETS" false
+    setup_secret_category "AI & ML APIs" "AI_SECRETS" false
+    setup_secret_category "Market Data & Analytics" "MARKET_SECRETS" false
+    setup_secret_category "Social Media APIs" "SOCIAL_SECRETS" false
+    
+    # Warning for trading secrets
+    if [[ "$DRY_RUN" == "true" ]]; then
+        util_log_info "[DRY RUN] Would prompt for trading/wallet secrets setup"
+        setup_secret_category "Trading & Wallet (CRITICAL)" "TRADING_SECRETS" false
+    else
+        util_log_warning "Trading secrets contain sensitive wallet private keys"
+        util_log_warning "These should only be set up for production live trading mode"
+        util_log_warning "Ensure proper security measures are in place"
+        echo
+        read -p "Setup trading/wallet secrets? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            setup_secret_category "Trading & Wallet (CRITICAL)" "TRADING_SECRETS" false
+        else
+            util_log_warning "Skipped trading secrets setup"
+        fi
+    fi
+}
 
-# Setup required secrets first
-setup_secret_category "Core System (Required)" "REQUIRED_SECRETS" true
+# Generate setup summary
+generate_setup_summary() {
+    util_log_header "Secret Manager Setup Summary"
+    
+    echo "==========================================="
+    echo "Project: $PROJECT_ID"
+    echo "Region: $REGION"
+    echo "Mode: $([ "$DRY_RUN" = "true" ] && echo "DRY RUN" || echo "LIVE")"
+    echo "Setup Time: $(date)"
+    echo ""
+    echo "RESULTS:"
+    echo "✓ Created: ${#CREATED_SECRETS[@]} secrets"
+    echo "↻ Updated: ${#UPDATED_SECRETS[@]} secrets"
+    echo "⚠ Skipped: ${#SKIPPED_SECRETS[@]} secrets"
+    echo ""
+    
+    if [[ ${#CREATED_SECRETS[@]} -gt 0 ]]; then
+        echo "Created secrets:"
+        printf "  - %s\n" "${CREATED_SECRETS[@]}"
+        echo ""
+    fi
+    
+    if [[ ${#UPDATED_SECRETS[@]} -gt 0 ]]; then
+        echo "Updated secrets:"
+        printf "  - %s\n" "${UPDATED_SECRETS[@]}"
+        echo ""
+    fi
+    
+    echo "Next Steps:"
+    echo "1. Run validation: python validate_secrets.py"
+    echo "2. Update deployment scripts with secret integration"
+    echo "3. Test secret retrieval in development environment"
+    echo "4. Configure monitoring for secret access patterns"
+    echo "==========================================="
+}
 
-# Setup optional secret categories
-setup_secret_category "Blockchain & RPC" "BLOCKCHAIN_SECRETS" false
-setup_secret_category "AI & ML APIs" "AI_SECRETS" false
-setup_secret_category "Market Data & Analytics" "MARKET_SECRETS" false
-setup_secret_category "Social Media APIs" "SOCIAL_SECRETS" false
-
-# Warning for trading secrets
-echo -e "${RED}⚠️  WARNING: Trading secrets contain sensitive wallet private keys${NC}"
-echo -e "${RED}   These should only be set up for production live trading mode${NC}"
-echo -e "${RED}   Ensure proper security measures are in place${NC}"
-echo
-read -p "Setup trading/wallet secrets? (y/n): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    setup_secret_category "Trading & Wallet (CRITICAL)" "TRADING_SECRETS" false
-else
-    echo -e "${YELLOW}⚠ Skipped trading secrets setup${NC}"
-fi
-
-# List all created secrets
-echo -e "${BLUE}📋 Listing all secrets in project...${NC}"
-gcloud secrets list --project=$PROJECT_ID --format="table(name:label='Secret Name',createTime:label='Created')"
-
-# Generate IAM permissions for Cloud Run
-echo -e "${YELLOW}🔒 Setting up IAM permissions for Cloud Run service...${NC}"
-SERVICE_ACCOUNT="shyvr-rlte@$PROJECT_ID.iam.gserviceaccount.com"
-
-echo -e "${BLUE}  📝 Granting Secret Manager access to service account: $SERVICE_ACCOUNT${NC}"
-
-# Grant access to all secrets for the service account
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SERVICE_ACCOUNT" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet
-
-echo -e "${GREEN}✅ IAM permissions configured${NC}"
-
-# Generate secret validation script
-echo -e "${YELLOW}🧪 Generating secret validation utilities...${NC}"
-
-cat > "validate_secrets.py" << 'EOF'
+# Generate validation and rotation utilities
+generate_utilities() {
+    util_log_info "Generating secret validation and rotation utilities"
+    
+    cat > "validate_secrets.py" << 'EOF'
 #!/usr/bin/env python3
 """
 Secret validation utility for Shyvr RLTE
@@ -476,13 +669,12 @@ def main():
 if __name__ == "__main__":
     exit(main())
 EOF
-
-chmod +x validate_secrets.py
-
-echo -e "${GREEN}✅ Created validate_secrets.py utility${NC}"
-
-# Generate secret rotation script
-cat > "rotate_secrets.py" << 'EOF'
+    
+    chmod +x validate_secrets.py
+    util_log_success "Created validate_secrets.py utility"
+    
+    # Generate secret rotation script
+    cat > "rotate_secrets.py" << 'EOF'
 #!/usr/bin/env python3
 """
 Secret rotation utility for Shyvr RLTE
@@ -621,32 +813,62 @@ def main():
 if __name__ == "__main__":
     exit(main())
 EOF
+    
+    chmod +x rotate_secrets.py
+    util_log_success "Created rotate_secrets.py utility"
+}
 
-chmod +x rotate_secrets.py
+# Main execution function
+main() {
+    parse_arguments "$@"
+    
+    # Load environment file if specified
+    if [[ -n "$ENV_FILE" ]]; then
+        if load_env_file "$ENV_FILE"; then
+            util_log_success "Environment file loaded - will use values when available"
+            util_log_info "Secrets not found in env file will prompt for manual input"
+        else
+            util_log_error "Failed to load environment file: $ENV_FILE"
+            exit 1
+        fi
+    fi
+    
+    # Initialize setup
+    initialize_setup
+    
+    # Validate only mode
+    if [[ "$VALIDATE_ONLY" == "true" ]]; then
+        if validate_existing_secrets; then
+            util_log_success "All secrets validation passed"
+            exit 0
+        else
+            util_log_error "Secrets validation failed"
+            exit 1
+        fi
+    fi
+    
+    # Enable APIs
+    enable_secret_manager_api
+    
+    # Run main setup process
+    main_setup_process
+    
+    # List secrets and setup permissions
+    list_secrets
+    setup_iam_permissions
+    
+    # Generate utilities (only in live mode)
+    if [[ "$DRY_RUN" != "true" ]]; then
+        generate_utilities
+    fi
+    
+    # Generate summary
+    generate_setup_summary
+    
+    util_log_success "Secret Manager setup completed!"
+}
 
-echo -e "${GREEN}✅ Created rotate_secrets.py utility${NC}"
-
-echo -e "${GREEN}🎉 Secret Manager setup completed!${NC}"
-echo
-echo -e "${BLUE}📋 Next steps:${NC}"
-echo -e "  1. Run validation: python validate_secrets.py"
-echo -e "  2. Update deployment scripts with secret integration"
-echo -e "  3. Test secret retrieval in development environment"
-echo -e "  4. Configure monitoring for secret access patterns"
-echo
-echo -e "${BLUE}💡 Usage Examples:${NC}"
-echo -e "  • Interactive setup: ./deploy/setup_secrets.sh"
-echo -e "  • From .env file:    ./deploy/setup_secrets.sh --env-file .env"
-echo -e "  • Production env:    ./deploy/setup_secrets.sh --env-file .env.production"
-echo -e "  • Custom project:    ./deploy/setup_secrets.sh --env-file .env --project my-project"
-echo
-echo -e "${YELLOW}💡 Utilities created:${NC}"
-echo -e "  • validate_secrets.py - Validate secret accessibility"
-echo -e "  • rotate_secrets.py   - Handle secret rotation with backup"
-echo
-echo -e "${PURPLE}🔐 Security Reminders:${NC}"
-echo -e "  • Never commit actual secret values to version control"
-echo -e "  • Regularly rotate API keys and access tokens"
-echo -e "  • Monitor secret access patterns for anomalies"
-echo -e "  • Use least-privilege IAM permissions"
-echo -e "  • Keep trading secrets separate from development secrets"
+# Execute main function if script is called directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
