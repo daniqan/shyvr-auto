@@ -23,6 +23,9 @@ class ModelType(Enum):
     """Types of ML models available"""
     LSTM = "lstm"
     TRANSFORMER = "transformer"
+    ITRANSFORMER = "itransformer"  # Inverted Transformer for multivariate time-series
+    PATCHTST = "patchtst"          # Patch-based Transformer for time-series
+    TIMESMIXER = "timesmixer"      # Times-Mixer with decomposable mixing
     LINEAR_REGRESSION = "linear_regression"
     RANDOM_FOREST = "random_forest"
     ENSEMBLE = "ensemble"
