@@ -2,26 +2,35 @@
 
 ## Overview
 
-This directory contains production-ready deployment infrastructure for the Shyvr RLTE AI-augmented cryptocurrency trading system. The deployment infrastructure supports zero-downtime blue-green deployments, automated rollbacks, comprehensive monitoring, and disaster recovery.
+This directory contains a clean, maintainable deployment infrastructure for the Shyvr RLTE AI-augmented cryptocurrency trading system. The refactored deployment system provides a unified interface for all deployment operations while maintaining zero-downtime blue-green deployments, automated rollbacks, comprehensive monitoring, and disaster recovery.
 
 ## Quick Start
 
-### Automated Deployment (Recommended)
+### Unified Deployment Runner (Recommended)
 ```bash
 # Deploy to staging
-./deploy/automated_deployment_pipeline.sh staging
+./deploy/deploy.sh staging
 
-# Deploy to production (after staging validation)
-./deploy/automated_deployment_pipeline.sh production
+# Deploy to production
+./deploy/deploy.sh production
+
+# Emergency deployment
+./deploy/deploy.sh production emergency
+
+# Validation only
+./deploy/deploy.sh staging validation-only
+
+# Rollback
+./deploy/deploy.sh production rollback
 ```
 
-### Manual Deployment
+### Direct Script Usage (Advanced)
 ```bash
 # 1. Validate readiness
 ./deploy/production_readiness_checklist.sh
 
-# 2. Deploy with blue-green strategy
-./deploy/blue_green_deployment.sh production latest
+# 2. Deploy with comprehensive pipeline
+./deploy/automated_deployment_pipeline.sh production
 
 # 3. Validate deployment
 ./deploy/validate_deployment.sh
@@ -29,30 +38,42 @@ This directory contains production-ready deployment infrastructure for the Shyvr
 
 ## Deployment Scripts
 
-### Core Deployment
-- **`automated_deployment_pipeline.sh`** - Complete automated deployment pipeline with validation
-- **`blue_green_deployment.sh`** - Zero-downtime blue-green deployment implementation
-- **`deploy_latest.sh`** - Legacy production deployment script (enhanced)
-- **`deploy_and_configure.sh`** - Simple deployment orchestrator
+### Main Deployment Interface
+- **`deploy.sh`** - **NEW**: Unified deployment runner that orchestrates all deployment modes
+- **`deploy-utils.sh`** - **NEW**: Shared utilities and functions for consistent deployment operations
 
-### Validation & Testing
-- **`production_readiness_checklist.sh`** - Comprehensive pre-deployment validation
-- **`validate_deployment.sh`** - Post-deployment health and functionality validation
+### Core Deployment Pipeline
+- **`automated_deployment_pipeline.sh`** - Complete 8-stage automated deployment pipeline with validation
+- **`blue_green_deployment.sh`** - Zero-downtime blue-green deployment with gradual traffic migration
+- **`validate_deployment.sh`** - Comprehensive post-deployment health and functionality validation
+- **`automated_rollback.sh`** - Multi-strategy automated rollback with emergency capabilities
 
-### Operations & Maintenance
-- **`automated_rollback.sh`** - Automated rollback capabilities with multiple strategies
-- **`setup_production_monitoring.sh`** - Production monitoring and alerting setup
+### Pre-Deployment Validation
+- **`production_readiness_checklist.sh`** - Comprehensive 10-section pre-deployment validation
 
 ### Infrastructure Setup
 - **`setup_secrets.sh`** - Secret management and configuration
 - **`setup_cloud_sql.sh`** - Database infrastructure setup
 - **`setup_monitoring.sh`** - Basic monitoring setup
+- **`setup_production_monitoring.sh`** - Production monitoring and alerting setup
 - **`setup_gcs_infrastructure.sh`** - Google Cloud Storage setup for model preservation
+- **`setup_experience_database.sh`** - RL experience database setup
+- **`setup_build_triggers.sh`** - CI/CD build trigger configuration
+- **`sla_monitoring_setup.sh`** - SLA monitoring configuration
 
-### Utilities
-- **`rotate_secrets.py`** - Secret rotation automation
+### Validation & Testing Utilities
 - **`validate_secrets.py`** - Secret validation utility
+- **`validate_gcs_setup.py`** - GCS configuration validation
 - **`test_cloud_sql_connectivity.py`** - Database connectivity testing
+- **`final_security_audit.py`** - Security audit automation
+
+### Maintenance & Operations
+- **`rotate_secrets.py`** - Secret rotation automation
+
+### Archive (Legacy Scripts)
+- **`archive/deploy_latest.sh`** - Legacy deployment script (superseded by automated_deployment_pipeline.sh)
+- **`archive/deploy_and_configure.sh`** - Simple orchestrator (functionality moved to deploy.sh)
+- **`archive/final_deployment_package.sh`** - Complex Phase 8.2 script (functionality integrated into main pipeline)
 
 ## Key Features
 
@@ -79,6 +100,33 @@ This directory contains production-ready deployment infrastructure for the Shyvr
 - Automated infrastructure setup
 - Secret management automation
 - Health monitoring with auto-recovery
+
+## Deployment Modes
+
+### Standard Deployment (Default)
+- **Command**: `./deploy/deploy.sh <environment>`
+- **Process**: Full 8-stage automated pipeline with comprehensive validation
+- **Use Case**: Regular deployments with full safety checks
+
+### Emergency Deployment
+- **Command**: `./deploy/deploy.sh <environment> emergency`
+- **Process**: Minimal validation, fastest deployment possible
+- **Use Case**: Critical hotfixes and emergency deployments
+
+### Blue-Green Only
+- **Command**: `./deploy/deploy.sh <environment> blue-green`
+- **Process**: Blue-green deployment with post-validation
+- **Use Case**: When pre-built image already exists
+
+### Validation Only
+- **Command**: `./deploy/deploy.sh <environment> validation-only`
+- **Process**: Run all validation checks without deployment
+- **Use Case**: Pre-deployment verification and health checks
+
+### Rollback
+- **Command**: `./deploy/deploy.sh <environment> rollback`
+- **Process**: Automated rollback to previous version
+- **Use Case**: Emergency rollback scenarios
 
 ## Deployment Environments
 
@@ -112,6 +160,10 @@ This directory contains production-ready deployment infrastructure for the Shyvr
 
 ### Immediate Rollback
 ```bash
+# Using unified runner (recommended)
+./deploy/deploy.sh production rollback
+
+# Direct rollback script
 ./deploy/automated_rollback.sh production emergency
 ```
 
@@ -128,6 +180,12 @@ gcloud run logs tail shyvr-rlte --region us-central1 --follow
 ### Emergency Stop Trading
 ```bash
 curl -X POST https://your-service-url/api/emergency-stop
+```
+
+### Emergency Deployment
+```bash
+# Skip all validation for fastest deployment
+./deploy/deploy.sh production emergency
 ```
 
 ## Documentation
@@ -206,6 +264,56 @@ curl -X POST https://your-service-url/api/emergency-stop
 
 ---
 
+## Deployment Workflow
+
+### Typical Deployment Process
+
+1. **Validation Phase**
+   ```bash
+   # Validate environment and configuration
+   ./deploy/deploy.sh staging validation-only
+   ```
+
+2. **Staging Deployment**
+   ```bash
+   # Deploy to staging for testing
+   ./deploy/deploy.sh staging
+   ```
+
+3. **Production Deployment**
+   ```bash
+   # Deploy to production with full pipeline
+   ./deploy/deploy.sh production
+   ```
+
+4. **Emergency Scenarios**
+   ```bash
+   # Emergency deployment (skip validation)
+   ./deploy/deploy.sh production emergency
+   
+   # Emergency rollback
+   ./deploy/deploy.sh production rollback
+   ```
+
+### Environment Variables for Customization
+
+- **`DRY_RUN=true`** - Show what would be deployed without executing
+- **`SKIP_TESTS=true`** - Skip testing phases in pipeline
+- **`FORCE_DEPLOY=true`** - Skip validation failures
+- **`LOG_DIR=/path/to/logs`** - Custom log directory
+
+### Script Dependencies
+
+The unified deployment system automatically handles dependencies:
+- `deploy.sh` → orchestrates all deployment modes
+- `deploy-utils.sh` → provides shared functions
+- `automated_deployment_pipeline.sh` → comprehensive deployment
+- `blue_green_deployment.sh` → zero-downtime deployment
+- `validate_deployment.sh` → post-deployment validation
+- `automated_rollback.sh` → rollback operations
+
+---
+
 **Last Updated**: $(date)  
-**Version**: 1.0  
+**Version**: 2.0 (Refactored)  
 **Maintained By**: DevOps Team
