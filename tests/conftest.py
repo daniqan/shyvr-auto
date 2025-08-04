@@ -57,6 +57,12 @@ agent:
   temperature: 0.0
   max_active_rules: 5
 
+security:
+  secret_key: "test_secret_key_1234567890_secure"
+  jwt_algorithm: "HS256"
+  jwt_expiration_hours: 24
+  rate_limit_storage: "memory"
+
 trading:
   modes:
     analysis: true
