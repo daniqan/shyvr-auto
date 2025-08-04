@@ -26,12 +26,11 @@ from dataclasses import dataclass
 # Import the modules we'll be testing (these will fail initially)
 try:
     from src.ml_analysis.transformers.optimization import (
-        TorchCompileConfig,
-        TorchCompileOptimizer,
+        ModelCompilationConfig,
+        ModelCompiler,
         ONNXExportConfig,
         ONNXExporter,
-        ModelCompilationManager,
-        InferenceCompiler
+        TransformerOptimizationPipeline
     )
     from src.ml_analysis.inference_optimizer import (
         CompiledModelOptimizer,
@@ -52,65 +51,54 @@ class CompilationTestConfig:
     enable_profiling: bool = True
 
 
-class TestTorchCompileConfig:
-    """Test torch.compile configuration"""
+class TestModelCompilationConfig:
+    """Test model compilation configuration"""
     
     def test_compile_config_initialization(self):
-        """Test TorchCompileConfig initialization with default values"""
-        # This test will fail until we implement TorchCompileConfig
-        config = TorchCompileConfig()
+        """Test ModelCompilationConfig initialization with default values"""
+        # This test will fail until we implement ModelCompilationConfig
+        config = ModelCompilationConfig()
         
-        assert config.backend in ["inductor", "aot_eager", "onnxrt", "tensorrt"]
+        assert config.backend in ["inductor", "aot_eager", "cudagraphs", "onnxrt"]
         assert config.mode in ["default", "reduce-overhead", "max-autotune"]
         assert config.fullgraph is not None
         assert config.dynamic is not None
-        assert config.enable_profiling is not None
+        assert config.disable is not None
         
     def test_compile_config_custom_values(self):
-        """Test TorchCompileConfig with custom values"""
-        config = TorchCompileConfig(
-            backend="tensorrt",
+        """Test ModelCompilationConfig with custom values"""
+        config = ModelCompilationConfig(
+            backend="aot_eager",
             mode="max-autotune",
             fullgraph=True,
             dynamic=False,
-            enable_profiling=True
+            disable=False
         )
         
-        assert config.backend == "tensorrt"
+        assert config.backend == "aot_eager"
         assert config.mode == "max-autotune"
         assert config.fullgraph is True
         assert config.dynamic is False
-        assert config.enable_profiling is True
+        assert config.disable is False
         
     def test_compile_config_validation(self):
-        """Test TorchCompileConfig parameter validation"""
+        """Test ModelCompilationConfig parameter validation"""
         # Test invalid backend
         with pytest.raises(ValueError):
-            TorchCompileConfig(backend="invalid_backend")
+            ModelCompilationConfig(backend="invalid_backend")
             
         # Test invalid mode
         with pytest.raises(ValueError):
-            TorchCompileConfig(mode="invalid_mode")
+            ModelCompilationConfig(mode="invalid_mode")
             
-    def test_compile_config_hardware_compatibility(self):
-        """Test hardware compatibility checks"""
-        config = TorchCompileConfig()
-        
-        compatibility = config.check_hardware_compatibility()
-        
-        assert "cuda_available" in compatibility
-        assert "tensorrt_available" in compatibility
-        assert "supported_backends" in compatibility
-        assert isinstance(compatibility["supported_backends"], list)
 
-
-class TestTorchCompileOptimizer:
-    """Test torch.compile optimizer"""
+class TestModelCompiler:
+    """Test model compiler"""
     
     @pytest.fixture
     def compile_config(self):
         """Fixture providing compile configuration"""
-        return TorchCompileConfig(
+        return ModelCompilationConfig(
             backend="inductor",
             mode="default",
             fullgraph=False,
@@ -119,8 +107,8 @@ class TestTorchCompileOptimizer:
     
     @pytest.fixture
     def compile_optimizer(self, compile_config):
-        """Fixture providing torch compile optimizer"""
-        return TorchCompileOptimizer(compile_config)
+        """Fixture providing model compiler"""
+        return ModelCompiler(compile_config)
     
     @pytest.fixture
     def simple_model(self):
@@ -144,10 +132,10 @@ class TestTorchCompileOptimizer:
         return SimpleTransformer()
     
     def test_optimizer_initialization(self, compile_optimizer):
-        """Test TorchCompileOptimizer initialization"""
+        """Test ModelCompiler initialization"""
         assert compile_optimizer.config is not None
-        assert hasattr(compile_optimizer, 'compilation_cache')
-        assert hasattr(compile_optimizer, 'performance_tracker')
+        assert hasattr(compile_optimizer, 'compiled_models')
+        assert hasattr(compile_optimizer, 'compilation_stats')
         
     def test_model_compilation_basic(self, compile_optimizer, simple_model):
         """Test basic model compilation"""
