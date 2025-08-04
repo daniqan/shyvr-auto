@@ -72,6 +72,7 @@ dependencies = [
     "pytest-cov>=6.2.1",
     "brotli>=1.1.0",
     "lz4>=4.4.4",
+    "onnx>=1.18.0",
 ]
 
 [project.optional-dependencies]
