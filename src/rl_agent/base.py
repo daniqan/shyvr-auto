@@ -140,8 +140,8 @@ class MarketState:
     
     @classmethod 
     def get_enhanced_feature_size(cls) -> int:
-        """Get the size of ML-enhanced feature vector"""
-        return 25  # Base features (19) + ML features (6)
+        """Get the size of ML-enhanced feature vector with Transformer features"""
+        return 34  # Base features (19) + ML features (6) + Transformer features (9)
 
 
 @dataclass
