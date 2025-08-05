@@ -35,6 +35,8 @@ from src.modes.backtest_integration import (
     ModelPerformanceComparison
 )
 from src.utils.database import get_database_connection
+from src.ml_analysis.model_manager import ModelManager
+from src.ml_analysis.ensemble_weight_manager import EnsembleWeightManager
 
 
 logger = structlog.get_logger()
@@ -153,6 +155,17 @@ class AnalysisMode(BaseAnalysisMode):
         self.backtest_engine = None
         self.risk_analyzer = None
         self._should_never_trade = True
+        
+        # Initialize ML model manager and ensemble weight manager
+        try:
+            ml_config = config.parameters.get('ml_analysis', {})
+            self.model_manager = ModelManager(ml_config)
+            self.ensemble_weight_manager = EnsembleWeightManager()
+            self.logger.info("Initialized ML model manager and ensemble weight manager")
+        except Exception as e:
+            self.logger.warning("Failed to initialize ML components", error=str(e))
+            self.model_manager = None
+            self.ensemble_weight_manager = None
         
         # Initialize metrics collection
         try:
@@ -411,14 +424,72 @@ class AnalysisMode(BaseAnalysisMode):
         self.logger.info("Analysis mode stopped")
     
     async def process_tick(self, market_state: MarketState) -> Optional[TradeAction]:
-        """Process market tick for analysis only (never returns trading actions)."""
+        """Process market tick for analysis with transformer models and fear/greed integration."""
         if self.status != ModeStatus.ACTIVE:
             return None
         
-        # Enhanced analysis processing
+        # Enhanced analysis processing with transformer models
         await self._process_market_analysis(market_state)
         
-        # Record analysis metrics
+        # Integrate transformer model predictions if model manager is available
+        if self.model_manager:
+            try:
+                # Get current fear/greed sentiment regime
+                sentiment_regime = await self.model_manager.get_fear_greed_regime()
+                sentiment_data = self.model_manager._last_sentiment_data
+                
+                # Update mode sentiment state
+                if sentiment_data:
+                    self.update_sentiment_state(
+                        sentiment_regime=sentiment_regime,
+                        confidence=0.8,  # Default confidence for analysis mode
+                        fear_greed_value=sentiment_data.fear_greed_index
+                    )
+                
+                # Get ensemble predictions from all transformer models
+                token = DiscoveredToken(
+                    address=market_state.token.address,
+                    symbol=market_state.token.symbol,
+                    name=market_state.token.name or market_state.token.symbol,
+                    chain=market_state.token.chain,
+                    price_usd=market_state.price_usd,
+                    volume_24h=market_state.volume_24h or 0.0,
+                    market_cap=market_state.volume_24h * market_state.price_usd if market_state.volume_24h else 0.0,
+                    discovered_at=datetime.now()
+                )
+                
+                # Get transformer ensemble prediction
+                prediction_result = await self.model_manager.analyze_token(token, use_ensemble=True)
+                
+                # Optimize ensemble weights based on current sentiment
+                if self.ensemble_weight_manager:
+                    current_weights = self.model_manager._model_weights.copy()
+                    weight_optimization = await self.ensemble_weight_manager.optimize_weights(
+                        current_weights=current_weights,
+                        market_volatility=self._calculate_market_volatility(market_state),
+                        confidence_threshold=0.7
+                    )
+                    
+                    # Log weight optimization results
+                    self._record_metric("fear_greed_regime", sentiment_regime)
+                    self._record_metric("weight_optimization_confidence", weight_optimization.optimization_confidence)
+                    self._record_metric("expected_improvement", weight_optimization.expected_improvement)
+                    self._record_metric("weight_adjustment_latency_ms", weight_optimization.processing_time_ms)
+                    
+                    self.logger.info("Transformer ensemble analysis completed",
+                                   sentiment_regime=sentiment_regime,
+                                   optimization_confidence=weight_optimization.optimization_confidence,
+                                   processing_time_ms=weight_optimization.processing_time_ms)
+                
+                # Record transformer prediction metrics
+                self._record_metric("ensemble_prediction_confidence", prediction_result.confidence)
+                self._record_metric("prediction_direction", prediction_result.direction.value if hasattr(prediction_result.direction, 'value') else str(prediction_result.direction))
+                self._record_metric("ensemble_price_target", prediction_result.price_target)
+                
+            except Exception as e:
+                self.logger.error("Error in transformer ensemble analysis", error=str(e))
+        
+        # Record standard analysis metrics
         self._record_metric("last_price", market_state.price_usd)
         self._record_metric("last_rsi", market_state.rsi)
         self._record_metric("last_volume", market_state.volume_24h)
@@ -426,6 +497,28 @@ class AnalysisMode(BaseAnalysisMode):
         
         # Analysis mode never trades - always return HOLD or None
         return TradeAction.HOLD
+    
+    def _calculate_market_volatility(self, market_state: MarketState) -> float:
+        """Calculate market volatility for weight optimization"""
+        try:
+            # Simple volatility estimation based on available indicators
+            volatility = 0.5  # Default medium volatility
+            
+            if market_state.rsi is not None:
+                # High RSI deviation from 50 indicates volatility
+                rsi_deviation = abs(market_state.rsi - 50) / 50
+                volatility = min(1.0, volatility + rsi_deviation * 0.3)
+            
+            if hasattr(market_state, 'price_change_24h') and market_state.price_change_24h:
+                # Price change indicates volatility
+                price_volatility = min(1.0, abs(market_state.price_change_24h) / 10.0)  # Normalize to 10% max
+                volatility = min(1.0, volatility + price_volatility * 0.4)
+            
+            return volatility
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate market volatility", error=str(e))
+            return 0.5  # Default medium volatility
     
     async def query_historical_experiences(self, lookback_days: int = 30, 
                                          min_experiences: int = 1,
