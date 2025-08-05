@@ -331,22 +331,22 @@ steps:
       # Get current revision for rollback capability
       CURRENT_REVISION=$(gcloud run services describe shyvr-rlte-staging --region=us-central1 --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "")
       
-      # Deploy to staging Cloud Run service with enhanced configuration
+      # Deploy to staging Cloud Run service with transformer-optimized configuration
       gcloud run deploy shyvr-rlte-staging \
         --image=us-central1-docker.pkg.dev/$PROJECT_ID/shyvr-ai-prod/shyvr-rlte:$SHORT_SHA \
         --region=us-central1 \
         --platform=managed \
         --port=8080 \
-        --memory=4Gi \
-        --cpu=2 \
-        --concurrency=25 \
-        --timeout=900 \
+        --memory=6Gi \
+        --cpu=4 \
+        --concurrency=20 \
+        --timeout=2700 \
         --max-instances=5 \
         --min-instances=0 \
         --allow-unauthenticated \
         --cpu-boost \
         --execution-environment=gen2 \
-        --set-env-vars="ENVIRONMENT=staging,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA" \
+        --set-env-vars="ENVIRONMENT=staging,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA,TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=4,MKL_NUM_THREADS=4,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1" \
         --add-cloudsql-instances="$PROJECT_ID:us-central1:shyvr-rlte-db" \
         --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,JWT_SECRET=JWT_SECRET:latest" \
         --no-traffic \
@@ -434,23 +434,23 @@ steps:
       # Get current production revision for rollback capability
       CURRENT_REVISION=$(gcloud run services describe shyvr-rlte --region=us-central1 --format="value(status.latestReadyRevisionName)" 2>/dev/null || echo "")
       
-      # Production deployment with full configuration and blue-green strategy
+      # Production deployment with full configuration and blue-green strategy (transformer-optimized)
       gcloud run deploy shyvr-rlte \
         --image=us-central1-docker.pkg.dev/$PROJECT_ID/shyvr-ai-prod/shyvr-rlte:$SHORT_SHA \
         --region=us-central1 \
         --platform=managed \
         --port=8080 \
-        --memory=6Gi \
-        --cpu=4 \
-        --concurrency=50 \
-        --timeout=1800 \
+        --memory=8Gi \
+        --cpu=6 \
+        --concurrency=15 \
+        --timeout=4200 \
         --max-instances=10 \
         --min-instances=1 \
         --allow-unauthenticated \
         --cpu-boost \
         --execution-environment=gen2 \
         --session-affinity \
-        --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true" \
+        --set-env-vars="ENVIRONMENT=production,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$BUILD_ID,COMMIT_SHA=$SHORT_SHA,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true,TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=6,MKL_NUM_THREADS=6,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1" \
         --add-cloudsql-instances="$PROJECT_ID:us-central1:shyvr-rlte-db" \
         --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,HELIUS_API_KEY=HELIUS_API_KEY:latest,BIRDEYE_API_KEY=BIRDEYE_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,COINGECKO_API_KEY=COINGECKO_API_KEY:latest,LUNARCRUSH_API_KEY=LUNARCRUSH_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,JWT_SECRET=JWT_SECRET:latest" \
         --no-traffic \
@@ -653,9 +653,9 @@ steps:
 # BUILD CONFIGURATION
 # =============================================================================
 options:
-  # Use high-CPU machine for faster builds
-  machineType: 'E2_HIGHCPU_8'
-  diskSizeGb: 100
+  # Use high-CPU machine for transformer builds
+  machineType: 'E2_HIGHCPU_16'
+  diskSizeGb: 150
   
   # Logging configuration
   logging: CLOUD_LOGGING_ONLY
@@ -667,8 +667,8 @@ options:
   - 'PYTHONDONTWRITEBYTECODE=1'
   - 'ENVIRONMENT=ci'
 
-# Build timeout (30 minutes)
-timeout: '1800s'
+# Build timeout (1 hour for transformer builds)
+timeout: '3600s'
 
 # Build triggers for different branches
 availableSecrets:
