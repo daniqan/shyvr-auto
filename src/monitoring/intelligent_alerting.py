@@ -69,6 +69,16 @@ class AnomalyType(Enum):
     MARKET_CRASH = "market_crash"
     CORRELATION_BREAKDOWN = "correlation_breakdown"
     VOLATILITY_CLUSTERING = "volatility_clustering"
+    # Transformer-specific anomaly types
+    ATTENTION_ENTROPY_DRIFT = "attention_entropy_drift"
+    HEAD_SPECIALIZATION_LOSS = "head_specialization_loss"
+    TEMPORAL_FOCUS_DRIFT = "temporal_focus_drift"
+    EMBEDDING_DRIFT = "embedding_drift"
+    GRADIENT_FLOW_ANOMALY = "gradient_flow_anomaly"
+    TRANSFORMER_PERFORMANCE_DEGRADATION = "transformer_performance_degradation"
+    ATTENTION_PATTERN_ANOMALY = "attention_pattern_anomaly"
+    FEATURE_IMPORTANCE_DRIFT = "feature_importance_drift"
+    CROSS_ATTENTION_CORRELATION_DRIFT = "cross_attention_correlation_drift"
 
 
 @dataclass
