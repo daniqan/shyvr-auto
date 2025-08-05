@@ -11,10 +11,15 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 from datetime import datetime, timedelta
 import numpy as np
 from dataclasses import dataclass, asdict
+import torch
+from torch import Tensor
 
 from .factory import ExplainerFactory
 from .data_models import ExplanationData
 from ..monitoring.base import MetricsCollector
+from .transformers.attention_explainer import AttentionExplainer
+from .transformers.temporal_attention_analyzer import TemporalAttentionAnalyzer
+from .transformers.cross_attention_analyzer import CrossAttentionAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,7 @@ class TradingExplanation:
     model_type: str  # 'ml_model', 'rl_agent'
     confidence: float
     metadata: Dict[str, Any]
+    attention_data: Optional[Dict[str, Any]] = None
 
 
 class TradingExplanationManager:
@@ -71,6 +77,12 @@ class TradingExplanationManager:
         self._default_explainer_type = 'permutation'
         self._fallback_explainer_types = ['lime', 'gradient']
         
+        # Transformer-specific configuration
+        self._transformer_explainer_types = ['attention', 'temporal_attention', 'cross_attention']
+        self._attention_cache = {}  # Cache for attention explainers
+        self._enable_attention_heatmaps = True
+        self._attention_cache_size = 100
+        
         logger.info(f"Initialized TradingExplanationManager with cache_size={cache_size}")
     
     async def explain_trading_decision(
@@ -83,7 +95,8 @@ class TradingExplanationManager:
         symbol: str,
         model_type: str = 'ml_model',
         explainer_type: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        enable_attention_analysis: bool = True
     ) -> Optional[TradingExplanation]:
         """
         Generate explanation for a trading decision.
@@ -117,7 +130,8 @@ class TradingExplanationManager:
                     model=model,
                     feature_data=feature_data,
                     feature_names=feature_names,
-                    explainer_type=explainer_type or self._default_explainer_type
+                    explainer_type=explainer_type or self._default_explainer_type,
+                    enable_attention_analysis=enable_attention_analysis
                 ),
                 timeout=self.explanation_timeout
             )
@@ -125,6 +139,16 @@ class TradingExplanationManager:
             if explanation_data is None:
                 logger.warning(f"Failed to generate explanation for decision {decision_id}")
                 return None
+            
+            # Generate attention data for transformer models if enabled
+            attention_data = None
+            if enable_attention_analysis and self._is_transformer_model(model):
+                attention_data = await self._generate_attention_analysis(
+                    model=model,
+                    feature_data=feature_data,
+                    feature_names=feature_names,
+                    symbol=symbol
+                )
             
             # Create trading explanation
             trading_explanation = TradingExplanation(
@@ -135,7 +159,8 @@ class TradingExplanationManager:
                 explanation_data=explanation_data,
                 model_type=model_type,
                 confidence=explanation_data.confidence_score or 0.5,
-                metadata=metadata or {}
+                metadata=metadata or {},
+                attention_data=attention_data
             )
             
             # Cache the explanation
@@ -168,7 +193,8 @@ class TradingExplanationManager:
         model: Any,
         feature_data: Union[np.ndarray, List[float]],
         feature_names: List[str],
-        explainer_type: str
+        explainer_type: str,
+        enable_attention_analysis: bool = True
     ) -> Optional[ExplanationData]:
         """
         Generate explanation using specified explainer type with fallbacks.
@@ -214,6 +240,198 @@ class TradingExplanationManager:
         
         logger.error("All explainer types failed to generate explanation")
         return None
+    
+    def _is_transformer_model(self, model: Any) -> bool:
+        """Check if model is a transformer model that supports attention analysis."""
+        model_type = getattr(model, 'model_type', None)
+        if model_type:
+            return model_type.lower() in ['itransformer', 'patchtst', 'timesmixer', 'timesfm', 'transformerpredictor']
+        
+        # Check model class name as fallback
+        model_class_name = model.__class__.__name__.lower()
+        transformer_indicators = ['transformer', 'attention', 'itransformer', 'patchtst', 'timesmixer', 'timesfm']
+        return any(indicator in model_class_name for indicator in transformer_indicators)
+    
+    async def _generate_attention_analysis(
+        self,
+        model: Any,
+        feature_data: Union[np.ndarray, List[float]],
+        feature_names: List[str],
+        symbol: str
+    ) -> Optional[Dict[str, Any]]:
+        """Generate attention-based analysis for transformer models."""
+        try:
+            attention_data = {}
+            
+            # Basic attention weight extraction
+            if hasattr(model, 'get_attention_weights') or hasattr(model, 'attention_weights'):
+                attention_weights = await self._extract_attention_weights(model, feature_data)
+                if attention_weights is not None:
+                    attention_data['attention_weights'] = attention_weights
+                    attention_data['attention_heatmap'] = self._generate_attention_heatmap(attention_weights)
+            
+            # Temporal attention analysis for time-series patterns
+            temporal_patterns = await self._analyze_temporal_attention(
+                model, feature_data, feature_names
+            )
+            if temporal_patterns:
+                attention_data['temporal_patterns'] = temporal_patterns
+            
+            # Cross-asset attention analysis (if applicable)
+            if self._has_multi_asset_data(feature_names):
+                cross_asset_patterns = await self._analyze_cross_asset_attention(
+                    model, feature_data, feature_names, symbol
+                )
+                if cross_asset_patterns:
+                    attention_data['cross_asset_patterns'] = cross_asset_patterns
+            
+            return attention_data if attention_data else None
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate attention analysis: {str(e)}")
+            return None
+    
+    async def _extract_attention_weights(
+        self,
+        model: Any,
+        feature_data: Union[np.ndarray, List[float]]
+    ) -> Optional[np.ndarray]:
+        """Extract attention weights from transformer model."""
+        try:
+            if hasattr(model, 'get_attention_weights'):
+                return model.get_attention_weights(feature_data)
+            elif hasattr(model, 'attention_weights'):
+                # Some models store attention weights as attributes
+                return model.attention_weights
+            elif hasattr(model, 'predict_with_attention'):
+                _, attention_weights = model.predict_with_attention(feature_data)
+                return attention_weights
+            
+            # Fallback: try to extract from forward pass
+            if hasattr(model, 'forward_with_attention'):
+                with torch.no_grad():
+                    if isinstance(feature_data, (list, np.ndarray)):
+                        feature_tensor = torch.FloatTensor(feature_data).unsqueeze(0)
+                    else:
+                        feature_tensor = feature_data
+                    
+                    _, attention_weights = model.forward_with_attention(feature_tensor)
+                    return attention_weights.cpu().numpy()
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not extract attention weights: {str(e)}")
+            return None
+    
+    def _generate_attention_heatmap(
+        self,
+        attention_weights: np.ndarray
+    ) -> Dict[str, Any]:
+        """Generate attention heatmap data for visualization."""
+        try:
+            if attention_weights.ndim == 3:  # [num_heads, seq_len, seq_len]
+                # Average across heads for simplified heatmap
+                avg_attention = np.mean(attention_weights, axis=0)
+            elif attention_weights.ndim == 2:  # [seq_len, seq_len]
+                avg_attention = attention_weights
+            else:
+                logger.warning(f"Unexpected attention weights shape: {attention_weights.shape}")
+                return {}
+            
+            return {
+                'heatmap_data': avg_attention.tolist(),
+                'shape': avg_attention.shape,
+                'max_attention': float(np.max(avg_attention)),
+                'min_attention': float(np.min(avg_attention)),
+                'attention_entropy': float(-np.sum(avg_attention * np.log(avg_attention + 1e-8))),
+                'attention_sparsity': float(np.mean(avg_attention < 0.1))
+            }
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate attention heatmap: {str(e)}")
+            return {}
+    
+    async def _analyze_temporal_attention(
+        self,
+        model: Any,
+        feature_data: Union[np.ndarray, List[float]],
+        feature_names: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Analyze temporal attention patterns in time-series data."""
+        try:
+            # Create temporal attention analyzer if not cached
+            analyzer_key = f"temporal_{id(model)}"
+            if analyzer_key not in self._attention_cache:
+                try:
+                    analyzer = TemporalAttentionAnalyzer(model, feature_names)
+                    self._attention_cache[analyzer_key] = analyzer
+                except Exception as e:
+                    logger.debug(f"Could not create temporal attention analyzer: {str(e)}")
+                    return None
+            
+            analyzer = self._attention_cache[analyzer_key]
+            
+            # Analyze temporal patterns
+            temporal_analysis = analyzer.analyze_temporal_patterns(
+                feature_data, include_seasonality=True
+            )
+            
+            return {
+                'recency_bias': temporal_analysis.get('recency_bias', 0.0),
+                'periodic_patterns': temporal_analysis.get('periodic_patterns', []),
+                'trend_attention': temporal_analysis.get('trend_attention', 0.0),
+                'volatility_focus': temporal_analysis.get('volatility_focus', 0.0)
+            }
+            
+        except Exception as e:
+            logger.debug(f"Temporal attention analysis failed: {str(e)}")
+            return None
+    
+    async def _analyze_cross_asset_attention(
+        self,
+        model: Any,
+        feature_data: Union[np.ndarray, List[float]],
+        feature_names: List[str],
+        symbol: str
+    ) -> Optional[Dict[str, Any]]:
+        """Analyze cross-asset attention patterns for multi-asset models."""
+        try:
+            # Create cross-asset attention analyzer if not cached
+            analyzer_key = f"cross_asset_{id(model)}"
+            if analyzer_key not in self._attention_cache:
+                try:
+                    analyzer = CrossAttentionAnalyzer(model, feature_names)
+                    self._attention_cache[analyzer_key] = analyzer
+                except Exception as e:
+                    logger.debug(f"Could not create cross-asset attention analyzer: {str(e)}")
+                    return None
+            
+            analyzer = self._attention_cache[analyzer_key]
+            
+            # Analyze cross-asset patterns
+            cross_asset_analysis = analyzer.analyze_cross_asset_attention(
+                feature_data, primary_asset=symbol
+            )
+            
+            return {
+                'asset_correlations': cross_asset_analysis.get('asset_correlations', {}),
+                'lead_lag_relationships': cross_asset_analysis.get('lead_lag_relationships', {}),
+                'arbitrage_patterns': cross_asset_analysis.get('arbitrage_patterns', []),
+                'cross_asset_influence': cross_asset_analysis.get('cross_asset_influence', 0.0)
+            }
+            
+        except Exception as e:
+            logger.debug(f"Cross-asset attention analysis failed: {str(e)}")
+            return None
+    
+    def _has_multi_asset_data(self, feature_names: List[str]) -> bool:
+        """Check if feature names indicate multi-asset data."""
+        asset_indicators = ['btc', 'eth', 'sol', 'cross_asset', 'correlation', 'arbitrage']
+        return any(
+            any(indicator in feature_name.lower() for indicator in asset_indicators)
+            for feature_name in feature_names
+        )
     
     def _cache_explanation(self, decision_id: str, explanation: TradingExplanation) -> None:
         """Cache explanation with size limit."""
@@ -327,4 +545,75 @@ class TradingExplanationManager:
         """Convert TradingExplanation to dictionary for serialization."""
         result = asdict(explanation)
         result['explanation_data'] = explanation.explanation_data.to_dict()
+        if explanation.attention_data:
+            result['attention_data'] = explanation.attention_data
         return result
+    
+    def get_attention_statistics(
+        self,
+        symbol: Optional[str] = None,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Get attention statistics for transformer models."""
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_iso = cutoff_time.isoformat() + 'Z'
+        
+        # Filter explanations with attention data
+        explanations = [
+            e for e in self._explanation_cache.values()
+            if e.timestamp >= cutoff_iso 
+            and (not symbol or e.symbol == symbol)
+            and e.attention_data is not None
+        ]
+        
+        if not explanations:
+            return {}
+        
+        # Aggregate attention statistics
+        attention_entropies = []
+        attention_sparsities = []
+        recency_biases = []
+        
+        for explanation in explanations:
+            attention_data = explanation.attention_data
+            
+            if 'attention_heatmap' in attention_data:
+                heatmap = attention_data['attention_heatmap']
+                if 'attention_entropy' in heatmap:
+                    attention_entropies.append(heatmap['attention_entropy'])
+                if 'attention_sparsity' in heatmap:
+                    attention_sparsities.append(heatmap['attention_sparsity'])
+            
+            if 'temporal_patterns' in attention_data:
+                temporal = attention_data['temporal_patterns']
+                if 'recency_bias' in temporal:
+                    recency_biases.append(temporal['recency_bias'])
+        
+        stats = {
+            'total_transformer_explanations': len(explanations),
+            'attention_coverage': len(explanations) / len(self._explanation_cache) if self._explanation_cache else 0.0
+        }
+        
+        if attention_entropies:
+            stats['average_attention_entropy'] = np.mean(attention_entropies)
+            stats['attention_entropy_std'] = np.std(attention_entropies)
+        
+        if attention_sparsities:
+            stats['average_attention_sparsity'] = np.mean(attention_sparsities)
+            stats['attention_sparsity_std'] = np.std(attention_sparsities)
+        
+        if recency_biases:
+            stats['average_recency_bias'] = np.mean(recency_biases)
+            stats['recency_bias_std'] = np.std(recency_biases)
+        
+        return stats
+    
+    def clear_attention_cache(self) -> None:
+        """Clear the attention analyzer cache."""
+        self._attention_cache.clear()
+        logger.info("Cleared attention analyzer cache")
+    
+    def set_attention_analysis_enabled(self, enabled: bool) -> None:
+        """Enable or disable attention analysis for transformer models."""
+        self._enable_attention_heatmaps = enabled
+        logger.info(f"Attention analysis {'enabled' if enabled else 'disabled'}")

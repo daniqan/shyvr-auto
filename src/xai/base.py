@@ -315,3 +315,168 @@ class GradientBasedExplainer(BaseExplainer):
             Gradient array with same shape as input
         """
         pass
+
+
+class TransformerExplainer(BaseExplainer):
+    """
+    Base class for transformer-specific explainers (Attention, Temporal Attention, etc.).
+    
+    These explainers work by analyzing attention patterns and internal representations
+    from transformer models, requiring models that expose attention weights.
+    """
+    
+    SUPPORTED_TRANSFORMER_TYPES = [
+        'iTransformer',
+        'PatchTST', 
+        'TimesMixer',
+        'TimesFM',
+        'TransformerPredictor'
+    ]
+    
+    def __init__(
+        self,
+        model: Any,
+        feature_names: List[str], 
+        config: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(model, feature_names, config)
+        
+        # Ensure model supports attention extraction
+        self._validate_transformer_support()
+    
+    def _validate_transformer_support(self) -> None:
+        """
+        Validate that the model supports attention extraction.
+        
+        Raises:
+            ValueError: If model cannot be used for transformer explanations
+        """
+        model_type = getattr(self.model, 'model_type', None)
+        if model_type and model_type.lower() in [t.lower() for t in self.SUPPORTED_TRANSFORMER_TYPES]:
+            return
+        
+        # Check model class name as fallback
+        model_class_name = self.model.__class__.__name__.lower()
+        transformer_indicators = ['transformer', 'attention', 'itransformer', 'patchtst', 'timesmixer', 'timesfm']
+        if any(indicator in model_class_name for indicator in transformer_indicators):
+            return
+        
+        # Check for attention extraction capabilities
+        if (hasattr(self.model, 'get_attention_weights') or 
+            hasattr(self.model, 'attention_weights') or
+            hasattr(self.model, 'predict_with_attention') or
+            hasattr(self.model, 'forward_with_attention')):
+            return
+        
+        raise ValueError(f"Model must be a transformer model with attention extraction capability. "
+                        f"Supported types: {self.SUPPORTED_TRANSFORMER_TYPES}")
+    
+    def get_supported_model_types(self) -> List[str]:
+        """
+        Get list of supported transformer model types.
+        
+        Returns:
+            List of supported transformer model type names
+        """
+        return self.SUPPORTED_TRANSFORMER_TYPES.copy()
+    
+    def validate_input(
+        self,
+        model: Any,
+        feature_names: List[str] 
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Validate model and feature names for transformer explainers.
+        
+        Args:
+            model: The model to validate
+            feature_names: List of feature names
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Check feature names first
+        if not isinstance(feature_names, list):
+            return False, "feature_names must be a list"
+        
+        if len(feature_names) == 0:
+            return False, "feature_names cannot be empty"
+        
+        if not all(isinstance(name, str) for name in feature_names):
+            return False, "All feature names must be strings"
+        
+        # Check transformer support
+        model_type = getattr(model, 'model_type', None)
+        if model_type and model_type.lower() in [t.lower() for t in self.SUPPORTED_TRANSFORMER_TYPES]:
+            return True, None
+        
+        # Check model class name as fallback
+        model_class_name = model.__class__.__name__.lower()
+        transformer_indicators = ['transformer', 'attention', 'itransformer', 'patchtst', 'timesmixer', 'timesfm']
+        if any(indicator in model_class_name for indicator in transformer_indicators):
+            return True, None
+        
+        # Check for attention extraction capabilities
+        if (hasattr(model, 'get_attention_weights') or 
+            hasattr(model, 'attention_weights') or
+            hasattr(model, 'predict_with_attention') or
+            hasattr(model, 'forward_with_attention')):
+            return True, None
+        
+        return False, (f"Model must be a transformer model with attention extraction capability. "
+                      f"Supported types: {self.SUPPORTED_TRANSFORMER_TYPES}")
+    
+    @abstractmethod
+    def extract_attention_weights(
+        self,
+        instance: Union[np.ndarray, List[float]],
+        **kwargs
+    ) -> Optional[np.ndarray]:
+        """
+        Extract attention weights from the transformer model.
+        
+        Args:
+            instance: Input instance
+            **kwargs: Additional extraction parameters
+            
+        Returns:
+            Attention weights array or None if extraction fails
+        """
+        pass
+    
+    @abstractmethod
+    def analyze_attention_patterns(
+        self,
+        attention_weights: np.ndarray,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Analyze attention patterns to extract meaningful insights.
+        
+        Args:
+            attention_weights: Attention weights array
+            **kwargs: Additional analysis parameters
+            
+        Returns:
+            Dictionary containing attention pattern analysis results
+        """
+        pass
+    
+    def get_default_config(self) -> Dict[str, Any]:
+        """
+        Get default configuration for transformer explainers.
+        
+        Returns:
+            Dictionary of default configuration values
+        """
+        return {
+            'extract_attention': True,
+            'attention_heads': 'all',
+            'attention_layers': 'last',
+            'attention_rollout': True,
+            'normalize_attention': True,
+            'performance_mode': True,
+            'cache_attention': False,
+            'attention_threshold': 0.01,
+            'max_sequence_length': 512
+        }

@@ -298,6 +298,180 @@ class ModelAuditTracker:
             logger.error(f"Failed to query decisions for model {model_id}: {str(e)}")
             return []
     
+    def record_attention_pattern(
+        self,
+        attention_data: Dict[str, Any],
+        model_id: str,
+        decision_id: Optional[str] = None
+    ) -> str:
+        """Record attention pattern data for transformer models."""
+        if not self.is_enabled:
+            return ""
+        
+        record_id = str(uuid.uuid4())
+        timestamp = attention_data.get("timestamp", datetime.utcnow().isoformat())
+        
+        attention_record = AttentionPatternRecord(
+            record_id=record_id,
+            model_id=model_id,
+            decision_id=decision_id,
+            attention_weights=attention_data.get("attention_weights"),
+            attention_entropy=attention_data.get("attention_entropy"),
+            attention_sparsity=attention_data.get("attention_sparsity"),
+            head_specialization=attention_data.get("head_specialization"),
+            temporal_patterns=attention_data.get("temporal_patterns"),
+            cross_asset_patterns=attention_data.get("cross_asset_patterns"),
+            symbol=attention_data.get("symbol"),
+            timestamp=timestamp,
+            metadata=attention_data.get("metadata")
+        )
+        
+        with self._lock:
+            try:
+                with sqlite3.connect(self.db_file) as conn:
+                    conn.execute("""
+                        INSERT INTO attention_patterns 
+                        (record_id, model_id, decision_id, attention_weights, attention_entropy,
+                         attention_sparsity, head_specialization, temporal_patterns,
+                         cross_asset_patterns, symbol, timestamp, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        attention_record.record_id,
+                        attention_record.model_id,
+                        attention_record.decision_id,
+                        json.dumps(attention_record.attention_weights) if attention_record.attention_weights else None,
+                        attention_record.attention_entropy,
+                        attention_record.attention_sparsity,
+                        json.dumps(attention_record.head_specialization) if attention_record.head_specialization else None,
+                        json.dumps(attention_record.temporal_patterns) if attention_record.temporal_patterns else None,
+                        json.dumps(attention_record.cross_asset_patterns) if attention_record.cross_asset_patterns else None,
+                        attention_record.symbol,
+                        attention_record.timestamp,
+                        json.dumps(attention_record.metadata) if attention_record.metadata else None
+                    ))
+                
+                logger.debug(f"Recorded attention pattern {record_id} for model {model_id}")
+                return record_id
+                
+            except Exception as e:
+                logger.error(f"Failed to record attention pattern: {str(e)}")
+                return ""
+    
+    def get_attention_patterns(
+        self,
+        model_id: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get attention patterns for a specific model."""
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("""
+                    SELECT * FROM attention_patterns 
+                    WHERE model_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                """, (model_id, limit))
+                
+                patterns = []
+                for row in cursor.fetchall():
+                    pattern = dict(row)
+                    # Parse JSON fields
+                    for field in ['attention_weights', 'head_specialization', 'temporal_patterns', 'cross_asset_patterns', 'metadata']:
+                        if pattern[field]:
+                            pattern[field] = json.loads(pattern[field])
+                    patterns.append(pattern)
+                
+                return patterns
+                
+        except Exception as e:
+            logger.error(f"Failed to get attention patterns for model {model_id}: {str(e)}")
+            return []
+    
+    def record_attention_drift(
+        self,
+        drift_data: Dict[str, Any]
+    ) -> str:
+        """Record attention drift detection."""
+        if not self.is_enabled:
+            return ""
+        
+        drift_id = str(uuid.uuid4())
+        timestamp = drift_data.get("detection_timestamp", datetime.utcnow().isoformat())
+        
+        drift_record = AttentionDriftRecord(
+            drift_id=drift_id,
+            model_id=drift_data["model_id"],
+            detection_timestamp=timestamp,
+            drift_type=drift_data["drift_type"],
+            drift_magnitude=drift_data["drift_magnitude"],
+            baseline_period=drift_data.get("baseline_period", ""),
+            comparison_period=drift_data.get("comparison_period", ""),
+            affected_features=drift_data.get("affected_features", []),
+            metadata=drift_data.get("metadata")
+        )
+        
+        with self._lock:
+            try:
+                with sqlite3.connect(self.db_file) as conn:
+                    conn.execute("""
+                        INSERT INTO attention_drift 
+                        (drift_id, model_id, detection_timestamp, drift_type, drift_magnitude,
+                         baseline_period, comparison_period, affected_features, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        drift_record.drift_id,
+                        drift_record.model_id,
+                        drift_record.detection_timestamp,
+                        drift_record.drift_type,
+                        drift_record.drift_magnitude,
+                        drift_record.baseline_period,
+                        drift_record.comparison_period,
+                        json.dumps(drift_record.affected_features),
+                        json.dumps(drift_record.metadata) if drift_record.metadata else None
+                    ))
+                
+                logger.info(f"Recorded attention drift {drift_id} for model {drift_record.model_id}: {drift_record.drift_type}")
+                return drift_id
+                
+            except Exception as e:
+                logger.error(f"Failed to record attention drift: {str(e)}")
+                return ""
+    
+    def get_attention_drift_history(
+        self,
+        model_id: str,
+        hours_back: int = 24
+    ) -> List[Dict[str, Any]]:
+        """Get attention drift history for a model."""
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_iso = cutoff_time.isoformat()
+        
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("""
+                    SELECT * FROM attention_drift 
+                    WHERE model_id = ? AND detection_timestamp >= ?
+                    ORDER BY detection_timestamp DESC
+                """, (model_id, cutoff_iso))
+                
+                drift_records = []
+                for row in cursor.fetchall():
+                    drift_record = dict(row)
+                    # Parse JSON fields
+                    if drift_record["affected_features"]:
+                        drift_record["affected_features"] = json.loads(drift_record["affected_features"])
+                    if drift_record["metadata"]:
+                        drift_record["metadata"] = json.loads(drift_record["metadata"])
+                    drift_records.append(drift_record)
+                
+                return drift_records
+                
+        except Exception as e:
+            logger.error(f"Failed to get attention drift history for model {model_id}: {str(e)}")
+            return []
+    
     def generate_compliance_report(
         self,
         start_date: datetime,
@@ -687,6 +861,180 @@ class FeatureImportanceTracker:
                         })
         
         return anomalies
+    
+    def track_attention_patterns(
+        self,
+        model_id: str,
+        attention_data: Dict[str, Any]
+    ) -> str:
+        """Track attention patterns for transformer models."""
+        if not self.tracking_enabled:
+            return ""
+        
+        record_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow().isoformat()
+        
+        # Extract attention pattern features
+        attention_features = self._extract_attention_features(attention_data)
+        
+        # Record as feature importance with attention-specific features
+        importance_record = self.record_importance(
+            model_id=model_id,
+            decision_id=attention_data.get("decision_id", record_id),
+            feature_importance=attention_features,
+            symbol=attention_data.get("symbol"),
+            metadata={
+                "type": "attention_pattern",
+                "attention_entropy": attention_data.get("attention_entropy"),
+                "attention_sparsity": attention_data.get("attention_sparsity"),
+                "head_count": attention_data.get("head_count"),
+                "sequence_length": attention_data.get("sequence_length")
+            }
+        )
+        
+        return importance_record
+    
+    def _extract_attention_features(
+        self,
+        attention_data: Dict[str, Any]
+    ) -> Dict[str, float]:
+        """Extract attention-based features for tracking."""
+        features = {}
+        
+        # Basic attention metrics
+        if "attention_entropy" in attention_data:
+            features["attention_entropy"] = float(attention_data["attention_entropy"])
+        
+        if "attention_sparsity" in attention_data:
+            features["attention_sparsity"] = float(attention_data["attention_sparsity"])
+        
+        # Head specialization metrics
+        if "head_specialization" in attention_data:
+            head_spec = attention_data["head_specialization"]
+            for head_idx, spec_value in head_spec.items():
+                features[f"head_{head_idx}_specialization"] = float(spec_value)
+        
+        # Temporal pattern features
+        if "temporal_patterns" in attention_data:
+            temporal = attention_data["temporal_patterns"]
+            if "recency_bias" in temporal:
+                features["recency_bias"] = float(temporal["recency_bias"])
+            if "trend_attention" in temporal:
+                features["trend_attention"] = float(temporal["trend_attention"])
+            if "volatility_focus" in temporal:
+                features["volatility_focus"] = float(temporal["volatility_focus"])
+        
+        # Cross-asset pattern features
+        if "cross_asset_patterns" in attention_data:
+            cross_asset = attention_data["cross_asset_patterns"]
+            if "cross_asset_influence" in cross_asset:
+                features["cross_asset_influence"] = float(cross_asset["cross_asset_influence"])
+        
+        return features
+    
+    def detect_attention_drift(
+        self,
+        model_id: str,
+        baseline_window: int = 100,
+        comparison_window: int = 20,
+        drift_threshold: float = 0.1
+    ) -> List[Dict[str, Any]]:
+        """Detect drift in attention patterns."""
+        with self._lock:
+            history = list(self.importance_history[model_id])
+        
+        if len(history) < baseline_window + comparison_window:
+            return []
+        
+        # Filter for attention pattern records
+        attention_records = [
+            record for record in history
+            if record.metadata and record.metadata.get("type") == "attention_pattern"
+        ]
+        
+        if len(attention_records) < baseline_window + comparison_window:
+            return []
+        
+        # Split into baseline and comparison periods
+        baseline_records = attention_records[-(baseline_window + comparison_window):-comparison_window]
+        comparison_records = attention_records[-comparison_window:]
+        
+        drift_detections = []
+        
+        # Analyze drift for each attention feature
+        baseline_features = self._aggregate_attention_features(baseline_records)
+        comparison_features = self._aggregate_attention_features(comparison_records)
+        
+        for feature_name in baseline_features:
+            if feature_name in comparison_features:
+                baseline_value = baseline_features[feature_name]
+                comparison_value = comparison_features[feature_name]
+                
+                # Calculate relative drift
+                if baseline_value != 0:
+                    drift_magnitude = abs(comparison_value - baseline_value) / abs(baseline_value)
+                else:
+                    drift_magnitude = abs(comparison_value)
+                
+                if drift_magnitude > drift_threshold:
+                    drift_detections.append({
+                        "feature": feature_name,
+                        "drift_magnitude": drift_magnitude,
+                        "baseline_value": baseline_value,
+                        "comparison_value": comparison_value,
+                        "drift_type": self._classify_attention_drift(feature_name, baseline_value, comparison_value)
+                    })
+        
+        return drift_detections
+    
+    def _aggregate_attention_features(
+        self,
+        records: List[Any]
+    ) -> Dict[str, float]:
+        """Aggregate attention features from records."""
+        feature_sums = defaultdict(float)
+        feature_counts = defaultdict(int)
+        
+        for record in records:
+            for feature, importance in record.feature_importance.items():
+                feature_sums[feature] += importance
+                feature_counts[feature] += 1
+        
+        # Calculate averages
+        return {
+            feature: feature_sums[feature] / feature_counts[feature]
+            for feature in feature_sums
+        }
+    
+    def _classify_attention_drift(
+        self,
+        feature_name: str,
+        baseline_value: float,
+        comparison_value: float
+    ) -> str:
+        """Classify the type of attention drift."""
+        if "entropy" in feature_name.lower():
+            if comparison_value > baseline_value:
+                return "attention_dispersion_increase"
+            else:
+                return "attention_concentration_increase"
+        elif "sparsity" in feature_name.lower():
+            if comparison_value > baseline_value:
+                return "attention_sparsity_increase"
+            else:
+                return "attention_density_increase"
+        elif "head" in feature_name.lower() and "specialization" in feature_name.lower():
+            if comparison_value > baseline_value:
+                return "head_specialization_increase"
+            else:
+                return "head_specialization_decrease"
+        elif "recency_bias" in feature_name.lower():
+            if comparison_value > baseline_value:
+                return "recency_bias_increase"
+            else:
+                return "recency_bias_decrease"
+        else:
+            return "pattern_shift"
 
 
 class DecisionExplanationGenerator:
@@ -1261,6 +1609,11 @@ class EnhancedExplanationAuditor:
         self.explanation_generator = explanation_generator or DecisionExplanationGenerator()
         self.compliance_generator = compliance_generator or ComplianceReportGenerator()
         
+        # Attention-specific auditing configuration
+        self.enable_attention_auditing = True
+        self.attention_drift_threshold = 0.1
+        self.attention_health_check_interval = 3600  # 1 hour in seconds
+        
         self.is_enabled = True
         
         # Performance tracking
@@ -1442,3 +1795,166 @@ class EnhancedExplanationAuditor:
             feature_analysis=feature_analysis,
             time_period=time_period
         )
+    
+    def audit_transformer_decision(
+        self,
+        decision_data: Dict[str, Any],
+        attention_data: Dict[str, Any],
+        feature_importance: Dict[str, float]
+    ) -> Dict[str, Any]:
+        """Audit transformer model decision with attention analysis."""
+        # Perform standard audit
+        audit_result = self.audit_decision(decision_data, feature_importance, generate_explanation=True)
+        
+        if audit_result.get("status") == "failed":
+            return audit_result
+        
+        # Add attention-specific auditing
+        try:
+            # Record attention patterns
+            attention_record_id = self.audit_tracker.record_attention_pattern(
+                attention_data=attention_data,
+                model_id=decision_data["model_id"],
+                decision_id=audit_result.get("audit_id")
+            )
+            
+            # Track attention patterns for drift detection
+            if attention_data:
+                attention_tracking_id = self.importance_tracker.track_attention_patterns(
+                    model_id=decision_data["model_id"],
+                    attention_data=attention_data
+                )
+                audit_result["attention_tracking_id"] = attention_tracking_id
+            
+            # Detect attention drift
+            attention_drift = self.importance_tracker.detect_attention_drift(
+                model_id=decision_data["model_id"]
+            )
+            
+            if attention_drift:
+                # Record significant drift
+                for drift in attention_drift:
+                    if drift["drift_magnitude"] > 0.2:  # Significant drift threshold
+                        drift_record_id = self.audit_tracker.record_attention_drift({
+                            "model_id": decision_data["model_id"],
+                            "drift_type": drift["drift_type"],
+                            "drift_magnitude": drift["drift_magnitude"],
+                            "affected_features": [drift["feature"]],
+                            "metadata": {
+                                "baseline_value": drift["baseline_value"],
+                                "comparison_value": drift["comparison_value"],
+                                "decision_id": audit_result.get("audit_id")
+                            }
+                        })
+                        
+                        logger.warning(
+                            f"Significant attention drift detected in model {decision_data['model_id']}: "
+                            f"{drift['drift_type']} (magnitude: {drift['drift_magnitude']:.3f})"
+                        )
+            
+            # Add attention audit results
+            audit_result["attention_audit"] = {
+                "attention_record_id": attention_record_id,
+                "attention_drift_detected": len(attention_drift) > 0,
+                "drift_count": len(attention_drift),
+                "significant_drift_count": len([d for d in attention_drift if d["drift_magnitude"] > 0.2])
+            }
+            
+            return audit_result
+            
+        except Exception as e:
+            logger.error(f"Failed to perform transformer audit: {str(e)}")
+            audit_result["attention_audit_error"] = str(e)
+            return audit_result
+    
+    def get_attention_health_report(
+        self,
+        model_id: str,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """Generate attention health report for transformer model."""
+        # Get attention patterns
+        attention_patterns = self.audit_tracker.get_attention_patterns(model_id, limit=1000)
+        
+        # Get attention drift history
+        attention_drift = self.audit_tracker.get_attention_drift_history(model_id, hours_back)
+        
+        if not attention_patterns:
+            return {
+                "model_id": model_id,
+                "status": "no_attention_data",
+                "total_patterns": 0,
+                "drift_events": 0
+            }
+        
+        # Analyze attention health
+        recent_patterns = attention_patterns[:min(100, len(attention_patterns))]
+        
+        # Calculate attention metrics
+        entropies = [p["attention_entropy"] for p in recent_patterns if p["attention_entropy"] is not None]
+        sparsities = [p["attention_sparsity"] for p in recent_patterns if p["attention_sparsity"] is not None]
+        
+        health_report = {
+            "model_id": model_id,
+            "report_timestamp": datetime.utcnow().isoformat(),
+            "total_attention_patterns": len(attention_patterns),
+            "recent_patterns_analyzed": len(recent_patterns),
+            "attention_metrics": {
+                "average_entropy": np.mean(entropies) if entropies else None,
+                "entropy_std": np.std(entropies) if entropies else None,
+                "average_sparsity": np.mean(sparsities) if sparsities else None,
+                "sparsity_std": np.std(sparsities) if sparsities else None
+            },
+            "drift_analysis": {
+                "total_drift_events": len(attention_drift),
+                "drift_types": list(set(d["drift_type"] for d in attention_drift)),
+                "recent_drift_events": len([d for d in attention_drift 
+                                          if (datetime.utcnow() - datetime.fromisoformat(d["detection_timestamp"].replace('Z', '+00:00'))).total_seconds() < 3600]),
+                "average_drift_magnitude": np.mean([d["drift_magnitude"] for d in attention_drift]) if attention_drift else 0.0
+            },
+            "health_status": self._assess_attention_health(entropies, sparsities, attention_drift)
+        }
+        
+        return health_report
+    
+    def _assess_attention_health(
+        self,
+        entropies: List[float],
+        sparsities: List[float],
+        drift_events: List[Dict[str, Any]]
+    ) -> str:
+        """Assess overall attention health status."""
+        # Check for concerning patterns
+        health_issues = []
+        
+        if entropies:
+            avg_entropy = np.mean(entropies)
+            if avg_entropy < 0.5:  # Very low entropy (over-concentrated attention)
+                health_issues.append("low_attention_entropy")
+            elif avg_entropy > 3.0:  # Very high entropy (unfocused attention)
+                health_issues.append("high_attention_entropy")
+        
+        if sparsities:
+            avg_sparsity = np.mean(sparsities)
+            if avg_sparsity > 0.8:  # Very sparse attention
+                health_issues.append("high_attention_sparsity")
+        
+        # Check drift frequency
+        recent_drift = [d for d in drift_events 
+                       if (datetime.utcnow() - datetime.fromisoformat(d["detection_timestamp"].replace('Z', '+00:00'))).total_seconds() < 3600]
+        
+        if len(recent_drift) > 5:  # More than 5 drift events in the last hour
+            health_issues.append("frequent_attention_drift")
+        
+        # High magnitude drift
+        high_magnitude_drift = [d for d in drift_events if d["drift_magnitude"] > 0.3]
+        if len(high_magnitude_drift) > 0:
+            health_issues.append("high_magnitude_drift")
+        
+        # Determine overall health status
+        if not health_issues:
+            return "healthy"
+        elif len(health_issues) == 1:
+            return "warning"
+        else:
+            return "critical"
