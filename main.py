@@ -108,6 +108,127 @@ async def get_rl_agent_health() -> dict[str, Any]:
         }
 
 
+async def get_transformer_health() -> dict[str, Any]:
+    """Get transformer models health status"""
+    try:
+        from src.ml_analysis.base import ModelType
+        import asyncio
+        
+        # Dictionary to store transformer health results
+        transformer_models = {}
+        total_memory_usage = 0.0
+        models_loaded = 0
+        models_healthy = 0
+        
+        # Define transformer types to check
+        transformer_types = {
+            'itransformer': {
+                'module': 'src.ml_analysis.transformers.itransformer',
+                'class': 'iTransformerPredictor',
+                'model_type': ModelType.ITRANSFORMER,
+                'config': {'d_model': 512, 'n_heads': 8, 'n_layers': 6}
+            },
+            'patchtst': {
+                'module': 'src.ml_analysis.transformers.patchtst',
+                'class': 'PatchTSTPredictor', 
+                'model_type': ModelType.PATCHTST,
+                'config': {'d_model': 512, 'n_heads': 8, 'patch_size': 16}
+            },
+            'timesmixer': {
+                'module': 'src.ml_analysis.transformers.timesmixer',
+                'class': 'TimesMixerPredictor',
+                'model_type': ModelType.TIMESMIXER,
+                'config': {'d_model': 512, 'seq_len': 336, 'pred_len': 96}
+            },
+            'timesfm': {
+                'module': 'src.ml_analysis.transformers.timesfm_wrapper',
+                'class': 'TimesFMWrapper',
+                'model_type': ModelType.TIMESFM,
+                'config': {'model_size': 'small', 'horizon_length': 128}
+            }
+        }
+        
+        # Check each transformer type
+        for transformer_name, transformer_info in transformer_types.items():
+            try:
+                # Import the transformer class dynamically
+                module = __import__(transformer_info['module'], fromlist=[transformer_info['class']])
+                transformer_class = getattr(module, transformer_info['class'])
+                
+                # Create transformer instance
+                transformer = transformer_class(
+                    transformer_info['model_type'], 
+                    transformer_info['config']
+                )
+                
+                # Perform health check
+                is_healthy = await transformer.health_check()
+                
+                # Get health metrics
+                memory_usage = getattr(transformer, 'get_memory_usage', lambda: 0.0)()
+                avg_latency = getattr(transformer, 'get_avg_inference_latency', lambda: 0.0)()
+                cache_hit_rate = getattr(transformer, 'get_cache_hit_rate', lambda: 0.0)()
+                cache_status = getattr(transformer, 'get_model_cache_status', lambda: {
+                    'size': 0, 'max_size': 100, 'hit_rate': 0.0
+                })()
+                
+                transformer_models[transformer_name] = {
+                    'loaded': True,
+                    'healthy': is_healthy,
+                    'memory_usage_mb': memory_usage,
+                    'avg_inference_latency_ms': avg_latency,
+                    'cache_hit_rate': cache_hit_rate,
+                    'cache_status': cache_status
+                }
+                
+                total_memory_usage += memory_usage
+                models_loaded += 1
+                if is_healthy:
+                    models_healthy += 1
+                    
+            except Exception as e:
+                logger.warning(f"Failed to check {transformer_name} health", error=str(e))
+                transformer_models[transformer_name] = {
+                    'loaded': False,
+                    'healthy': False,
+                    'error': str(e),
+                    'memory_usage_mb': 0.0,
+                    'avg_inference_latency_ms': 0.0,
+                    'cache_hit_rate': 0.0
+                }
+        
+        # Determine overall status
+        if models_loaded == 0:
+            status = "error"
+        elif models_healthy == models_loaded:
+            status = "healthy"
+        elif models_healthy > 0:
+            status = "degraded"
+        else:
+            status = "unhealthy"
+        
+        return {
+            "status": status,
+            "models": transformer_models,
+            "total_memory_usage_mb": total_memory_usage,
+            "models_loaded": models_loaded,
+            "models_healthy": models_healthy,
+            "timestamp": "NOW()"
+        }
+        
+    except Exception as e:
+        logger.error("Transformer health check failed", error=str(e))
+        return {
+            "status": "error",
+            "error": str(e),
+            "models": {},
+            "total_memory_usage_mb": 0.0,
+            "models_loaded": 0,
+            "models_healthy": 0,
+            "timestamp": "NOW()"
+        }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
@@ -247,9 +368,16 @@ async def health_check() -> dict[str, Any]:
         from src.utils.database import check_database_health
         database_health = await check_database_health()
 
+        # Get transformer health
+        transformer_health = await get_transformer_health()
+        
         # Determine overall status based on component health
         overall_status = "healthy"
         if database_health.get("status") == "unhealthy":
+            overall_status = "degraded"
+        if transformer_health.get("status") in ["error", "unhealthy"]:
+            overall_status = "degraded"
+        elif transformer_health.get("status") == "degraded" and overall_status == "healthy":
             overall_status = "degraded"
 
         return {
@@ -267,7 +395,8 @@ async def health_check() -> dict[str, Any]:
                     "details": database_health
                 },
                 "ml_models": await get_ml_model_health(),
-                "rl_agent": await get_rl_agent_health()
+                "rl_agent": await get_rl_agent_health(),
+                "transformers": transformer_health
             }
         }
     except Exception as e:
@@ -279,7 +408,8 @@ async def health_check() -> dict[str, Any]:
             "components": {
                 "database": {"status": "error", "error": str(e)},
                 "ml_models": {"status": "error", "error": "Health check failed"},
-                "rl_agent": {"status": "error", "error": "Health check failed"}
+                "rl_agent": {"status": "error", "error": "Health check failed"},
+                "transformers": {"status": "error", "error": "Health check failed"}
             }
         }
 

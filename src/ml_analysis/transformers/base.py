@@ -22,6 +22,27 @@ from src.discovery.base import DiscoveredToken
 logger = structlog.get_logger()
 
 
+class InferenceLatencyTracker:
+    """Context manager for tracking inference latency"""
+    
+    def __init__(self, transformer):
+        self.transformer = transformer
+        self.start_time = None
+    
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.start_time is not None:
+            elapsed_time = (time.time() - self.start_time) * 1000  # Convert to milliseconds
+            self.transformer._inference_times.append(elapsed_time)
+            
+            # Keep only the last 100 inference times to avoid memory growth
+            if len(self.transformer._inference_times) > 100:
+                self.transformer._inference_times.pop(0)
+
+
 @dataclass
 class TransformerConfig:
     """Configuration for Transformer models optimized for production use"""
@@ -161,6 +182,13 @@ class TransformerBase(MLAnalyzerBase, nn.Module, ABC):
         # Performance tracking
         self._inference_times: List[float] = []
         self._memory_usage: List[float] = []
+        self._peak_memory_usage: float = 0.0
+        
+        # Cache tracking
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
+        self._model_cache: Dict[str, Any] = {}
+        self._max_cache_size: int = 100
     
     @abstractmethod
     def forward(self, x: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -447,6 +475,103 @@ class TransformerBase(MLAnalyzerBase, nn.Module, ABC):
         except Exception as e:
             self.logger.error("Health check failed", error=str(e))
             return False
+    
+    def get_memory_usage(self) -> float:
+        """Get current memory usage of the transformer model in MB"""
+        try:
+            import torch
+            import psutil
+            import os
+            
+            # Get model parameters memory
+            param_memory = 0.0
+            for param in self.parameters():
+                param_memory += param.numel() * param.element_size()
+            
+            # Convert to MB
+            param_memory_mb = param_memory / (1024 * 1024)
+            
+            # Get current process memory (approximation for activation memory)
+            process = psutil.Process(os.getpid())
+            process_memory_mb = process.memory_info().rss / (1024 * 1024)
+            
+            # Use estimated memory from config as baseline
+            estimated_memory = self.transformer_config.estimate_memory_usage_mb()
+            
+            # Return the maximum of parameter memory and estimated memory
+            current_memory = max(param_memory_mb, estimated_memory * 0.5)  # Conservative estimate
+            
+            # Update peak memory tracking
+            self._peak_memory_usage = max(self._peak_memory_usage, current_memory)
+            
+            return current_memory
+            
+        except Exception as e:
+            self.logger.warning("Failed to get memory usage", error=str(e))
+            return self.transformer_config.estimate_memory_usage_mb()
+    
+    def get_peak_memory_usage(self) -> float:
+        """Get peak memory usage since model initialization"""
+        return self._peak_memory_usage
+    
+    def reset_memory_tracking(self) -> None:
+        """Reset memory usage tracking statistics"""
+        self._peak_memory_usage = 0.0
+        self._memory_usage.clear()
+    
+    def get_avg_inference_latency(self) -> float:
+        """Get average inference latency in milliseconds"""
+        if not self._inference_times:
+            return 0.0
+        return sum(self._inference_times) / len(self._inference_times)
+    
+    def get_cache_hit_rate(self) -> float:
+        """Get cache hit rate as a float between 0.0 and 1.0"""
+        total_requests = self._cache_hits + self._cache_misses
+        if total_requests == 0:
+            return 0.0
+        return self._cache_hits / total_requests
+    
+    def get_model_cache_status(self) -> Dict[str, Any]:
+        """Get detailed cache status information"""
+        return {
+            'size': len(self._model_cache),
+            'max_size': self._max_cache_size,
+            'hit_rate': self.get_cache_hit_rate(),
+            'hits': self._cache_hits,
+            'misses': self._cache_misses,
+            'total_requests': self._cache_hits + self._cache_misses
+        }
+    
+    def track_inference_latency(self):
+        """Context manager for tracking inference latency"""
+        return InferenceLatencyTracker(self)
+    
+    def _record_cache_hit(self) -> None:
+        """Record a cache hit"""
+        self._cache_hits += 1
+    
+    def _record_cache_miss(self) -> None:
+        """Record a cache miss"""
+        self._cache_misses += 1
+    
+    def _add_to_cache(self, key: str, value: Any) -> None:
+        """Add item to model cache with LRU eviction"""
+        if len(self._model_cache) >= self._max_cache_size:
+            # Remove oldest item (simple FIFO for now)
+            oldest_key = next(iter(self._model_cache))
+            del self._model_cache[oldest_key]
+        
+        self._model_cache[key] = value
+    
+    def _get_from_cache(self, key: str) -> Optional[Any]:
+        """Get item from model cache"""
+        if key in self._model_cache:
+            self._record_cache_hit()
+            return self._model_cache[key]
+        else:
+            self._record_cache_miss()
+            return None
     
     def forward_with_validation(self, x: torch.Tensor, 
                                attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
