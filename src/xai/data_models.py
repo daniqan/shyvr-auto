@@ -20,7 +20,8 @@ class ExplanationData:
     """
     
     VALID_EXPLANATION_TYPES = {
-        'lime', 'shap', 'permutation', 'grad_cam', 'gradient', 'custom', 'merged'
+        'lime', 'shap', 'permutation', 'grad_cam', 'gradient', 'custom', 'merged',
+        'attention', 'temporal_attention', 'cross_attention'
     }
     
     def __init__(

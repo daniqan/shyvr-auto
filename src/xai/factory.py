@@ -74,6 +74,54 @@ class ExplainerFactory:
             }
         }
         
+        self._explainer_info['attention'] = {
+            'name': 'Attention Weight Analysis',
+            'description': 'Explains predictions by analyzing attention weights from transformer models',
+            'supported_model_types': ['iTransformer', 'PatchTST', 'TimesMixer', 'TimesFM', 'TransformerPredictor'],
+            'default_config': {
+                'extract_attention': True,
+                'attention_heads': 'all',
+                'attention_layers': 'last',
+                'attention_rollout': True,
+                'normalize_attention': True,
+                'performance_mode': True
+            }
+        }
+        
+        self._explainer_info['temporal_attention'] = {
+            'name': 'Temporal Attention Analysis',
+            'description': 'Analyzes temporal patterns in attention weights for time-series forecasting',
+            'supported_model_types': ['iTransformer', 'PatchTST', 'TimesMixer', 'TimesFM', 'TransformerPredictor'],
+            'default_config': {
+                'analyze_recency_bias': True,
+                'detect_periodic_patterns': True,
+                'identify_regime_transitions': True,
+                'time_window_analysis': True,
+                'seasonal_attention_patterns': True,
+                'min_period': 2,
+                'max_period': 168,
+                'regime_threshold': 0.3
+            }
+        }
+        
+        self._explainer_info['cross_attention'] = {
+            'name': 'Cross-Asset Attention Analysis',
+            'description': 'Analyzes cross-attention patterns between different assets for multivariate trading',
+            'supported_model_types': ['iTransformer', 'PatchTST', 'TimesMixer', 'TimesFM', 'TransformerPredictor'],
+            'default_config': {
+                'analyze_asset_correlations': True,
+                'detect_lead_lag_relationships': True,
+                'identify_arbitrage_patterns': True,
+                'cross_asset_momentum': True,
+                'asset_list': [],
+                'correlation_threshold': 0.3,
+                'lead_lag_max_steps': 5,
+                'arbitrage_threshold': 0.5,
+                'real_time_mode': False,
+                'latency_optimization': False
+            }
+        }
+        
         # Import explainer implementations
         try:
             from .explainers.lime_explainer import LimeExplainer
@@ -94,6 +142,28 @@ class ExplainerFactory:
             self._explainer_registry['gradient'] = GradientExplainer
         except ImportError:
             # Gradient explainer not yet implemented
+            pass
+        
+        # Import transformer-specific explainers
+        try:
+            from .transformers.attention_explainer import AttentionExplainer
+            self._explainer_registry['attention'] = AttentionExplainer
+        except ImportError:
+            # Attention explainer not yet implemented
+            pass
+        
+        try:
+            from .transformers.temporal_attention_analyzer import TemporalAttentionAnalyzer
+            self._explainer_registry['temporal_attention'] = TemporalAttentionAnalyzer
+        except ImportError:
+            # Temporal attention analyzer not yet implemented
+            pass
+        
+        try:
+            from .transformers.cross_attention_analyzer import CrossAttentionAnalyzer
+            self._explainer_registry['cross_attention'] = CrossAttentionAnalyzer
+        except ImportError:
+            # Cross attention analyzer not yet implemented
             pass
     
     @property
@@ -304,6 +374,41 @@ class ExplainerFactory:
             if 'steps' in config:
                 if not isinstance(config['steps'], int) or config['steps'] <= 0:
                     errors.append("steps must be a positive integer")
+        
+        elif explainer_type == 'attention':
+            if 'attention_heads' in config:
+                if config['attention_heads'] not in ['all', 'first', 'last'] and not isinstance(config['attention_heads'], int):
+                    errors.append("attention_heads must be 'all', 'first', 'last', or an integer")
+            
+            if 'attention_layers' in config:
+                if config['attention_layers'] not in ['all', 'first', 'last'] and not isinstance(config['attention_layers'], int):
+                    errors.append("attention_layers must be 'all', 'first', 'last', or an integer")
+        
+        elif explainer_type == 'temporal_attention':
+            if 'min_period' in config:
+                if not isinstance(config['min_period'], int) or config['min_period'] < 2:
+                    errors.append("min_period must be an integer >= 2")
+            
+            if 'max_period' in config:
+                if not isinstance(config['max_period'], int) or config['max_period'] <= 0:
+                    errors.append("max_period must be a positive integer")
+            
+            if 'regime_threshold' in config:
+                if not isinstance(config['regime_threshold'], (int, float)) or not (0 < config['regime_threshold'] < 1):
+                    errors.append("regime_threshold must be a number between 0 and 1")
+        
+        elif explainer_type == 'cross_attention':
+            if 'correlation_threshold' in config:
+                if not isinstance(config['correlation_threshold'], (int, float)) or not (0 <= config['correlation_threshold'] <= 1):
+                    errors.append("correlation_threshold must be a number between 0 and 1")
+            
+            if 'lead_lag_max_steps' in config:
+                if not isinstance(config['lead_lag_max_steps'], int) or config['lead_lag_max_steps'] <= 0:
+                    errors.append("lead_lag_max_steps must be a positive integer")
+            
+            if 'arbitrage_threshold' in config:
+                if not isinstance(config['arbitrage_threshold'], (int, float)) or not (0 <= config['arbitrage_threshold'] <= 1):
+                    errors.append("arbitrage_threshold must be a number between 0 and 1")
         
         return len(errors) == 0, errors
     
