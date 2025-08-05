@@ -26,6 +26,7 @@ class EmergencyStopReason(Enum):
     FLASH_CRASH_DETECTED = "flash_crash_detected"
     MIN_PORTFOLIO_VALUE = "min_portfolio_value"
     EXTREME_PORTFOLIO_RISK = "extreme_portfolio_risk"
+    ATTENTION_ANOMALY = "attention_anomaly"
 
 
 class SafetyCheckResult(Enum):
