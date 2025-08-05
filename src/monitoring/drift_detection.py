@@ -47,6 +47,7 @@ class DriftType(Enum):
     CONCEPT = "concept_drift"
     COVARIATE = "covariate_drift"
     TARGET = "target_drift"
+    TRANSFORMER = "transformer_drift"  # Added for transformer-specific drift
 
 
 @dataclass
@@ -1142,5 +1143,167 @@ class DriftDetector:
                 recommended_actions=actions
             )
             alerts.append(alert)
+        
+        return alerts
+
+
+class EnhancedDriftDetector(DriftDetector):
+    """Enhanced drift detector with transformer-specific capabilities."""
+    
+    def __init__(
+        self,
+        reference_data: pd.DataFrame,
+        feature_columns: List[str],
+        target_column: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        transformer_models: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Initialize enhanced drift detector with transformer support.
+        
+        Args:
+            reference_data: Reference dataset for baseline
+            feature_columns: List of feature column names
+            target_column: Target column name (optional)
+            config: Configuration parameters
+            transformer_models: Dictionary of transformer models for drift detection
+        """
+        super().__init__(reference_data, feature_columns, target_column, config)
+        
+        self.transformer_models = transformer_models or {}
+        self.transformer_drift_detector = None
+        
+        # Initialize transformer drift detector if models are provided
+        if self.transformer_models:
+            try:
+                from .transformer_drift_detection import TransformerDriftDetector
+                self.transformer_drift_detector = TransformerDriftDetector(
+                    models=self.transformer_models,
+                    existing_drift_detector=self,
+                    config=config
+                )
+            except ImportError:
+                self.logger.warning("Transformer drift detection not available")
+    
+    def detect_combined_drift(
+        self,
+        current_data: pd.DataFrame,
+        current_attention_weights: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Detect combined drift using both traditional and transformer-specific methods.
+        
+        Args:
+            current_data: Current dataset to analyze
+            current_attention_weights: Current attention weights for transformer models
+            
+        Returns:
+            Combined drift analysis result
+        """
+        # Traditional drift detection
+        traditional_result = self.detect_drift(current_data)
+        
+        # Transformer drift detection
+        transformer_results = {}
+        if (self.transformer_drift_detector is not None and 
+            current_attention_weights is not None):
+            try:
+                transformer_results = self.transformer_drift_detector.detect_combined_drift(
+                    current_data, current_attention_weights
+                )
+            except Exception as e:
+                self.logger.error(f"Transformer drift detection failed: {e}")
+        
+        # Combine results
+        combined_result = {
+            'traditional_drift': traditional_result,
+            'transformer_drift': transformer_results,
+            'has_combined_drift': False,
+            'overall_drift_score': 0.0,
+            'combined_severity': DriftSeverity.NONE,
+            'timestamp': datetime.now()
+        }
+        
+        # Determine combined drift status
+        traditional_has_drift = traditional_result.has_drift
+        transformer_has_drift = bool(transformer_results.get('overall_drift_score', 0) > 0.1)
+        
+        combined_result['has_combined_drift'] = traditional_has_drift or transformer_has_drift
+        
+        # Calculate combined drift score
+        traditional_score = traditional_result.overall_drift_score
+        transformer_score = transformer_results.get('overall_drift_score', 0.0)
+        combined_result['overall_drift_score'] = max(traditional_score, transformer_score)
+        
+        # Determine combined severity
+        traditional_severity = traditional_result.overall_severity
+        transformer_severity = DriftSeverity.NONE
+        
+        if transformer_results:
+            transformer_drift_score = transformer_results.get('overall_drift_score', 0.0)
+            if transformer_drift_score > 0.3:
+                transformer_severity = DriftSeverity.SEVERE
+            elif transformer_drift_score > 0.15:
+                transformer_severity = DriftSeverity.MODERATE
+            elif transformer_drift_score > 0.05:
+                transformer_severity = DriftSeverity.LOW
+        
+        combined_result['combined_severity'] = max(traditional_severity, transformer_severity)
+        
+        return combined_result
+    
+    def generate_enhanced_alerts(
+        self,
+        combined_drift_results: Dict[str, Any]
+    ) -> List[DriftAlert]:
+        """
+        Generate enhanced alerts including transformer-specific alerts.
+        
+        Args:
+            combined_drift_results: Combined drift analysis results
+            
+        Returns:
+            List of enhanced DriftAlert objects
+        """
+        alerts = []
+        
+        # Traditional drift alerts
+        if 'traditional_drift' in combined_drift_results:
+            traditional_alerts = self.generate_drift_alerts(combined_drift_results['traditional_drift'])
+            alerts.extend(traditional_alerts)
+        
+        # Transformer drift alerts
+        if 'transformer_drift' in combined_drift_results:
+            transformer_results = combined_drift_results['transformer_drift']
+            
+            if transformer_results.get('attention_drift_results'):
+                for model_type, drift_result in transformer_results['attention_drift_results'].items():
+                    if drift_result.has_drift:
+                        alert_id = f"transformer_drift_{len(alerts):04d}"
+                        
+                        # Determine recommended actions
+                        actions = ['investigate_transformer_attention_patterns']
+                        if drift_result.confidence > 0.8:
+                            actions.extend(['retrain_transformer_model', 'validate_attention_mechanisms'])
+                        if drift_result.drift_score > 0.3:
+                            actions.extend(['halt_transformer_predictions', 'escalate_to_ml_team'])
+                        
+                        alert = DriftAlert(
+                            alert_id=alert_id,
+                            timestamp=combined_drift_results['timestamp'],
+                            drift_type=DriftType.TRANSFORMER,
+                            severity=DriftSeverity.MODERATE if drift_result.drift_score > 0.15 else DriftSeverity.LOW,
+                            message=f"Transformer drift detected in {model_type} "
+                                   f"(types: {', '.join(drift_result.drift_types)}, "
+                                   f"confidence: {drift_result.confidence:.3f})",
+                            metrics={'drift_score': drift_result.drift_score, 'confidence': drift_result.confidence},
+                            recommended_actions=actions,
+                            metadata={
+                                'model_type': model_type,
+                                'drift_types': drift_result.drift_types,
+                                'individual_results': drift_result.metadata.get('individual_results', [])
+                            }
+                        )
+                        alerts.append(alert)
         
         return alerts
