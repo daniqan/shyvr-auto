@@ -73,6 +73,8 @@ dependencies = [
     "brotli>=1.1.0",
     "lz4>=4.4.4",
     "onnx>=1.18.0",
+    "transformers>=4.54.1",
+    "huggingface-hub>=0.34.3",
 ]
 
 [project.optional-dependencies]
