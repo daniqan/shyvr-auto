@@ -23,6 +23,7 @@ from .transformers.itransformer import iTransformerPredictor
 from .transformers.patchtst import PatchTSTPredictor
 from .transformers.timesmixer import TimesMixerPredictor
 from .transformers.timesfm_wrapper import TimesFMWrapper
+from .market_data import FearGreedIndexClient, MarketSentimentData
 from src.activity_logging.activity_logger import (
     activity_logger, ActivityCategory, ActivityAction, ActivitySeverity,
     performance_tracker
@@ -60,6 +61,11 @@ class ModelManager:
         self._model_performance: Dict[ModelType, Dict[str, float]] = {}
         self._ensemble_cache: Dict[str, Tuple[datetime, PredictionResult]] = {}
         self._cache_ttl_minutes = self.config.get('cache_ttl_minutes', 15)
+        
+        # Fear & Greed Index client for sentiment-based weight adjustment
+        self._fear_greed_client = FearGreedIndexClient()
+        self._last_sentiment_data: Optional[MarketSentimentData] = None
+        self._sentiment_cache_ttl_minutes = 10  # Cache sentiment data for 10 minutes
         
         # Model file paths
         self.model_dir = Path(self.config.get('model_dir', 'models'))
@@ -621,10 +627,18 @@ class ModelManager:
             self.logger.debug("Failed to get memory usage", model_type=model_type.value, error=str(e))
             return 0.0
     
-    async def _update_model_weights(self, market_regime: str = "normal"):
-        """Update model weights based on performance with Transformer-aware considerations"""
+    async def _update_model_weights(self, market_regime: str = "normal", fear_greed_regime: Optional[str] = None):
+        """Update model weights based on performance with Fear & Greed Index integration"""
         try:
-            current_time = datetime.now().timestamp()
+            start_time = datetime.now()
+            current_time = start_time.timestamp()
+            
+            # Get current fear/greed sentiment if not provided
+            if fear_greed_regime is None:
+                fear_greed_regime = await self.get_fear_greed_regime()
+            
+            # Store current base weights for comparison
+            original_weights = self._model_weights.copy()
             
             for model_type, performance in self._model_performance.items():
                 accuracy = performance['accuracy']
@@ -648,7 +662,7 @@ class ModelManager:
                 
                 # Transformer-specific efficiency factors
                 efficiency_factor = 1.0
-                if model_type in [ModelType.TRANSFORMER, ModelType.ITRANSFORMER, ModelType.PATCHTST, ModelType.TIMESMIXER]:
+                if model_type in [ModelType.TRANSFORMER, ModelType.ITRANSFORMER, ModelType.PATCHTST, ModelType.TIMESMIXER, ModelType.TIMESFM]:
                     # Memory efficiency penalty for high memory usage (>2GB)
                     memory_penalty = max(0.8, 1.0 - (memory_usage / 2048))  # Penalty starts at 2GB
                     
@@ -660,9 +674,12 @@ class ModelManager:
                 # Market regime-aware weighting
                 regime_factor = self._get_regime_factor(model_type, market_regime)
                 
+                # Fear & Greed sentiment-based weight adjustment
+                sentiment_factor = self._get_sentiment_factor(model_type, fear_greed_regime)
+                
                 # Combined weight calculation with new factors
                 base_weight = accuracy * (0.3 + 0.7 * experience_factor)
-                adjusted_weight = base_weight * decay_factor * recency_bonus * efficiency_factor * regime_factor
+                adjusted_weight = base_weight * decay_factor * recency_bonus * efficiency_factor * regime_factor * sentiment_factor
                 
                 # Ensure minimum weight to prevent models from being completely ignored
                 self._model_weights[model_type] = max(adjusted_weight, 0.02)  # Lower minimum for more models
@@ -673,9 +690,15 @@ class ModelManager:
                 for model_type in self._model_weights:
                     self._model_weights[model_type] /= total_weight
             
-            self.logger.info("Enhanced model weights updated", 
+            # Calculate adjustment latency
+            adjustment_latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            
+            self.logger.info("Enhanced model weights updated with Fear & Greed integration", 
                            weights=self._model_weights,
+                           original_weights=original_weights,
                            market_regime=market_regime,
+                           fear_greed_regime=fear_greed_regime,
+                           adjustment_latency_ms=adjustment_latency_ms,
                            performance_metrics={
                                mt.value: {
                                    'accuracy': perf['accuracy'],
@@ -686,8 +709,94 @@ class ModelManager:
                                } for mt, perf in self._model_performance.items()
                            })
             
+            # Ensure latency requirement is met (<100ms)
+            if adjustment_latency_ms > 100:
+                self.logger.warning("Weight adjustment latency exceeded requirement", 
+                                  latency_ms=adjustment_latency_ms,
+                                  requirement_ms=100)
+            
         except Exception as e:
             self.logger.error("Model weight update failed", error=str(e))
+    
+    def _get_sentiment_factor(self, model_type: ModelType, fear_greed_regime: str) -> float:
+        """
+        Get sentiment-based weight adjustment factor based on Fear & Greed Index
+        
+        Weight Adjustment Rules:
+        - Extreme Fear (0-15): LSTM +40%, TimesMixer +30%, Transformers -20%
+        - Fear (16-30): LSTM +20%, iTransformer +10%, others balanced
+        - Cautious (31-40): LSTM +10%, others slight adjustments
+        - Neutral (41-60): Default weights
+        - Optimistic (61-70): Transformers +10%, LSTM slight decrease
+        - Greed (71-85): Transformers +20%, LSTM -10%
+        - Extreme Greed (86-100): Transformers +40%, LSTM -30%
+        """
+        try:
+            sentiment_adjustments = {
+                "extreme_fear": {
+                    ModelType.LSTM: 1.4,  # +40% - Conservative model preferred
+                    ModelType.TRANSFORMER: 0.8,  # -20% - Aggressive models reduced
+                    ModelType.ITRANSFORMER: 0.8,  # -20%
+                    ModelType.PATCHTST: 0.8,  # -20%
+                    ModelType.TIMESMIXER: 1.3,  # +30% - Good at volatility decomposition
+                    ModelType.TIMESFM: 0.8  # -20%
+                },
+                "fear": {
+                    ModelType.LSTM: 1.2,  # +20% - Conservative bias
+                    ModelType.TRANSFORMER: 1.0,  # Neutral
+                    ModelType.ITRANSFORMER: 1.1,  # +10% - Good correlation analysis in fear
+                    ModelType.PATCHTST: 1.0,  # Neutral
+                    ModelType.TIMESMIXER: 1.0,  # Neutral
+                    ModelType.TIMESFM: 1.0  # Neutral
+                },
+                "cautious": {
+                    ModelType.LSTM: 1.1,  # +10% - Slight conservative bias
+                    ModelType.TRANSFORMER: 0.95,  # -5%
+                    ModelType.ITRANSFORMER: 1.0,  # Neutral
+                    ModelType.PATCHTST: 1.0,  # Neutral
+                    ModelType.TIMESMIXER: 1.0,  # Neutral
+                    ModelType.TIMESFM: 0.95  # -5%
+                },
+                "neutral": {
+                    # Default balanced weights
+                    ModelType.LSTM: 1.0,
+                    ModelType.TRANSFORMER: 1.0,
+                    ModelType.ITRANSFORMER: 1.0,
+                    ModelType.PATCHTST: 1.0,
+                    ModelType.TIMESMIXER: 1.0,
+                    ModelType.TIMESFM: 1.0
+                },
+                "optimistic": {
+                    ModelType.LSTM: 0.95,  # -5% - Slight decrease
+                    ModelType.TRANSFORMER: 1.1,  # +10% - Better trend detection
+                    ModelType.ITRANSFORMER: 1.1,  # +10%
+                    ModelType.PATCHTST: 1.1,  # +10%
+                    ModelType.TIMESMIXER: 1.0,  # Neutral
+                    ModelType.TIMESFM: 1.1  # +10%
+                },
+                "greed": {
+                    ModelType.LSTM: 0.9,  # -10% - Less conservative
+                    ModelType.TRANSFORMER: 1.2,  # +20% - Aggressive models preferred
+                    ModelType.ITRANSFORMER: 1.2,  # +20%
+                    ModelType.PATCHTST: 1.2,  # +20%
+                    ModelType.TIMESMIXER: 1.0,  # Neutral
+                    ModelType.TIMESFM: 1.2  # +20%
+                },
+                "extreme_greed": {
+                    ModelType.LSTM: 0.7,  # -30% - Minimize conservative approach
+                    ModelType.TRANSFORMER: 1.4,  # +40% - Maximum aggressive weighting
+                    ModelType.ITRANSFORMER: 1.4,  # +40%
+                    ModelType.PATCHTST: 1.4,  # +40%
+                    ModelType.TIMESMIXER: 1.1,  # +10% - Slight increase
+                    ModelType.TIMESFM: 1.4  # +40%
+                }
+            }
+            
+            return sentiment_adjustments.get(fear_greed_regime, sentiment_adjustments["neutral"]).get(model_type, 1.0)
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate sentiment factor", error=str(e))
+            return 1.0
     
     def _get_regime_factor(self, model_type: ModelType, market_regime: str) -> float:
         """Get regime-specific weighting factor for different model types"""
@@ -699,35 +808,40 @@ class ModelManager:
                     ModelType.TRANSFORMER: 1.1,  # Better at capturing trends
                     ModelType.ITRANSFORMER: 1.2,  # Excellent for multivariate trend detection
                     ModelType.PATCHTST: 1.1,  # Good for long-term trends
-                    ModelType.TIMESMIXER: 1.0  # Balanced performance
+                    ModelType.TIMESMIXER: 1.0,  # Balanced performance
+                    ModelType.TIMESFM: 1.2  # Foundation model excellent for trend detection
                 },
                 "bear": {
                     ModelType.LSTM: 1.0,  # LSTM handles bear markets reasonably
                     ModelType.TRANSFORMER: 1.1,  # Good at pattern recognition
                     ModelType.ITRANSFORMER: 1.3,  # Best for correlated selloffs
                     ModelType.PATCHTST: 1.0,  # Stable performance
-                    ModelType.TIMESMIXER: 1.2  # Good at decomposing market stress
+                    ModelType.TIMESMIXER: 1.2,  # Good at decomposing market stress
+                    ModelType.TIMESFM: 1.1  # Good generalization in bear markets
                 },
                 "sideways": {
                     ModelType.LSTM: 1.1,  # LSTM good at range-bound markets
                     ModelType.TRANSFORMER: 1.0,  # Neutral performance
                     ModelType.ITRANSFORMER: 1.0,  # Less advantage in low correlation
                     ModelType.PATCHTST: 0.9,  # Less effective in choppy markets
-                    ModelType.TIMESMIXER: 1.2  # Excellent at noise filtering
+                    ModelType.TIMESMIXER: 1.2,  # Excellent at noise filtering
+                    ModelType.TIMESFM: 1.0  # Balanced performance in sideways markets
                 },
                 "volatile": {
                     ModelType.LSTM: 0.8,  # LSTM struggles with high volatility
                     ModelType.TRANSFORMER: 1.1,  # Better attention to volatility patterns
                     ModelType.ITRANSFORMER: 1.3,  # Best for volatility clustering
                     ModelType.PATCHTST: 1.0,  # Stable under volatility
-                    ModelType.TIMESMIXER: 1.4  # Excellent volatility decomposition
+                    ModelType.TIMESMIXER: 1.4,  # Excellent volatility decomposition
+                    ModelType.TIMESFM: 1.2  # Foundation model handles volatility well
                 },
                 "normal": {
                     ModelType.LSTM: 1.0,
                     ModelType.TRANSFORMER: 1.0,
                     ModelType.ITRANSFORMER: 1.0,
                     ModelType.PATCHTST: 1.0,
-                    ModelType.TIMESMIXER: 1.0
+                    ModelType.TIMESMIXER: 1.0,
+                    ModelType.TIMESFM: 1.0
                 }
             }
             
@@ -960,3 +1074,44 @@ class ModelManager:
         """Set the current operational mode"""
         self._current_mode = mode
         self.logger.info("Operational mode changed", mode=mode)
+    
+    async def get_fear_greed_regime(self) -> str:
+        """
+        Get current Fear & Greed Index and classify into sentiment regimes
+        
+        Returns:
+            str: One of 'extreme_fear', 'fear', 'cautious', 'neutral', 'optimistic', 'greed', 'extreme_greed'
+        """
+        try:
+            # Check if we have recent cached sentiment data
+            current_time = datetime.now()
+            if (self._last_sentiment_data and 
+                (current_time - self._last_sentiment_data.timestamp).total_seconds() < self._sentiment_cache_ttl_minutes * 60):
+                sentiment_data = self._last_sentiment_data
+            else:
+                # Fetch fresh sentiment data
+                sentiment_data = await self._fear_greed_client.get_market_data()
+                self._last_sentiment_data = sentiment_data
+            
+            fear_greed_value = sentiment_data.fear_greed_index
+            
+            # Classify into 7 refined sentiment regimes
+            if fear_greed_value <= 15:
+                return "extreme_fear"
+            elif fear_greed_value <= 30:
+                return "fear"
+            elif fear_greed_value <= 40:
+                return "cautious"
+            elif fear_greed_value <= 60:
+                return "neutral"
+            elif fear_greed_value <= 70:
+                return "optimistic"
+            elif fear_greed_value <= 85:
+                return "greed"
+            else:
+                return "extreme_greed"
+                
+        except Exception as e:
+            self.logger.error("Failed to get fear/greed regime", error=str(e))
+            # Return neutral as fallback
+            return "neutral"
