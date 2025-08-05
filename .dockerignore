@@ -80,8 +80,24 @@ models/
 *.pth
 *.h5
 *.model
+*.safetensors
+*.bin
 performance_results/
 reports/
+
+# Transformer model development artifacts
+models/cache/temp
+transformers_cache/
+.cache/
+huggingface/
+torch_cache/
+model_cache/
+
+# Development transformer models (not for production)
+*.transformer
+*.attention
+dev_models/
+test_models/
 
 # Monitoring and operational files
 monitoring/grafana/
