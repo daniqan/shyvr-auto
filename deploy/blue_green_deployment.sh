@@ -13,21 +13,23 @@ REPOSITORY=${REPOSITORY:-"shyvr-ai-prod"}
 ENVIRONMENT=${1:-"staging"}  # staging or production
 IMAGE_TAG=${2:-"latest"}
 
-# Environment-specific settings
+# Environment-specific settings (transformer-optimized)
 if [[ "$ENVIRONMENT" == "production" ]]; then
     SERVICE="shyvr-rlte"
     INITIAL_TRAFFIC_PERCENT=10
     INTERMEDIATE_TRAFFIC_PERCENT=50
-    HEALTH_CHECK_ATTEMPTS=10
-    HEALTH_CHECK_INTERVAL=15
-    TRAFFIC_MIGRATION_DELAY=120
+    HEALTH_CHECK_ATTEMPTS=15
+    HEALTH_CHECK_INTERVAL=20
+    TRAFFIC_MIGRATION_DELAY=180
+    ROLLBACK_TIMEOUT=300
 else
     SERVICE="shyvr-rlte-staging"
     INITIAL_TRAFFIC_PERCENT=50
     INTERMEDIATE_TRAFFIC_PERCENT=100
-    HEALTH_CHECK_ATTEMPTS=5
-    HEALTH_CHECK_INTERVAL=10
-    TRAFFIC_MIGRATION_DELAY=60
+    HEALTH_CHECK_ATTEMPTS=15
+    HEALTH_CHECK_INTERVAL=20
+    TRAFFIC_MIGRATION_DELAY=180
+    ROLLBACK_TIMEOUT=300
 fi
 
 IMAGE_NAME="us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/shyvr-rlte"
@@ -141,22 +143,22 @@ validate_deployment_config() {
 deploy_new_revision() {
     log_header "🚀 Deploying new revision for $ENVIRONMENT environment"
     
-    local env_vars="ENVIRONMENT=$ENVIRONMENT,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$DEPLOYMENT_ID,COMMIT_SHA=${IMAGE_TAG}"
+    local env_vars="ENVIRONMENT=$ENVIRONMENT,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$DEPLOYMENT_ID,COMMIT_SHA=${IMAGE_TAG},TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=6,MKL_NUM_THREADS=6,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1"
     
     if [[ "$ENVIRONMENT" == "production" ]]; then
         env_vars="$env_vars,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true"
     fi
     
-    # Deploy new revision without traffic
+    # Deploy new revision without traffic (transformer-optimized)
     if ! gcloud run deploy "$SERVICE" \
         --image="$IMAGE_NAME:$IMAGE_TAG" \
         --region="$REGION" \
         --platform=managed \
         --port=8080 \
-        --memory=6Gi \
-        --cpu=4 \
-        --concurrency=50 \
-        --timeout=1800 \
+        --memory=8Gi \
+        --cpu=6 \
+        --concurrency=15 \
+        --timeout=4200 \
         --max-instances=10 \
         --min-instances=1 \
         --allow-unauthenticated \
@@ -210,6 +212,7 @@ execute_blue_green_migration() {
         # Health checks
         if ! perform_health_checks "$SERVICE_URL" "$HEALTH_CHECK_ATTEMPTS" "$HEALTH_CHECK_INTERVAL"; then
             log_error "Health checks failed during phase 1"
+            log_warning "Health check failed - initiating rollback to previous version"
             return 1
         fi
         
