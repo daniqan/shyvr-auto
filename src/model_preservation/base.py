@@ -87,6 +87,13 @@ class ModelMetadata:
     parent_version: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    # Transformer-specific fields
+    transformer_architecture: Optional[str] = None  # Architecture type for transformers
+    attention_patterns_preserved: bool = False  # Whether attention patterns are preserved
+    model_shards: List[str] = field(default_factory=list)  # Shard paths for large models
+    attention_analysis: Optional[Dict[str, Any]] = field(default_factory=dict)  # Attention analysis results
+    architecture_signature: Optional[str] = None  # Architecture compatibility signature
+    
     def __post_init__(self):
         """Validate version format and branch name on initialization"""
         if not validate_semantic_version_format(self.version):
@@ -94,6 +101,18 @@ class ModelMetadata:
         
         if not validate_branch_name(self.branch):
             raise ValueError(f"Invalid branch name: {self.branch}")
+        
+        # Initialize transformer-specific fields based on model type
+        if self.is_transformer_model():
+            if not self.transformer_architecture:
+                self.transformer_architecture = self.model_type
+            
+            # Validate attention analysis if present
+            if self.attention_analysis and not validate_attention_pattern_format(self.attention_analysis):
+                raise ValueError("Invalid attention pattern format")
+                
+            # Set attention patterns preserved flag
+            self.attention_patterns_preserved = bool(self.attention_analysis)
     
     @property
     def semantic_version(self) -> 'SemanticVersion':
@@ -158,6 +177,56 @@ class ModelMetadata:
             Uniqueness key string
         """
         return f"{self.model_type}-{self.version}-{self.mode or 'none'}-{self.branch}"
+    
+    def is_transformer_model(self) -> bool:
+        """
+        Check if this is a transformer model
+        
+        Returns:
+            True if this is a transformer model type
+        """
+        transformer_types = {
+            "transformer", "itransformer", "patchtst", 
+            "timesmixer", "timesfm"
+        }
+        return self.model_type.lower() in transformer_types
+    
+    def has_attention_patterns(self) -> bool:
+        """
+        Check if attention patterns are preserved
+        
+        Returns:
+            True if attention patterns are preserved
+        """
+        return self.attention_patterns_preserved and bool(self.attention_analysis)
+    
+    def is_sharded_model(self) -> bool:
+        """
+        Check if this model is sharded (for large models)
+        
+        Returns:
+            True if model is stored in shards
+        """
+        return len(self.model_shards) > 0
+    
+    def get_transformer_info(self) -> Dict[str, Any]:
+        """
+        Get transformer-specific information
+        
+        Returns:
+            Dictionary with transformer metadata
+        """
+        if not self.is_transformer_model():
+            return {}
+        
+        return {
+            "architecture": self.transformer_architecture,
+            "attention_preserved": self.attention_patterns_preserved,
+            "is_sharded": self.is_sharded_model(),
+            "num_shards": len(self.model_shards),
+            "architecture_signature": self.architecture_signature,
+            "has_attention_analysis": bool(self.attention_analysis)
+        }
 
 
 @dataclass
@@ -424,3 +493,143 @@ def is_reserved_branch_name(branch_name: str) -> bool:
         True if branch name is reserved
     """
     return branch_name in RESERVED_BRANCH_NAMES
+
+
+# =============================================================================
+# TRANSFORMER-SPECIFIC UTILITY FUNCTIONS
+# =============================================================================
+
+def is_transformer_model_type(model_type: str) -> bool:
+    """
+    Check if a model type is a transformer model
+    
+    Args:
+        model_type: Model type string
+        
+    Returns:
+        True if model type is a transformer
+    """
+    transformer_types = {
+        "transformer", "itransformer", "patchtst",
+        "timesmixer", "timesfm"
+    }
+    return model_type.lower() in transformer_types
+
+
+def validate_attention_pattern_format(attention_data: Dict[str, Any]) -> bool:
+    """
+    Validate attention pattern data format
+    
+    Args:
+        attention_data: Attention pattern data to validate
+        
+    Returns:
+        True if format is valid
+    """
+    required_fields = ["model_id", "timestamp", "attention_patterns"]
+    
+    # Check top-level fields
+    for field in required_fields:
+        if field not in attention_data:
+            return False
+    
+    # Validate attention patterns structure
+    patterns = attention_data.get("attention_patterns", [])
+    if not isinstance(patterns, list):
+        return False
+    
+    for pattern in patterns:
+        pattern_fields = ["layer_idx", "head_idx", "attention_type", "shape", "patterns"]
+        for field in pattern_fields:
+            if field not in pattern:
+                return False
+    
+    return True
+
+
+def calculate_architecture_signature(config: Dict[str, Any]) -> str:
+    """
+    Calculate architecture signature for compatibility checking
+    
+    Args:
+        config: Architecture configuration
+        
+    Returns:
+        Architecture signature hash
+    """
+    import json
+    import hashlib
+    
+    # Extract key architectural parameters
+    signature_data = {
+        "architecture": config.get("architecture", "unknown"),
+        "num_layers": config.get("num_layers", 0),
+        "num_heads": config.get("num_heads", 0),
+        "hidden_size": config.get("hidden_size", 0),
+        "intermediate_size": config.get("intermediate_size", 0),
+        "attention_types": sorted(config.get("attention_types", []))
+    }
+    
+    # Create deterministic signature
+    signature_str = json.dumps(signature_data, sort_keys=True)
+    return hashlib.sha256(signature_str.encode()).hexdigest()[:16]
+
+
+def estimate_model_size_mb(num_parameters: int, precision: str = "float32") -> float:
+    """
+    Estimate model size in MB based on parameter count
+    
+    Args:
+        num_parameters: Number of model parameters
+        precision: Model precision ("float32", "float16", "int8")
+        
+    Returns:
+        Estimated model size in MB
+    """
+    bytes_per_param = {
+        "float32": 4,
+        "float16": 2,
+        "int8": 1,
+        "bfloat16": 2
+    }
+    
+    param_bytes = bytes_per_param.get(precision, 4)
+    total_bytes = num_parameters * param_bytes
+    
+    # Add overhead for model structure, optimizer states, etc. (roughly 20%)
+    total_bytes *= 1.2
+    
+    return total_bytes / (1024 * 1024)  # Convert to MB
+
+
+def should_shard_model(model_size_mb: float, threshold_gb: float = 2.0) -> bool:
+    """
+    Determine if a model should be sharded based on size
+    
+    Args:
+        model_size_mb: Model size in MB
+        threshold_gb: Threshold in GB for sharding
+        
+    Returns:
+        True if model should be sharded
+    """
+    threshold_mb = threshold_gb * 1024
+    return model_size_mb > threshold_mb
+
+
+def get_recommended_shard_size(model_size_mb: float) -> int:
+    """
+    Get recommended shard size for a model
+    
+    Args:
+        model_size_mb: Model size in MB
+        
+    Returns:
+        Recommended shard size in MB
+    """
+    if model_size_mb < 1024:  # < 1GB
+        return 256  # 256MB shards
+    elif model_size_mb < 5120:  # < 5GB
+        return 512  # 512MB shards
+    else:
+        return 1024  # 1GB shards for very large models

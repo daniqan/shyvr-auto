@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import re
 
-from .base import PreservationError, ModelMetadata
+from .base import PreservationError, ModelMetadata, is_transformer_model_type
 from .versioning import SemanticVersion
 
 
@@ -847,3 +847,235 @@ class ModelRegistry:
             ],
             "edges": []
         }
+    
+    # =============================================================================
+    # TRANSFORMER-SPECIFIC REGISTRY METHODS
+    # =============================================================================
+    
+    def register_transformer_model(
+        self,
+        model_name: str,
+        model_type: str,
+        version: str,
+        author: str,
+        description: str,
+        architecture_config: Dict[str, Any],
+        attention_config: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Register a transformer model with specialized metadata
+        
+        Args:
+            model_name: Name of the model
+            model_type: Type of transformer model
+            version: Model version
+            author: Model author
+            description: Model description
+            architecture_config: Transformer architecture configuration
+            attention_config: Optional attention configuration
+            tags: Optional tags
+            metadata: Optional additional metadata
+            
+        Returns:
+            Registration ID
+        """
+        if not is_transformer_model_type(model_type):
+            raise ValueError(f"Model type '{model_type}' is not a transformer model")
+        
+        # Merge transformer-specific metadata
+        transformer_metadata = metadata or {}
+        transformer_metadata.update({
+            "architecture_config": architecture_config,
+            "attention_config": attention_config or {},
+            "is_transformer": True,
+            "transformer_type": model_type
+        })
+        
+        # Add transformer-specific tags
+        transformer_tags = (tags or []) + ["transformer", model_type]
+        
+        return self.register_model(
+            model_name=model_name,
+            model_type=model_type,
+            version=version,
+            author=author,
+            description=description,
+            tags=transformer_tags,
+            metadata=transformer_metadata
+        )
+    
+    def search_transformer_models(
+        self,
+        query: str,
+        architecture_filter: Optional[str] = None,
+        min_parameters: Optional[int] = None,
+        max_parameters: Optional[int] = None,
+        has_attention_patterns: Optional[bool] = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for transformer models with specialized filters
+        
+        Args:
+            query: Search query
+            architecture_filter: Filter by transformer architecture
+            min_parameters: Minimum number of parameters
+            max_parameters: Maximum number of parameters
+            has_attention_patterns: Filter by attention pattern preservation
+            sort_by: Field to sort by
+            sort_order: Sort order
+            limit: Maximum results
+            
+        Returns:
+            List of matching transformer models
+        """
+        # Build filters
+        filters = {"is_transformer": True}
+        
+        if architecture_filter:
+            filters["transformer_type"] = architecture_filter
+        
+        # Search using base method with transformer filter
+        results = self.search_models(
+            query=query,
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit * 2  # Get more results for additional filtering
+        )
+        
+        # Apply transformer-specific filters
+        filtered_results = []
+        for result in results:
+            metadata = result.get("metadata", {})
+            arch_config = metadata.get("architecture_config", {})
+            
+            # Filter by parameter count
+            if min_parameters is not None:
+                total_params = arch_config.get("total_parameters", 0)
+                if total_params < min_parameters:
+                    continue
+            
+            if max_parameters is not None:
+                total_params = arch_config.get("total_parameters", float('inf'))
+                if total_params > max_parameters:
+                    continue
+            
+            # Filter by attention patterns
+            if has_attention_patterns is not None:
+                has_patterns = metadata.get("attention_config", {}).get("patterns_preserved", False)
+                if has_patterns != has_attention_patterns:
+                    continue
+            
+            filtered_results.append(result)
+            
+            if len(filtered_results) >= limit:
+                break
+        
+        return filtered_results
+    
+    def get_transformer_architecture_info(
+        self,
+        model_name: str,
+        version: str = "latest"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get transformer architecture information
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            
+        Returns:
+            Architecture information or None if not found
+        """
+        model_info = self.get_model_by_name(model_name, version)
+        if not model_info:
+            return None
+        
+        metadata = model_info.get("metadata", {})
+        if not metadata.get("is_transformer", False):
+            return None
+        
+        arch_config = metadata.get("architecture_config", {})
+        attention_config = metadata.get("attention_config", {})
+        
+        return {
+            "model_name": model_name,
+            "version": model_info["version"],
+            "transformer_type": metadata.get("transformer_type"),
+            "architecture": {
+                "num_layers": arch_config.get("num_layers"),
+                "num_heads": arch_config.get("num_heads"),
+                "hidden_size": arch_config.get("hidden_size"),
+                "intermediate_size": arch_config.get("intermediate_size"),
+                "total_parameters": arch_config.get("total_parameters"),
+                "max_position_embeddings": arch_config.get("max_position_embeddings"),
+                "vocab_size": arch_config.get("vocab_size")
+            },
+            "attention": {
+                "patterns_preserved": attention_config.get("patterns_preserved", False),
+                "attention_types": attention_config.get("attention_types", []),
+                "analysis_available": bool(attention_config.get("analysis_results"))
+            },
+            "capabilities": self._extract_transformer_capabilities(arch_config)
+        }
+    
+    def update_transformer_attention_analysis(
+        self,
+        model_name: str,
+        version: str,
+        attention_analysis: Dict[str, Any]
+    ) -> bool:
+        """
+        Update attention analysis results for a transformer model
+        
+        Args:
+            model_name: Name of the model
+            version: Model version
+            attention_analysis: Attention analysis results
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        model_info = self.get_model_by_name(model_name, version)
+        if not model_info or not model_info.get("metadata", {}).get("is_transformer", False):
+            return False
+        
+        # Update attention configuration
+        attention_config = model_info.get("metadata", {}).get("attention_config", {})
+        attention_config.update({
+            "analysis_results": attention_analysis,
+            "patterns_preserved": True,
+            "last_analysis": datetime.now().isoformat()
+        })
+        
+        return self.update_model_metadata(
+            model_name=model_name,
+            version=version,
+            metadata_updates={"attention_config": attention_config}
+        )
+    
+    def _extract_transformer_capabilities(self, arch_config: Dict[str, Any]) -> List[str]:
+        """Extract transformer capabilities from architecture config"""
+        capabilities = []
+        
+        total_params = arch_config.get("total_parameters", 0)
+        if total_params > 1e9:  # > 1B parameters
+            capabilities.append("large_scale")
+        elif total_params > 1e8:  # > 100M parameters
+            capabilities.append("medium_scale")
+        else:
+            capabilities.append("small_scale")
+        
+        if arch_config.get("max_position_embeddings", 0) > 2048:
+            capabilities.append("long_context")
+        
+        if arch_config.get("num_heads", 0) > 16:
+            capabilities.append("multi_head_attention")
+        
+        return capabilities

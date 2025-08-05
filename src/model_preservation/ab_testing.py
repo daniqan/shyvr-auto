@@ -27,7 +27,7 @@ import numpy as np
 from scipy import stats
 from scipy.stats import beta, norm
 
-from .base import PreservationError, ModelMetadata
+from .base import PreservationError, ModelMetadata, is_transformer_model_type
 from .versioning import SemanticVersion
 
 
@@ -804,3 +804,374 @@ class ABTestManager:
         del self.active_tests[test_name]
         
         return termination_result
+    
+    # =============================================================================
+    # TRANSFORMER-SPECIFIC A/B TESTING METHODS
+    # =============================================================================
+    
+    def create_transformer_ab_test(
+        self,
+        test_name: str,
+        model_a_type: str,
+        model_a_version: str,
+        model_b_type: str,
+        model_b_version: str,
+        traffic_split: float = 0.5,
+        attention_comparison: bool = True,
+        architecture_metrics: bool = True,
+        test_config: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Create A/B test specifically for transformer models
+        
+        Args:
+            test_name: Unique name for the test
+            model_a_type: Type of transformer model A
+            model_a_version: Version of model A
+            model_b_type: Type of transformer model B
+            model_b_version: Version of model B
+            traffic_split: Fraction of traffic for model B
+            attention_comparison: Whether to compare attention patterns
+            architecture_metrics: Whether to include architecture-specific metrics
+            test_config: Additional test configuration
+            metadata: Optional metadata
+            
+        Returns:
+            Test ID
+        """
+        # Validate transformer models
+        if not is_transformer_model_type(model_a_type):
+            raise ValueError(f"Model A type '{model_a_type}' is not a transformer model")
+        if not is_transformer_model_type(model_b_type):
+            raise ValueError(f"Model B type '{model_b_type}' is not a transformer model")
+        
+        # Enhanced configuration for transformer testing
+        transformer_config = test_config or {}
+        transformer_config.update({
+            "transformer_test": True,
+            "attention_comparison": attention_comparison,
+            "architecture_metrics": architecture_metrics,
+            "transformer_metrics": [
+                "accuracy", "inference_time", "memory_usage",
+                "attention_entropy", "attention_sparsity", 
+                "perplexity", "bleu_score"
+            ]
+        })
+        
+        # Enhanced metadata for transformer testing
+        transformer_metadata = metadata or {}
+        transformer_metadata.update({
+            "test_type": "transformer_ab_test",
+            "model_a_architecture": model_a_type,
+            "model_b_architecture": model_b_type,
+            "attention_analysis_enabled": attention_comparison
+        })
+        
+        return self.create_ab_test(
+            test_name=test_name,
+            model_a_type=model_a_type,
+            model_a_version=model_a_version,
+            model_b_type=model_b_type,
+            model_b_version=model_b_version,
+            traffic_split=traffic_split,
+            test_config=transformer_config,
+            metadata=transformer_metadata
+        )
+    
+    def record_transformer_metrics(
+        self,
+        test_name: str,
+        variant: str,
+        user_id: str,
+        base_metrics: Dict[str, float],
+        attention_metrics: Optional[Dict[str, float]] = None,
+        architecture_metrics: Optional[Dict[str, float]] = None,
+        timestamp: Optional[datetime] = None
+    ):
+        """
+        Record transformer-specific metrics for A/B test
+        
+        Args:
+            test_name: Name of the test
+            variant: Variant name
+            user_id: User identifier
+            base_metrics: Base performance metrics
+            attention_metrics: Attention-specific metrics
+            architecture_metrics: Architecture-specific metrics
+            timestamp: Optional timestamp
+        """
+        all_metrics = base_metrics.copy()
+        
+        # Add attention metrics if provided
+        if attention_metrics:
+            attention_prefixed = {f"attention_{k}": v for k, v in attention_metrics.items()}
+            all_metrics.update(attention_prefixed)
+        
+        # Add architecture metrics if provided
+        if architecture_metrics:
+            arch_prefixed = {f"arch_{k}": v for k, v in architecture_metrics.items()}
+            all_metrics.update(arch_prefixed)
+        
+        self.record_ab_test_metrics(
+            test_name=test_name,
+            variant=variant,
+            user_id=user_id,
+            metrics=all_metrics,
+            timestamp=timestamp
+        )
+    
+    def analyze_transformer_ab_test(
+        self,
+        test_name: str,
+        include_attention_analysis: bool = True,
+        include_architecture_comparison: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive analysis of transformer A/B test
+        
+        Args:
+            test_name: Name of the test
+            include_attention_analysis: Whether to analyze attention patterns
+            include_architecture_comparison: Whether to compare architectures
+            
+        Returns:
+            Comprehensive transformer test analysis
+        """
+        if test_name not in self.active_tests:
+            raise ValueError(f"Test '{test_name}' not found")
+        
+        config = self.active_tests[test_name]
+        
+        # Base analysis
+        base_analysis = {
+            "test_name": test_name,
+            "model_comparison": {
+                "model_a": f"{config.model_a_type}:{config.model_a_version}",
+                "model_b": f"{config.model_b_type}:{config.model_b_version}"
+            },
+            "performance_analysis": {},
+            "attention_analysis": {},
+            "architecture_analysis": {},
+            "recommendations": []
+        }
+        
+        # Performance analysis for key metrics
+        key_metrics = ["accuracy", "inference_time", "memory_usage"]
+        for metric in key_metrics:
+            try:
+                result = self.analyze_ab_test(test_name, metric)
+                base_analysis["performance_analysis"][metric] = {
+                    "winner": "model_b" if result.treatment_mean > result.control_mean else "model_a",
+                    "effect_size": result.effect_size,
+                    "confidence": 1 - result.p_value if result.is_significant else 0.5,
+                    "significant": result.is_significant,
+                    "control_mean": result.control_mean,
+                    "treatment_mean": result.treatment_mean
+                }
+            except ValueError:
+                # Not enough data for this metric
+                continue
+        
+        # Attention pattern analysis
+        if include_attention_analysis:
+            attention_analysis = self._analyze_attention_patterns(test_name)
+            base_analysis["attention_analysis"] = attention_analysis
+        
+        # Architecture comparison
+        if include_architecture_comparison:
+            arch_comparison = self._compare_transformer_architectures(
+                config.model_a_type, config.model_b_type
+            )
+            base_analysis["architecture_analysis"] = arch_comparison
+        
+        # Generate recommendations
+        recommendations = self._generate_transformer_recommendations(base_analysis)
+        base_analysis["recommendations"] = recommendations
+        
+        return base_analysis
+    
+    def _analyze_attention_patterns(self, test_name: str) -> Dict[str, Any]:
+        """Analyze attention patterns in transformer A/B test"""
+        attention_metrics = [
+            "attention_entropy", "attention_sparsity", 
+            "attention_diagonal_dominance", "attention_locality"
+        ]
+        
+        attention_analysis = {
+            "patterns_compared": True,
+            "metric_comparisons": {},
+            "pattern_differences": []
+        }
+        
+        for metric in attention_metrics:
+            try:
+                # Get metric data for both variants
+                control_data = []
+                treatment_data = []
+                
+                for metric_record in self.test_metrics.get(test_name, []):
+                    if metric_record.metric_name == metric:
+                        if metric_record.variant == "model_a":
+                            control_data.append(metric_record.metric_value)
+                        elif metric_record.variant == "model_b":
+                            treatment_data.append(metric_record.metric_value)
+                
+                if len(control_data) >= 2 and len(treatment_data) >= 2:
+                    analysis = self.statistics.calculate_significance(control_data, treatment_data)
+                    
+                    attention_analysis["metric_comparisons"][metric] = {
+                        "control_mean": analysis["control_mean"],
+                        "treatment_mean": analysis["treatment_mean"],
+                        "effect_size": analysis["effect_size"],
+                        "significant": analysis["is_significant"],
+                        "p_value": analysis["p_value"]
+                    }
+                    
+                    # Flag significant pattern differences
+                    if analysis["is_significant"] and abs(analysis["effect_size"]) > 0.1:
+                        direction = "higher" if analysis["effect_size"] > 0 else "lower"
+                        attention_analysis["pattern_differences"].append(
+                            f"Model B shows significantly {direction} {metric.replace('attention_', '')}"
+                        )
+                        
+            except Exception:
+                # Skip metrics with insufficient data
+                continue
+        
+        return attention_analysis
+    
+    def _compare_transformer_architectures(
+        self,
+        model_a_type: str,
+        model_b_type: str
+    ) -> Dict[str, Any]:
+        """Compare transformer architectures in A/B test"""
+        comparison = {
+            "architecture_match": model_a_type == model_b_type,
+            "compatibility_score": 1.0 if model_a_type == model_b_type else 0.7,
+            "architecture_differences": [],
+            "performance_implications": []
+        }
+        
+        if model_a_type != model_b_type:
+            comparison["architecture_differences"].append(
+                f"Different architectures: {model_a_type} vs {model_b_type}"
+            )
+            
+            # Architecture-specific implications
+            if "itransformer" in [model_a_type, model_b_type]:
+                comparison["performance_implications"].append(
+                    "iTransformer may show different attention patterns for time series"
+                )
+            
+            if "patchtst" in [model_a_type, model_b_type]:
+                comparison["performance_implications"].append(
+                    "PatchTST may show better performance on longer sequences"
+                )
+                
+            if "timesmixer" in [model_a_type, model_b_type]:
+                comparison["performance_implications"].append(
+                    "TimesMixer may show better decomposition capabilities"
+                )
+        
+        return comparison
+    
+    def _generate_transformer_recommendations(
+        self,
+        analysis: Dict[str, Any]
+    ) -> List[str]:
+        """Generate recommendations based on transformer A/B test analysis"""
+        recommendations = []
+        
+        # Performance-based recommendations
+        performance = analysis.get("performance_analysis", {})
+        
+        accuracy_winner = performance.get("accuracy", {}).get("winner")
+        speed_winner = performance.get("inference_time", {}).get("winner")
+        memory_winner = performance.get("memory_usage", {}).get("winner")
+        
+        if accuracy_winner and speed_winner and accuracy_winner == speed_winner:
+            recommendations.append(
+                f"Strong recommendation for {accuracy_winner}: wins on both accuracy and speed"
+            )
+        elif accuracy_winner:
+            recommendations.append(
+                f"Consider {accuracy_winner} for accuracy-critical applications"
+            )
+        
+        if memory_winner:
+            recommendations.append(
+                f"Consider {memory_winner} for memory-constrained environments"
+            )
+        
+        # Attention-based recommendations
+        attention = analysis.get("attention_analysis", {})
+        if attention.get("pattern_differences"):
+            recommendations.append(
+                "Significant attention pattern differences detected - consider task-specific evaluation"
+            )
+        
+        # Architecture-based recommendations
+        architecture = analysis.get("architecture_analysis", {})
+        if not architecture.get("architecture_match"):
+            recommendations.append(
+                "Different architectures may have complementary strengths - consider ensemble approaches"
+            )
+        
+        return recommendations
+    
+    def get_transformer_test_summary(self, test_name: str) -> Dict[str, Any]:
+        """Get summary of transformer A/B test results"""
+        if test_name not in self.active_tests:
+            raise ValueError(f"Test '{test_name}' not found")
+        
+        config = self.active_tests[test_name]
+        
+        # Get winner determination
+        winner_info = self.determine_ab_test_winner(test_name, metric="accuracy")
+        
+        summary = {
+            "test_name": test_name,
+            "status": "active",  # In real implementation, would track actual status
+            "models": {
+                "model_a": f"{config.model_a_type}:{config.model_a_version}",
+                "model_b": f"{config.model_b_type}:{config.model_b_version}"
+            },
+            "winner": winner_info["winner"],
+            "confidence": winner_info["confidence"],
+            "sample_sizes": winner_info["sample_sizes"],
+            "key_metrics": {},
+            "transformer_insights": []
+        }
+        
+        # Get key metric comparisons
+        key_metrics = ["accuracy", "inference_time", "memory_usage"]
+        for metric in key_metrics:
+            try:
+                result = self.analyze_ab_test(test_name, metric)
+                summary["key_metrics"][metric] = {
+                    "model_a_value": result.control_mean,
+                    "model_b_value": result.treatment_mean,
+                    "improvement": ((result.treatment_mean - result.control_mean) / result.control_mean) * 100 if result.control_mean != 0 else 0,
+                    "significant": result.is_significant
+                }
+            except ValueError:
+                continue
+        
+        # Add transformer-specific insights
+        if config.model_a_type != config.model_b_type:
+            summary["transformer_insights"].append(
+                f"Comparing different architectures: {config.model_a_type} vs {config.model_b_type}"
+            )
+        
+        # Check for attention pattern data
+        attention_metrics_available = any(
+            metric.metric_name.startswith("attention_")
+            for metric in self.test_metrics.get(test_name, [])
+        )
+        
+        if attention_metrics_available:
+            summary["transformer_insights"].append("Attention pattern analysis available")
+        
+        return summary

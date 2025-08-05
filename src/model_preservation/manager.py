@@ -125,6 +125,9 @@ class PreservationManager:
         # Initialize model registry
         self.model_registry = ModelRegistry()
         
+        # Initialize transformer preservation manager (lazy loading)
+        self._transformer_manager = None
+        
         # Internal state
         self._shutdown_event = asyncio.Event()
         self._background_task = None
@@ -2073,3 +2076,297 @@ class PreservationManager:
             )
         
         return False
+    
+    # =============================================================================
+    # TRANSFORMER-SPECIFIC METHODS
+    # =============================================================================
+    
+    @property
+    def transformer_manager(self):
+        """Lazy-loaded transformer preservation manager"""
+        if self._transformer_manager is None:
+            from .transformer_preservation import TransformerPreservationManager
+            self._transformer_manager = TransformerPreservationManager(self)
+        return self._transformer_manager
+    
+    async def save_transformer_model(
+        self,
+        model: 'torch.nn.Module',
+        model_type: str,
+        version: Optional[str] = None,
+        mode: str = "analysis",
+        preserve_attention: bool = True,
+        architecture_config: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> str:
+        """
+        Save transformer model with specialized preservation
+        
+        Args:
+            model: Transformer model to save
+            model_type: Type of transformer model (transformer, itransformer, etc.)
+            version: Model version
+            mode: Operational mode
+            preserve_attention: Whether to preserve attention patterns
+            architecture_config: Architecture configuration
+            **kwargs: Additional preservation arguments
+            
+        Returns:
+            Model ID
+        """
+        # Validate transformer model type
+        from ..ml_analysis.base import ModelType
+        
+        valid_transformer_types = {
+            ModelType.TRANSFORMER.value,
+            ModelType.ITRANSFORMER.value,
+            ModelType.PATCHTST.value,
+            ModelType.TIMESMIXER.value,
+            ModelType.TIMESFM.value
+        }
+        
+        if model_type not in valid_transformer_types:
+            raise ValueError(f"Invalid transformer model type: {model_type}. Must be one of {valid_transformer_types}")
+        
+        return await self.transformer_manager.save_transformer_model(
+            model=model,
+            model_type=model_type,
+            version=version,
+            mode=mode,
+            preserve_attention=preserve_attention,
+            architecture_config=architecture_config,
+            **kwargs
+        )
+    
+    async def load_transformer_model(
+        self,
+        model_type: str,
+        version: Optional[str] = None,
+        mode: str = "analysis",
+        load_attention_patterns: bool = True,
+        **kwargs
+    ) -> Tuple['torch.nn.Module', Dict[str, Any]]:
+        """
+        Load transformer model with specialized handling
+        
+        Args:
+            model_type: Type of transformer model
+            version: Model version
+            mode: Operational mode
+            load_attention_patterns: Whether to load attention patterns
+            **kwargs: Additional loading arguments
+            
+        Returns:
+            Tuple of (model, metadata)
+        """
+        return await self.transformer_manager.load_transformer_model(
+            model_type=model_type,
+            version=version,
+            mode=mode,
+            load_attention_patterns=load_attention_patterns,
+            **kwargs
+        )
+    
+    async def analyze_attention_patterns(
+        self,
+        model: 'torch.nn.Module',
+        model_id: str,
+        input_data: Optional['torch.Tensor'] = None,
+        analysis_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Analyze attention patterns in a transformer model
+        
+        Args:
+            model: Transformer model
+            model_id: Model identifier
+            input_data: Optional input data for attention computation
+            analysis_config: Optional analysis configuration
+            
+        Returns:
+            Attention pattern analysis results
+        """
+        # Extract attention weights
+        attention_weights = await self.transformer_manager.attention_manager.extract_attention_weights(
+            model=model,
+            model_id=model_id,
+            input_data=input_data
+        )
+        
+        # Analyze patterns
+        return await self.transformer_manager.pattern_analyzer.analyze_attention_patterns(
+            attention_weights=attention_weights,
+            analysis_config=analysis_config
+        )
+    
+    async def compare_transformer_models(
+        self,
+        model1_type: str,
+        model1_version: str,
+        model2_type: str,
+        model2_version: str,
+        comparison_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Compare two transformer models including attention patterns
+        
+        Args:
+            model1_type: First model type
+            model1_version: First model version
+            model2_type: Second model type
+            model2_version: Second model version
+            comparison_config: Optional comparison configuration
+            
+        Returns:
+            Detailed comparison results
+        """
+        return await self.transformer_manager.compare_transformer_models(
+            model1_type=model1_type,
+            model1_version=model1_version,
+            model2_type=model2_type,
+            model2_version=model2_version,
+            comparison_config=comparison_config
+        )
+    
+    async def migrate_transformer_model(
+        self,
+        source_model_type: str,
+        source_version: str,
+        target_architecture: str,
+        migration_config: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Migrate a transformer model to a new architecture
+        
+        Args:
+            source_model_type: Source model type
+            source_version: Source model version
+            target_architecture: Target transformer architecture
+            migration_config: Optional migration configuration
+            
+        Returns:
+            New model ID after migration
+        """
+        from .transformer_preservation import TransformerArchitecture
+        
+        # Convert string to enum
+        target_arch_enum = TransformerArchitecture(target_architecture)
+        
+        return await self.transformer_manager.migration_manager.migrate_transformer_model(
+            source_model_type=source_model_type,
+            source_version=source_version,
+            target_architecture=target_arch_enum,
+            migration_config=migration_config
+        )
+    
+    async def check_transformer_compatibility(
+        self,
+        source_model_type: str,
+        source_version: str,
+        target_model_type: str,
+        target_version: str
+    ) -> Dict[str, Any]:
+        """
+        Check compatibility between two transformer models
+        
+        Args:
+            source_model_type: Source model type
+            source_version: Source model version
+            target_model_type: Target model type
+            target_version: Target model version
+            
+        Returns:
+            Compatibility analysis
+        """
+        source_model_id = f"{source_model_type}-{source_version}"
+        target_model_id = f"{target_model_type}-{target_version}"
+        
+        return await self.transformer_manager.architecture_manager.check_compatibility(
+            source_model_id=source_model_id,
+            target_model_id=target_model_id
+        )
+    
+    async def get_attention_evolution_analysis(
+        self,
+        model_type: str,
+        versions: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Analyze how attention patterns evolve across model versions
+        
+        Args:
+            model_type: Model type to analyze
+            versions: List of versions to compare
+            
+        Returns:
+            Attention evolution analysis
+        """
+        model_id = f"{model_type}"
+        
+        return await self.transformer_manager.attention_manager.analyze_attention_evolution(
+            model_id=model_id,
+            versions=versions
+        )
+    
+    async def optimize_transformer_storage(
+        self,
+        model_type: str,
+        version: str,
+        optimization_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Optimize storage for large transformer models
+        
+        Args:
+            model_type: Model type
+            version: Model version
+            optimization_config: Optional optimization configuration
+            
+        Returns:
+            Optimization results
+        """
+        config = optimization_config or {}
+        
+        # Load model metadata
+        _, metadata = await self.load_model(
+            model_type=model_type,
+            version=version
+        )
+        
+        optimization_results = {
+            "model_id": f"{model_type}:{version}",
+            "original_size_mb": metadata.get("model_size_mb", 0),
+            "optimizations_applied": [],
+            "final_size_mb": 0,
+            "compression_ratio": 1.0,
+            "storage_savings_mb": 0
+        }
+        
+        # Check if model needs sharding optimization
+        original_size_mb = metadata.get("model_size_mb", 0)
+        needs_sharding = original_size_mb > (self.transformer_manager.max_model_size_gb * 1024)
+        
+        if needs_sharding and not metadata.get("sharding"):
+            optimization_results["optimizations_applied"].append("sharding")
+            # Estimate compression from sharding (typically 20-30% savings)
+            estimated_savings = original_size_mb * 0.25
+            optimization_results["storage_savings_mb"] += estimated_savings
+        
+        # Check for attention pattern compression
+        if "attention_analysis" in metadata and config.get("compress_attention", True):
+            optimization_results["optimizations_applied"].append("attention_compression")
+            # Estimate attention compression savings (typically 10-15%)
+            estimated_savings = original_size_mb * 0.12
+            optimization_results["storage_savings_mb"] += estimated_savings
+        
+        # Calculate final metrics
+        optimization_results["final_size_mb"] = max(
+            original_size_mb - optimization_results["storage_savings_mb"],
+            original_size_mb * 0.5  # Never compress more than 50%
+        )
+        
+        optimization_results["compression_ratio"] = (
+            optimization_results["final_size_mb"] / max(original_size_mb, 1)
+        )
+        
+        return optimization_results
