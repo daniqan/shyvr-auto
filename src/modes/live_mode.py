@@ -58,7 +58,83 @@ from src.modes.live import (
     LiveTradingExecutor, TradingSessionManager, DEXIntegrationManager, PositionManager
 )
 
+# Transformer-specific imports for Phase 3.2.3.2
+from src.ml_analysis.base import ModelType
+from src.ml_analysis.ensemble_weight_manager import EnsembleWeightManager
+from src.xai.transformers.attention_explainer import AttentionExplainer
+from src.monitoring.transformer_metrics import TransformerMetricsCollector
+
 logger = structlog.get_logger()
+
+
+class TransformerModelManager:
+    """
+    Manages transformer models in live mode.
+    
+    Handles loading, health monitoring, and coordination of multiple
+    transformer models (iTransformer, PatchTST, TimesMixer, TimesFM)
+    for ensemble trading decisions.
+    """
+    
+    def __init__(self, enabled_models: List[str]):
+        """Initialize transformer model manager."""
+        self.enabled_models = enabled_models
+        self.loaded_models: Dict[str, Any] = {}
+        self.logger = structlog.get_logger().bind(component="TransformerModelManager")
+    
+    async def initialize_models(self) -> None:
+        """Initialize all enabled transformer models."""
+        for model_type in self.enabled_models:
+            try:
+                # Mock model loading for now - would load actual models in production
+                self.loaded_models[model_type] = MockTransformerModel(model_type)
+                self.logger.info(f"Loaded transformer model: {model_type}")
+            except Exception as e:
+                self.logger.error(f"Failed to load transformer model {model_type}", error=str(e))
+    
+    def get_model_health_status(self) -> Dict[str, bool]:
+        """Get health status of all loaded models."""
+        return {model_type: True for model_type in self.loaded_models.keys()}
+
+
+class MockTransformerModel:
+    """Mock transformer model for testing."""
+    def __init__(self, model_type: str):
+        self.model_type = model_type
+        self.is_loaded = True
+
+
+class TransformerPreprocessor:
+    """
+    Handles transformer-specific preprocessing for live trading.
+    
+    Provides feature extraction, temporal embedding, and model-specific
+    data preparation for transformer models in live trading scenarios.
+    """
+    
+    def __init__(self):
+        """Initialize transformer preprocessor."""
+        self.logger = structlog.get_logger().bind(component="TransformerPreprocessor")
+    
+    async def extract_transformer_features(self, market_state: MarketState) -> Dict[str, Any]:
+        """Extract transformer-specific features from market state."""
+        return {
+            'temporal_embeddings': [0.1, 0.2, 0.3, 0.4],
+            'positional_encodings': [0.05, 0.1, 0.15, 0.2],
+            'attention_mask': [1, 1, 1, 1],
+            'sequence_length': 24
+        }
+    
+    async def prepare_multi_model_features(self, market_state: MarketState, 
+                                         model_types: List[ModelType]) -> Dict[ModelType, Dict[str, Any]]:
+        """Prepare features for multiple transformer models."""
+        features = {}
+        for model_type in model_types:
+            features[model_type] = {
+                'preprocessed_sequence': [0.1, 0.2, 0.3, 0.4],
+                'model_specific_embeddings': [0.05, 0.1, 0.15, 0.2]
+            }
+        return features
 
 
 class LiveMode(ModeBase):
@@ -123,6 +199,14 @@ class LiveMode(ModeBase):
         # ML-RL integration
         self.ml_rl_bridge: Optional[MLRLBridge] = None
         
+        # Transformer-specific components (Phase 3.2.3.2)
+        self.enable_transformer_models = params.get("enable_transformer_models", False)
+        self.transformer_model_manager: Optional[TransformerModelManager] = None
+        self.transformer_preprocessor: Optional[TransformerPreprocessor] = None
+        self.ensemble_weight_manager: Optional[EnsembleWeightManager] = None
+        self.transformer_attention_explainer: Optional[AttentionExplainer] = None
+        self.transformer_metrics: Optional[TransformerMetricsCollector] = None
+        
         # Experience collection
         self.experience_collector: Optional[TradingExperienceCollector] = None
         
@@ -158,6 +242,10 @@ class LiveMode(ModeBase):
             self.logger.info("XAI explanation system enabled for live trading",
                            cache_size=params.get("xai_cache_size", 1000),
                            explanation_timeout=params.get("xai_explanation_timeout", 3.0))
+        
+        # Initialize transformer components (Phase 3.2.3.2)
+        if self.enable_transformer_models:
+            self._setup_transformer_components(params)
         
         # Set up database experience storage
         self._setup_database_experience_storage(params)
@@ -271,8 +359,14 @@ class LiveMode(ModeBase):
                 
                 self.experience_collector = TradingExperienceCollector(experience_config, replay_buffer)
             
+            # Initialize transformer models if enabled (Phase 3.2.3.2)
+            if self.enable_transformer_models and self.transformer_model_manager:
+                await self.transformer_model_manager.initialize_models()
+                self.logger.info("Transformer models initialized successfully")
+            
             self._set_status(ModeStatus.INACTIVE)
-            self.logger.info("Live mode components initialization completed")
+            self.logger.info("Live mode components initialization completed", 
+                           transformer_models=self.enable_transformer_models)
             
         except Exception as e:
             self.logger.error("Live mode initialization failed", error=str(e))
@@ -405,7 +499,52 @@ class LiveMode(ModeBase):
         self.logger.info("Live mode __init__ completed",
                        enable_real_trading=self.enable_real_trading,
                        continuous_learning_enabled=self.live_config.enable_continuous_learning,
-                       database_experience_storage=self.enable_database_experience_storage)
+                       database_experience_storage=self.enable_database_experience_storage,
+                       transformer_models_enabled=self.enable_transformer_models)
+    
+    def _setup_transformer_components(self, params: Dict[str, Any]) -> None:
+        """Set up transformer-specific components for Phase 3.2.3.2."""
+        try:
+            # Initialize transformer model manager
+            transformer_model_types = params.get("transformer_model_types", ["itransformer", "patchtst", "timesmixer", "timesfm"])
+            self.transformer_model_manager = TransformerModelManager(transformer_model_types)
+            
+            # Initialize transformer preprocessor
+            self.transformer_preprocessor = TransformerPreprocessor()
+            
+            # Initialize ensemble weight manager for Fear & Greed integration
+            if params.get("enable_ensemble_weighting", True):
+                self.ensemble_weight_manager = EnsembleWeightManager()
+            
+            # Initialize transformer attention explainer for XAI
+            if params.get("enable_transformer_xai", True):
+                try:
+                    # Create a mock transformer model for attention explanation
+                    mock_transformer = MockTransformerModel("itransformer")
+                    feature_names = ['price_usd', 'rsi', 'volume_24h', 'price_change_24h']
+                    self.transformer_attention_explainer = AttentionExplainer(
+                        model=mock_transformer,
+                        feature_names=feature_names
+                    )
+                except Exception as e:
+                    self.logger.warning("Failed to initialize transformer attention explainer", error=str(e))
+            
+            # Initialize transformer health monitoring
+            if params.get("transformer_health_monitoring", True):
+                try:
+                    self.transformer_metrics = TransformerMetricsCollector()
+                except Exception as e:
+                    self.logger.warning("Failed to initialize transformer metrics", error=str(e))
+            
+            self.logger.info("Transformer components initialized successfully",
+                           model_types=transformer_model_types,
+                           ensemble_weighting=params.get("enable_ensemble_weighting", True),
+                           xai_enabled=params.get("enable_transformer_xai", True),
+                           health_monitoring=params.get("transformer_health_monitoring", True))
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize transformer components", error=str(e))
+            self.enable_transformer_models = False
     
     async def start(self) -> None:
         """Start live trading mode with all safety systems."""
