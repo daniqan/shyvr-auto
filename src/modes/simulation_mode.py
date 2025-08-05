@@ -36,6 +36,8 @@ from src.utils.base import Chain
 from src.dex.base import SwapQuote, SwapResult, SwapStatus, DEXBase
 from src.dex import JupiterDEXClient, UniswapV3Client, HyperliquidDEXClient
 from src.xai.trading_integration import TradingExplanationManager
+from src.ml_analysis.model_manager import ModelManager
+from src.ml_analysis.ensemble_weight_manager import EnsembleWeightManager
 
 
 logger = structlog.get_logger()
@@ -737,6 +739,17 @@ class SimulationMode(ModeBase):
                            max_position_size_pct=self.simulation_safety_config.max_position_size_pct,
                            experimental_strategies=self.simulation_safety_config.enable_experimental_strategies)
         
+        # ML model manager and ensemble weight manager for transformer integration
+        try:
+            ml_config = params.get('ml_analysis', {})
+            self.model_manager = ModelManager(ml_config)
+            self.ensemble_weight_manager = EnsembleWeightManager()
+            self.logger.info("Initialized ML model manager and ensemble weight manager for simulation")
+        except Exception as e:
+            self.logger.warning("Failed to initialize ML components for simulation", error=str(e))
+            self.model_manager = None
+            self.ensemble_weight_manager = None
+        
         # Monitoring and metrics setup
         self.enable_prometheus_metrics = params.get("enable_prometheus_metrics", True)
         self.enable_simulation_dashboards = params.get("enable_simulation_dashboards", True)
@@ -1091,10 +1104,185 @@ class SimulationMode(ModeBase):
         
         return TradeAction.HOLD
     
+    async def _make_sentiment_aware_trading_decision(self, market_state: MarketState) -> TradeAction:
+        """Make trading decision with transformer models and sentiment-aware position sizing."""
+        try:
+            # Use transformer ensemble if available
+            if self.model_manager:
+                # Get current fear/greed sentiment regime
+                sentiment_regime = await self.model_manager.get_fear_greed_regime()
+                sentiment_data = self.model_manager._last_sentiment_data
+                
+                # Update mode sentiment state
+                if sentiment_data:
+                    self.update_sentiment_state(
+                        sentiment_regime=sentiment_regime,
+                        confidence=0.8,  # Default confidence for simulation mode
+                        fear_greed_value=sentiment_data.fear_greed_index
+                    )
+                
+                # Create DiscoveredToken from market state
+                from src.discovery.base import DiscoveredToken
+                token = DiscoveredToken(
+                    address=market_state.token.address,
+                    symbol=market_state.token.symbol,
+                    name=market_state.token.name or market_state.token.symbol,
+                    chain=market_state.token.chain,
+                    price_usd=market_state.price_usd,
+                    volume_24h=market_state.volume_24h or 0.0,
+                    market_cap=market_state.volume_24h * market_state.price_usd if market_state.volume_24h else 0.0,
+                    discovered_at=datetime.now()
+                )
+                
+                # Get transformer ensemble prediction
+                prediction_result = await self.model_manager.analyze_token(token, use_ensemble=True)
+                
+                # Apply sentiment-aware position sizing
+                if self.ensemble_weight_manager:
+                    current_weights = self.model_manager._model_weights.copy()
+                    weight_optimization = await self.ensemble_weight_manager.optimize_weights(
+                        current_weights=current_weights,
+                        market_volatility=self._calculate_market_volatility(market_state),
+                        confidence_threshold=0.7
+                    )
+                    
+                    # Record sentiment-aware metrics
+                    self._record_metric("sentiment_regime_trading", sentiment_regime)
+                    self._record_metric("weight_optimization_confidence", weight_optimization.optimization_confidence)
+                    self._record_metric("sentiment_position_adjustment", weight_optimization.expected_improvement)
+                
+                # Convert prediction to trading action with sentiment adjustment
+                action = self._convert_prediction_to_action(prediction_result, sentiment_regime)
+                
+                # Apply sentiment-based position size scaling
+                action = self._apply_sentiment_position_scaling(action, sentiment_regime, prediction_result.confidence)
+                
+                self.logger.info("Sentiment-aware trading decision made",
+                               original_action=action.value,
+                               sentiment_regime=sentiment_regime,
+                               prediction_confidence=prediction_result.confidence)
+                
+                return action
+            
+        except Exception as e:
+            self.logger.error("Error in sentiment-aware trading decision", error=str(e))
+        
+        # Fallback to standard RSI-based decision
+        return self._make_trading_decision(market_state)
+    
+    def _calculate_market_volatility(self, market_state: MarketState) -> float:
+        """Calculate market volatility for weight optimization"""
+        try:
+            # Simple volatility estimation based on available indicators
+            volatility = 0.5  # Default medium volatility
+            
+            if market_state.rsi is not None:
+                # High RSI deviation from 50 indicates volatility
+                rsi_deviation = abs(market_state.rsi - 50) / 50
+                volatility = min(1.0, volatility + rsi_deviation * 0.3)
+            
+            if hasattr(market_state, 'price_change_24h') and market_state.price_change_24h:
+                # Price change indicates volatility
+                price_volatility = min(1.0, abs(market_state.price_change_24h) / 10.0)  # Normalize to 10% max
+                volatility = min(1.0, volatility + price_volatility * 0.4)
+            
+            return volatility
+            
+        except Exception as e:
+            self.logger.warning("Failed to calculate market volatility", error=str(e))
+            return 0.5  # Default medium volatility
+    
+    def _convert_prediction_to_action(self, prediction_result, sentiment_regime: str) -> TradeAction:
+        """Convert ML prediction result to trading action with sentiment consideration"""
+        try:
+            # Get prediction direction and confidence
+            confidence = prediction_result.confidence
+            direction = prediction_result.direction
+            
+            # Sentiment-based confidence thresholds
+            confidence_thresholds = {
+                "extreme_fear": {"strong": 0.6, "weak": 0.4},  # Lower thresholds during fear
+                "fear": {"strong": 0.65, "weak": 0.45},
+                "cautious": {"strong": 0.7, "weak": 0.5},
+                "neutral": {"strong": 0.75, "weak": 0.55},
+                "optimistic": {"strong": 0.75, "weak": 0.55},
+                "greed": {"strong": 0.8, "weak": 0.6},  # Higher thresholds during greed
+                "extreme_greed": {"strong": 0.85, "weak": 0.65}
+            }
+            
+            thresholds = confidence_thresholds.get(sentiment_regime, confidence_thresholds["neutral"])
+            
+            # Convert direction to action based on confidence and sentiment
+            if hasattr(direction, 'value'):
+                direction_str = direction.value.lower()
+            else:
+                direction_str = str(direction).lower()
+            
+            if direction_str in ['bullish', 'buy', 'up']:
+                if confidence >= thresholds["strong"]:
+                    return TradeAction.STRONG_BUY
+                elif confidence >= thresholds["weak"]:
+                    return TradeAction.BUY
+            elif direction_str in ['bearish', 'sell', 'down']:
+                if confidence >= thresholds["strong"]:
+                    return TradeAction.STRONG_SELL
+                elif confidence >= thresholds["weak"]:
+                    return TradeAction.SELL
+            
+            return TradeAction.HOLD
+            
+        except Exception as e:
+            self.logger.warning("Failed to convert prediction to action", error=str(e))
+            return TradeAction.HOLD
+    
+    def _apply_sentiment_position_scaling(self, action: TradeAction, sentiment_regime: str, confidence: float) -> TradeAction:
+        """Apply sentiment-based position size scaling to trading action"""
+        try:
+            # Position scaling factors by sentiment regime
+            scaling_factors = {
+                "extreme_fear": 0.5,    # Reduce position sizes during extreme fear
+                "fear": 0.7,            # Moderately reduce positions
+                "cautious": 0.8,        # Slightly reduce positions
+                "neutral": 1.0,         # Normal position sizes
+                "optimistic": 1.1,      # Slightly increase positions
+                "greed": 1.2,           # Moderately increase positions
+                "extreme_greed": 0.6    # Reduce positions during extreme greed (contrarian)
+            }
+            
+            scale_factor = scaling_factors.get(sentiment_regime, 1.0)
+            
+            # Apply confidence-based scaling
+            confidence_adjustment = 0.5 + (confidence * 0.5)  # Scale between 0.5 and 1.0
+            final_scale = scale_factor * confidence_adjustment
+            
+            # Downgrade strong actions to regular actions if scaling suggests caution
+            if final_scale < 0.7:
+                if action == TradeAction.STRONG_BUY:
+                    action = TradeAction.BUY
+                elif action == TradeAction.STRONG_SELL:
+                    action = TradeAction.SELL
+            
+            # Upgrade regular actions to strong actions if scaling suggests confidence
+            elif final_scale > 1.3:
+                if action == TradeAction.BUY:
+                    action = TradeAction.STRONG_BUY
+                elif action == TradeAction.SELL:
+                    action = TradeAction.STRONG_SELL
+            
+            # Record position scaling metrics
+            self._record_metric("sentiment_position_scale", final_scale)
+            self._record_metric("confidence_adjustment", confidence_adjustment)
+            
+            return action
+            
+        except Exception as e:
+            self.logger.warning("Failed to apply sentiment position scaling", error=str(e))
+            return action
+    
     async def _make_trading_decision_with_explanation(self, market_state: MarketState) -> Tuple[TradeAction, Optional[Any]]:
-        """Make trading decision with XAI explanation generation."""
-        # Generate the trading decision
-        action = self._make_trading_decision(market_state)
+        """Make trading decision with XAI explanation generation and sentiment-aware position sizing."""
+        # Generate the trading decision with transformer models and sentiment integration
+        action = await self._make_sentiment_aware_trading_decision(market_state)
         explanation = None
         
         # Generate explanation if XAI is enabled and decision is not HOLD
