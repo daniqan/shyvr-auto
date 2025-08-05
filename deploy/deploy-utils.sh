@@ -251,16 +251,17 @@ build_env_vars() {
     local commit_sha="${3:-$(get_git_commit_sha)}"
     
     local base_vars="ENVIRONMENT=$environment,LOG_LEVEL=INFO,DEPLOYMENT_ID=$deployment_id,COMMIT_SHA=$commit_sha"
+    local transformer_vars="TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=6,MKL_NUM_THREADS=6,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1"
     
     case "$environment" in
         production)
-            echo "$base_vars,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true,TRADING_MODE=simulation"
+            echo "$base_vars,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true,TRADING_MODE=simulation,$transformer_vars"
             ;;
         staging)
-            echo "$base_vars,ML_OPTIMIZED=false,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=false,TRADING_MODE=simulation"
+            echo "$base_vars,ML_OPTIMIZED=false,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=false,TRADING_MODE=simulation,$transformer_vars,OMP_NUM_THREADS=4,MKL_NUM_THREADS=4"
             ;;
         *)
-            echo "$base_vars"
+            echo "$base_vars,$transformer_vars,OMP_NUM_THREADS=2,MKL_NUM_THREADS=2"
             ;;
     esac
 }
@@ -271,13 +272,13 @@ get_resource_limits() {
     
     case "$environment" in
         production)
-            echo "--memory=6Gi --cpu=4 --concurrency=25 --max-instances=10 --min-instances=1"
+            echo "--memory=8Gi --cpu=6 --concurrency=15 --timeout=4200 --max-instances=10 --min-instances=1"
             ;;
         staging)
-            echo "--memory=4Gi --cpu=2 --concurrency=50 --max-instances=3 --min-instances=0"
+            echo "--memory=6Gi --cpu=4 --concurrency=20 --timeout=2700 --max-instances=3 --min-instances=0"
             ;;
         *)
-            echo "--memory=2Gi --cpu=1 --concurrency=100 --max-instances=1 --min-instances=0"
+            echo "--memory=2Gi --cpu=1 --concurrency=100 --timeout=1800 --max-instances=1 --min-instances=0"
             ;;
     esac
 }
