@@ -187,6 +187,10 @@ class ProductionMonitoringDashboard:
             safety_metrics = await self._collect_safety_metrics()
             metrics.extend(safety_metrics)
             
+            # Transformer metrics
+            transformer_metrics = await self._collect_transformer_metrics()
+            metrics.extend(transformer_metrics)
+            
         except Exception as e:
             self.logger.error(f"Error collecting metrics: {e}")
         
@@ -457,6 +461,80 @@ class ProductionMonitoringDashboard:
         
         return metrics
     
+    async def _collect_transformer_metrics(self) -> List[MonitoringMetric]:
+        """Collect transformer model metrics"""
+        metrics = []
+        now = datetime.utcnow()
+        
+        try:
+            # Transformer models to monitor
+            transformer_models = ['itransformer', 'patchtst', 'timesmixer', 'timesfm']
+            
+            for model_name in transformer_models:
+                # Memory usage
+                memory_usage = await self._get_transformer_memory_usage(model_name)
+                metrics.append(MonitoringMetric(
+                    name="transformer_memory_usage",
+                    value=memory_usage,
+                    unit="mb",
+                    timestamp=now,
+                    labels={"model_name": model_name, "component": "transformer"},
+                    threshold_warning=6553.6,  # 80% of 8Gi
+                    threshold_critical=7372.8  # 90% of 8Gi
+                ))
+                
+                # Inference latency
+                inference_latency = await self._get_transformer_inference_latency(model_name)
+                metrics.append(MonitoringMetric(
+                    name="transformer_inference_latency",
+                    value=inference_latency,
+                    unit="ms",
+                    timestamp=now,
+                    labels={"model_name": model_name, "component": "transformer"},
+                    threshold_warning=500.0,
+                    threshold_critical=1000.0
+                ))
+                
+                # Cache hit rate
+                cache_hit_rate = await self._get_transformer_cache_hit_rate(model_name)
+                metrics.append(MonitoringMetric(
+                    name="transformer_cache_hit_rate",
+                    value=cache_hit_rate,
+                    unit="percent",
+                    timestamp=now,
+                    labels={"model_name": model_name, "component": "transformer"},
+                    threshold_warning=60.0,
+                    threshold_critical=50.0
+                ))
+                
+                # Model health
+                health_status = await self._get_transformer_health_status(model_name)
+                metrics.append(MonitoringMetric(
+                    name="transformer_health_status",
+                    value=1.0 if health_status else 0.0,
+                    unit="bool",
+                    timestamp=now,
+                    labels={"model_name": model_name, "component": "transformer"},
+                    threshold_critical=1.0
+                ))
+                
+                # Loading time
+                loading_time = await self._get_transformer_loading_time(model_name)
+                metrics.append(MonitoringMetric(
+                    name="transformer_loading_time",
+                    value=loading_time,
+                    unit="ms",
+                    timestamp=now,
+                    labels={"model_name": model_name, "component": "transformer"},
+                    threshold_warning=3000.0,
+                    threshold_critical=5000.0
+                ))
+            
+        except Exception as e:
+            self.logger.error(f"Error collecting transformer metrics: {e}")
+        
+        return metrics
+    
     async def evaluate_sla_compliance(self, metrics: List[MonitoringMetric]) -> Dict[str, Any]:
         """Evaluate SLA compliance based on collected metrics"""
         sla_results = {}
@@ -621,6 +699,61 @@ class ProductionMonitoringDashboard:
     async def _get_circuit_breaker_status(self) -> float:
         """Get circuit breaker trigger count"""
         return 0.0  # Mock value
+    
+    async def _get_transformer_memory_usage(self, model_name: str) -> float:
+        """Get memory usage for specific transformer model"""
+        # Mock values based on model type
+        memory_usage_map = {
+            'itransformer': 1200.0,
+            'patchtst': 950.0,
+            'timesmixer': 1600.0,
+            'timesfm': 7200.0
+        }
+        return memory_usage_map.get(model_name, 1000.0)
+    
+    async def _get_transformer_inference_latency(self, model_name: str) -> float:
+        """Get inference latency for specific transformer model"""
+        # Mock values based on model type
+        latency_map = {
+            'itransformer': 85.0,
+            'patchtst': 120.0,
+            'timesmixer': 95.0,
+            'timesfm': 1100.0
+        }
+        return latency_map.get(model_name, 100.0)
+    
+    async def _get_transformer_cache_hit_rate(self, model_name: str) -> float:
+        """Get cache hit rate for specific transformer model"""
+        # Mock values based on model type
+        cache_rate_map = {
+            'itransformer': 75.0,
+            'patchtst': 82.0,
+            'timesmixer': 45.0,
+            'timesfm': 68.0
+        }
+        return cache_rate_map.get(model_name, 70.0)
+    
+    async def _get_transformer_health_status(self, model_name: str) -> bool:
+        """Get health status for specific transformer model"""
+        # Mock healthy status (in production, would check actual model health)
+        health_map = {
+            'itransformer': True,
+            'patchtst': True,
+            'timesmixer': False,  # Simulating unhealthy state due to low cache rate
+            'timesfm': False      # Simulating unhealthy state due to high memory/latency
+        }
+        return health_map.get(model_name, True)
+    
+    async def _get_transformer_loading_time(self, model_name: str) -> float:
+        """Get loading time for specific transformer model"""
+        # Mock values based on model complexity
+        loading_time_map = {
+            'itransformer': 2500.0,
+            'patchtst': 1800.0,
+            'timesmixer': 3200.0,
+            'timesfm': 4500.0
+        }
+        return loading_time_map.get(model_name, 2000.0)
     
     async def _evaluate_alert_condition(self, condition: AlertCondition, metrics: List[MonitoringMetric]) -> bool:
         """Evaluate a specific alert condition"""

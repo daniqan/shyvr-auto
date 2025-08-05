@@ -92,7 +92,69 @@ class ProductionMonitoringSetup:
             }
         ]
         
-        for metric_config in rl_metrics:
+        # Transformer Model Metrics
+        transformer_metrics = [
+            {
+                "type": "custom.googleapis.com/transformer/memory_usage_mb",
+                "labels": [
+                    {"key": "model_type", "value_type": "STRING"},
+                    {"key": "model_name", "value_type": "STRING"}
+                ],
+                "metric_kind": "GAUGE",
+                "value_type": "DOUBLE",
+                "display_name": "Transformer Memory Usage (MB)",
+                "description": "Memory usage of transformer models in MB"
+            },
+            {
+                "type": "custom.googleapis.com/transformer/inference_latency_ms",
+                "labels": [
+                    {"key": "model_type", "value_type": "STRING"},
+                    {"key": "model_name", "value_type": "STRING"}
+                ],
+                "metric_kind": "GAUGE",
+                "value_type": "DOUBLE",
+                "display_name": "Transformer Inference Latency (ms)",
+                "description": "Inference latency of transformer models in milliseconds"
+            },
+            {
+                "type": "custom.googleapis.com/transformer/cache_hit_rate",
+                "labels": [
+                    {"key": "model_type", "value_type": "STRING"},
+                    {"key": "model_name", "value_type": "STRING"}
+                ],
+                "metric_kind": "GAUGE",
+                "value_type": "DOUBLE",
+                "display_name": "Transformer Cache Hit Rate",
+                "description": "Cache hit rate for transformer model predictions"
+            },
+            {
+                "type": "custom.googleapis.com/transformer/loading_time_ms",
+                "labels": [
+                    {"key": "model_type", "value_type": "STRING"},
+                    {"key": "model_name", "value_type": "STRING"}
+                ],
+                "metric_kind": "GAUGE",
+                "value_type": "DOUBLE",
+                "display_name": "Transformer Loading Time (ms)",
+                "description": "Time taken to load transformer models in milliseconds"
+            },
+            {
+                "type": "custom.googleapis.com/transformer/health_status",
+                "labels": [
+                    {"key": "model_type", "value_type": "STRING"},
+                    {"key": "model_name", "value_type": "STRING"}
+                ],
+                "metric_kind": "GAUGE",
+                "value_type": "DOUBLE",
+                "display_name": "Transformer Health Status",
+                "description": "Health status of transformer models (1.0=healthy, 0.0=unhealthy)"
+            }
+        ]
+        
+        # Combine all metrics
+        all_metrics = rl_metrics + transformer_metrics
+        
+        for metric_config in all_metrics:
             try:
                 descriptor = monitoring_v3.MetricDescriptor(
                     type=metric_config["type"],
@@ -222,6 +284,74 @@ class ProductionMonitoringSetup:
                         "comparison": "COMPARISON_GREATER_THAN",
                         "threshold_value": 0.85,  # 85% memory
                         "duration": "300s",  # 5 minutes
+                        "aggregations": [{
+                            "alignment_period": "60s",
+                            "per_series_aligner": "ALIGN_MEAN"
+                        }]
+                    }
+                }]
+            },
+            {
+                "display_name": "Transformer High Memory Usage",
+                "documentation": "Alert when transformer model memory usage exceeds 90% of 8Gi",
+                "conditions": [{
+                    "display_name": "Transformer memory usage > 90% of 8Gi",
+                    "condition_threshold": {
+                        "filter": 'metric.type="custom.googleapis.com/transformer/memory_usage_mb"',
+                        "comparison": "COMPARISON_GREATER_THAN",
+                        "threshold_value": 7372.8,  # 90% of 8192MB
+                        "duration": "300s",  # 5 minutes
+                        "aggregations": [{
+                            "alignment_period": "60s",
+                            "per_series_aligner": "ALIGN_MEAN"
+                        }]
+                    }
+                }]
+            },
+            {
+                "display_name": "Transformer Slow Inference Latency",
+                "documentation": "Alert when transformer inference latency exceeds 1000ms",
+                "conditions": [{
+                    "display_name": "Transformer inference latency > 1000ms",
+                    "condition_threshold": {
+                        "filter": 'metric.type="custom.googleapis.com/transformer/inference_latency_ms"',
+                        "comparison": "COMPARISON_GREATER_THAN",
+                        "threshold_value": 1000.0,
+                        "duration": "180s",  # 3 minutes
+                        "aggregations": [{
+                            "alignment_period": "60s",
+                            "per_series_aligner": "ALIGN_PERCENTILE_99"
+                        }]
+                    }
+                }]
+            },
+            {
+                "display_name": "Transformer Low Cache Hit Rate",
+                "documentation": "Alert when transformer cache hit rate is below 50%",
+                "conditions": [{
+                    "display_name": "Transformer cache hit rate < 50%",
+                    "condition_threshold": {
+                        "filter": 'metric.type="custom.googleapis.com/transformer/cache_hit_rate"',
+                        "comparison": "COMPARISON_LESS_THAN",
+                        "threshold_value": 0.5,
+                        "duration": "600s",  # 10 minutes
+                        "aggregations": [{
+                            "alignment_period": "60s",
+                            "per_series_aligner": "ALIGN_MEAN"
+                        }]
+                    }
+                }]
+            },
+            {
+                "display_name": "Transformer Model Unhealthy",
+                "documentation": "Alert when transformer model health status indicates unhealthy state",
+                "conditions": [{
+                    "display_name": "Transformer health status unhealthy",
+                    "condition_threshold": {
+                        "filter": 'metric.type="custom.googleapis.com/transformer/health_status"',
+                        "comparison": "COMPARISON_LESS_THAN",
+                        "threshold_value": 1.0,
+                        "duration": "120s",  # 2 minutes
                         "aggregations": [{
                             "alignment_period": "60s",
                             "per_series_aligner": "ALIGN_MEAN"
