@@ -30,7 +30,7 @@ telegram:
 
 # Security configuration for testing
 security:
-  secret_key: "${SECRET_KEY:test_secret_key_12345}"
+  secret_key: "${SECRET_KEY:test_secret_key_12345_long_enough_for_validation}"
   jwt_algorithm: "${JWT_ALGORITHM:HS256}"
   session_timeout: 3600
   rate_limit_storage: "memory"
