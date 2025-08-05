@@ -16,18 +16,45 @@ Key Components:
 - Various validation utilities and enums
 """
 
-from .trading_safety_manager import (
-    TradingSafetyManager,
-    TradingSafetyConfig,
-    PreTradeValidationResult,
-    ValidationStatus,
-    ValidationReason,
-    RateLimitState,
-    PositionSizeValidation,
-    RiskExposureValidation,
+# Import safety event logging components first (no complex dependencies)
+from .safety_event_logging import (
+    SafetyEventLogger,
+    SafetyEventType,
+    SafetyEventSeverity,
+    SafetyEvent,
+    SafetyEventConfig,
+    SafetyEventError,
+    SafetyEventValidationError,
+    SafetyEventStorageError,
 )
 
+# Import trading safety components (may have dependencies)
+try:
+    from .trading_safety_manager import (
+        TradingSafetyManager,
+        TradingSafetyConfig,
+        PreTradeValidationResult,
+        ValidationStatus,
+        ValidationReason,
+        RateLimitState,
+        PositionSizeValidation,
+        RiskExposureValidation,
+    )
+except ImportError:
+    # Skip trading safety imports if dependencies not available
+    pass
+
 __all__ = [
+    # Safety Event Logging
+    "SafetyEventLogger",
+    "SafetyEventType",
+    "SafetyEventSeverity",
+    "SafetyEvent",
+    "SafetyEventConfig",
+    "SafetyEventError",
+    "SafetyEventValidationError",
+    "SafetyEventStorageError",
+    # Trading Safety (if available)
     "TradingSafetyManager",
     "TradingSafetyConfig",
     "PreTradeValidationResult",
