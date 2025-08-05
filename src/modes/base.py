@@ -216,6 +216,12 @@ class ModeBase(ABC):
         self._ml_models: Dict[str, Any] = {}
         self._required_model_types: List[str] = []
         
+        # Sentiment tracking for fear/greed integration
+        self.current_sentiment_regime: Optional[str] = None
+        self.sentiment_confidence: float = 0.0
+        self.last_sentiment_update: Optional[datetime] = None
+        self.sentiment_history: List[Dict[str, Any]] = []
+        
         # Configure logger
         self.logger = logger.bind(
             mode_id=str(mode_id),
@@ -612,6 +618,69 @@ class ModeBase(ABC):
             error_message=error_message
         )
     
+    def update_sentiment_state(self, sentiment_regime: str, confidence: float, 
+                              fear_greed_value: float) -> None:
+        """
+        Update the current sentiment state for the mode
+        
+        Args:
+            sentiment_regime: Current sentiment regime (extreme_fear, fear, etc.)
+            confidence: Confidence in the sentiment classification (0.0-1.0)
+            fear_greed_value: Raw fear/greed index value (0-100)
+        """
+        current_time = datetime.now()
+        
+        # Update current state
+        previous_regime = self.current_sentiment_regime
+        self.current_sentiment_regime = sentiment_regime
+        self.sentiment_confidence = confidence
+        self.last_sentiment_update = current_time
+        
+        # Add to history
+        sentiment_record = {
+            "timestamp": current_time.isoformat(),
+            "regime": sentiment_regime,
+            "confidence": confidence,
+            "fear_greed_value": fear_greed_value,
+            "previous_regime": previous_regime
+        }
+        
+        self.sentiment_history.append(sentiment_record)
+        
+        # Keep only last 24 hours of sentiment history
+        cutoff_time = current_time - timedelta(hours=24)
+        self.sentiment_history = [
+            record for record in self.sentiment_history
+            if datetime.fromisoformat(record["timestamp"]) > cutoff_time
+        ]
+        
+        # Log sentiment change if regime changed
+        if previous_regime != sentiment_regime:
+            self.logger.info(
+                "Sentiment regime changed",
+                previous_regime=previous_regime,
+                new_regime=sentiment_regime,
+                confidence=confidence,
+                fear_greed_value=fear_greed_value
+            )
+        
+        # Update metrics
+        self.metrics[f'sentiment_regime'] = sentiment_regime
+        self.metrics[f'sentiment_confidence'] = confidence
+        self.metrics[f'fear_greed_value'] = fear_greed_value
+    
+    def get_sentiment_state(self) -> Dict[str, Any]:
+        """Get current sentiment state information"""
+        return {
+            "current_regime": self.current_sentiment_regime,
+            "confidence": self.sentiment_confidence,
+            "last_update": self.last_sentiment_update.isoformat() if self.last_sentiment_update else None,
+            "history_count": len(self.sentiment_history),
+            "recent_regimes": [
+                record["regime"] for record in self.sentiment_history[-10:]
+            ] if self.sentiment_history else []
+        }
+    
     def _record_metric(self, key: str, value: Any) -> None:
         """Record a performance metric."""
         self.metrics[key] = value
@@ -629,8 +698,11 @@ class TradingMode(ModeBase):
         """Initialize trading mode with required models."""
         super().__init__(mode_id, config, portfolio)
         
-        # Define required model types for live trading
-        self._required_model_types = ['dqn', 'risk_model', 'portfolio_optimizer']
+        # Define required model types for live trading including all transformer variants
+        self._required_model_types = [
+            'dqn', 'lstm', 'transformer', 'itransformer', 'patchtst', 
+            'timesmixer', 'timesfm', 'risk_model', 'portfolio_optimizer'
+        ]
     
     async def initialize(self) -> None:
         """Initialize trading mode resources."""
@@ -714,8 +786,11 @@ class AnalysisMode(ModeBase):
         """Initialize analysis mode with required models."""
         super().__init__(mode_id, config, portfolio)
         
-        # Define required model types for analysis
-        self._required_model_types = ['lstm', 'transformer', 'technical_analyzer']
+        # Define required model types for analysis including all transformer variants
+        self._required_model_types = [
+            'lstm', 'transformer', 'itransformer', 'patchtst', 
+            'timesmixer', 'timesfm', 'technical_analyzer'
+        ]
     
     async def initialize(self) -> None:
         """Initialize analysis mode resources."""
@@ -1002,8 +1077,11 @@ class SimulationMode(ModeBase):
         self.enable_fees = config.parameters.get("enable_fees", True)
         self.slippage_bps = config.parameters.get("slippage_bps", 10)
         
-        # Define required model types for simulation
-        self._required_model_types = ['dqn', 'lstm', 'simulator']
+        # Define required model types for simulation including all transformer variants
+        self._required_model_types = [
+            'dqn', 'lstm', 'transformer', 'itransformer', 'patchtst', 
+            'timesmixer', 'timesfm', 'simulator'
+        ]
         
         # Initialize simulation metrics
         self._simulation_metrics = {}
