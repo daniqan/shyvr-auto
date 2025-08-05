@@ -285,8 +285,12 @@ class AttentionPatternAnalyzer:
             head_attention = attention_pattern[head]
             # Average attention to each position across all query positions
             avg_attention = torch.mean(head_attention, dim=0)
-            # Calculate center of mass
-            center_of_mass = torch.sum(avg_attention * position_weights) / torch.sum(avg_attention)
+            # Handle empty attention case
+            if torch.sum(avg_attention) == 0:
+                center_of_mass = seq_len / 2  # Default to middle
+            else:
+                # Calculate center of mass
+                center_of_mass = torch.sum(avg_attention * position_weights) / torch.sum(avg_attention)
             recency_scores.append(center_of_mass)
         
         return torch.tensor(recency_scores)
@@ -1518,46 +1522,76 @@ class TransformerDriftDetector:
         if current_weights.numel() == 0:
             raise ValueError("Current attention weights are empty")
         
+        # Get model-specific parameters
+        batch_size, n_heads, seq_len, _ = current_weights.shape
+        
+        # Create model-specific analyzers for this detection
+        model_analyzers = {
+            'attention_pattern': AttentionPatternAnalyzer(n_heads, seq_len),
+            'head_specialization': HeadSpecializationAnalyzer(n_heads),
+            'temporal_focus': TemporalAttentionAnalyzer(seq_len),
+            'temporal_shift': TemporalShiftAnalyzer(seq_len),
+            'attention_distribution': AttentionDistributionAnalyzer()
+        }
+        
+        # Set baselines from stored patterns
+        baseline_pattern = self.baseline_patterns[model_type]
+        
         # Run all drift detection algorithms
         drift_results = []
         
         try:
-            # Attention pattern drift
-            attention_shift = self.drift_analyzers['attention_pattern'].detect_attention_shift(current_weights)
-            if attention_shift.has_drift:
-                drift_results.append(attention_shift)
+            # Only run tests that have matching baselines
+            if 'attention_entropy' in baseline_pattern:
+                # Attention pattern drift - use the pattern mean as baseline
+                if hasattr(self.drift_analyzers['attention_pattern'], 'baseline_patterns'):
+                    baseline_mean_pattern = self.drift_analyzers['attention_pattern'].baseline_patterns['mean_pattern']
+                    if baseline_mean_pattern.shape[-2:] == current_weights.shape[-2:]:
+                        model_analyzers['attention_pattern'].baseline_patterns = self.drift_analyzers['attention_pattern'].baseline_patterns
+                        
+                        attention_shift = model_analyzers['attention_pattern'].detect_attention_shift(current_weights)
+                        if attention_shift.has_drift:
+                            drift_results.append(attention_shift)
+                        
+                        pattern_similarity = model_analyzers['attention_pattern'].detect_pattern_similarity_change(current_weights)
+                        if pattern_similarity.has_drift:
+                            drift_results.append(pattern_similarity)
             
-            pattern_similarity = self.drift_analyzers['attention_pattern'].detect_pattern_similarity_change(current_weights)
-            if pattern_similarity.has_drift:
-                drift_results.append(pattern_similarity)
+            # Head specialization drift - only if dimensions match
+            if 'head_specialization' in baseline_pattern and baseline_pattern['head_specialization']['head_similarities'].shape[0] == n_heads:
+                model_analyzers['head_specialization'].baseline_specializations = baseline_pattern['head_specialization']
+                
+                head_homogenization = model_analyzers['head_specialization'].detect_head_homogenization(current_weights)
+                if head_homogenization.has_drift:
+                    drift_results.append(head_homogenization)
+                
+                role_switching = model_analyzers['head_specialization'].detect_role_switching(current_weights)
+                if role_switching.has_drift:
+                    drift_results.append(role_switching)
             
-            # Head specialization drift
-            head_homogenization = self.drift_analyzers['head_specialization'].detect_head_homogenization(current_weights)
-            if head_homogenization.has_drift:
-                drift_results.append(head_homogenization)
+            # Temporal focus drift - only if sequence lengths match
+            if 'temporal_patterns' in baseline_pattern and len(baseline_pattern['temporal_patterns']) == seq_len:
+                model_analyzers['temporal_focus'].baseline_temporal_patterns = {
+                    'distribution': baseline_pattern['temporal_patterns'],
+                    'recency_score': model_analyzers['temporal_focus']._calculate_recency_score(baseline_pattern['temporal_patterns']),
+                    'periodicity': model_analyzers['temporal_focus']._detect_periodicity(baseline_pattern['temporal_patterns'])
+                }
+                
+                recency_bias = model_analyzers['temporal_focus'].detect_recency_bias_drift(current_weights)
+                if recency_bias.has_drift:
+                    drift_results.append(recency_bias)
             
-            role_switching = self.drift_analyzers['head_specialization'].detect_role_switching(current_weights)
-            if role_switching.has_drift:
-                drift_results.append(role_switching)
-            
-            # Temporal focus drift
-            recency_bias = self.drift_analyzers['temporal_focus'].detect_recency_bias_drift(current_weights)
-            if recency_bias.has_drift:
-                drift_results.append(recency_bias)
-            
-            # Attention distribution drift
-            entropy_drift = self.drift_analyzers['attention_distribution'].detect_attention_entropy_drift(current_weights)
-            if entropy_drift.has_drift:
-                drift_results.append(entropy_drift)
-            
-            sparsity_change = self.drift_analyzers['attention_distribution'].detect_attention_sparsity_change(current_weights)
-            if sparsity_change.has_drift:
-                drift_results.append(sparsity_change)
-            
-            # Temporal shift drift
-            temporal_focus_shift = self.drift_analyzers['temporal_shift'].detect_temporal_focus_shift(current_weights)
-            if temporal_focus_shift.has_drift:
-                drift_results.append(temporal_focus_shift)
+            # Attention distribution drift - always possible
+            if hasattr(self.drift_analyzers['attention_distribution'], 'baseline_distributions'):
+                model_analyzers['attention_distribution'].baseline_distributions = self.drift_analyzers['attention_distribution'].baseline_distributions
+                
+                entropy_drift = model_analyzers['attention_distribution'].detect_attention_entropy_drift(current_weights)
+                if entropy_drift.has_drift:
+                    drift_results.append(entropy_drift)
+                
+                sparsity_change = model_analyzers['attention_distribution'].detect_attention_sparsity_change(current_weights)
+                if sparsity_change.has_drift:
+                    drift_results.append(sparsity_change)
             
         except Exception as e:
             self.logger.error(f"Error during drift detection: {e}")
