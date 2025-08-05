@@ -8,7 +8,7 @@ and trading modes, enabling real-time explanation of trading decisions.
 import asyncio
 import logging
 from typing import Dict, Any, List, Optional, Union, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import numpy as np
 from dataclasses import dataclass, asdict
 import torch
@@ -153,7 +153,7 @@ class TradingExplanationManager:
             # Create trading explanation
             trading_explanation = TradingExplanation(
                 decision_id=decision_id,
-                timestamp=datetime.utcnow().isoformat() + 'Z',
+                timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                 decision_type=decision_type,
                 symbol=symbol,
                 explanation_data=explanation_data,
@@ -493,7 +493,7 @@ class TradingExplanationManager:
         Returns:
             Dictionary of feature names to aggregated importance scores
         """
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         cutoff_iso = cutoff_time.isoformat() + 'Z'
         
         # Filter explanations
@@ -555,7 +555,7 @@ class TradingExplanationManager:
         hours_back: int = 24
     ) -> Dict[str, Any]:
         """Get attention statistics for transformer models."""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours_back)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         cutoff_iso = cutoff_time.isoformat() + 'Z'
         
         # Filter explanations with attention data
