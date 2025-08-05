@@ -1102,7 +1102,7 @@ class TestTransformerSerialization:
     # INTEGRATION WITH EXISTING PRESERVATION SYSTEM TESTS
     # =============================================================================
     
-    def test_integration_with_existing_preservation_system(self, sample_crypto_data, preservation_config):
+    async def test_integration_with_existing_preservation_system(self, sample_crypto_data, preservation_config):
         """Test seamless integration with existing preservation system"""
         # This test will FAIL initially - integration doesn't exist
         
