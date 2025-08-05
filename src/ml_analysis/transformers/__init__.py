@@ -41,6 +41,17 @@ from .timesfm_wrapper import (
     CryptoTimesFMTokenizer,
     GCPTimesFMOptimizer
 )
+from .timesfm_zeroshot_pipeline import (
+    TimesFMZeroShotPipeline,
+    StreamingZeroShotPredictor,
+    RLTEZeroShotIntegrator,
+    TradingSignalGenerator,
+    HFTZeroShotPredictor,
+    ArbitrageDetector,
+    ZeroShotPredictionRequest,
+    ZeroShotPredictionResponse,
+    ZeroShotPipelineConfig
+)
 
 __all__ = [
     # Base components
@@ -85,4 +96,14 @@ __all__ = [
     'TimesFMConfig',
     'CryptoTimesFMTokenizer',
     'GCPTimesFMOptimizer',
+    # TimesFM Zero-Shot Pipeline
+    'TimesFMZeroShotPipeline',
+    'StreamingZeroShotPredictor',
+    'RLTEZeroShotIntegrator',
+    'TradingSignalGenerator',
+    'HFTZeroShotPredictor',
+    'ArbitrageDetector',
+    'ZeroShotPredictionRequest',
+    'ZeroShotPredictionResponse',
+    'ZeroShotPipelineConfig',
 ]
