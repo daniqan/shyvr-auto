@@ -19,12 +19,27 @@ import structlog
 from transformers import AutoModel, AutoConfig, AutoTokenizer
 
 try:
-    from ..base import TransformerBase, TransformerConfig
-    from ...base import MLAnalyzerBase, ModelType, PredictionResult, PredictionDirection
+    from .base import TransformerBase, TransformerConfig
+    from ..base import MLAnalyzerBase, ModelType, PredictionResult, PredictionDirection
     from src.discovery.base import DiscoveredToken
 except ImportError:
-    # For standalone testing
-    pass
+    # For standalone testing - define minimal stubs
+    from abc import ABC
+    from typing import Any
+    class TransformerBase(ABC):
+        pass
+    class TransformerConfig:
+        pass
+    class MLAnalyzerBase:
+        pass
+    class ModelType:
+        pass
+    class PredictionResult:
+        pass
+    class PredictionDirection:
+        pass
+    class DiscoveredToken:
+        pass
 
 
 logger = structlog.get_logger()
