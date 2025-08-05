@@ -34,7 +34,11 @@ from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from dataclasses import dataclass, field
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-import docker
+try:
+    import docker
+except ImportError:
+    docker = Mock()
+    docker.DockerClient = Mock
 import yaml
 
 # These imports will fail initially as implementation doesn't exist yet
@@ -190,7 +194,7 @@ class TestFullTransformerCloudRunDeployment:
     @pytest.fixture
     def mock_docker_client(self):
         """Mock Docker client for build testing"""
-        mock_client = Mock(spec=docker.DockerClient)
+        mock_client = Mock()
         mock_api = Mock()
         mock_client.api = mock_api
         
