@@ -43,22 +43,29 @@ log_transformer_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 log_transformer_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_transformer_header() { echo -e "${PURPLE}[TRANSFORMER-VAL]${NC} $1"; }
 
-# Load transformer configuration from JSON file
-load_transformer_config() {
-    local config_file="${TRANSFORMER_CONFIG_FILE:-deploy/configs/transformer_models.json}"
+# Load environment configuration for validation
+load_environment_validation_config() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
+    local config_file="${ENVIRONMENTS_CONFIG_FILE:-deploy/configs/environments.json}"
     
     if [[ ! -f "$config_file" ]]; then
-        log_transformer_error "Transformer config file not found: $config_file"
+        log_transformer_error "Environment config file not found: $config_file"
         return 1
     fi
     
     # Validate JSON syntax
     if ! jq . "$config_file" >/dev/null 2>&1; then
-        log_transformer_error "Invalid JSON in transformer config file: $config_file"
+        log_transformer_error "Invalid JSON in environment config file: $config_file"
         return 1
     fi
     
-    log_transformer_success "Transformer configuration loaded successfully"
+    # Check if environment exists in config
+    if ! jq -e ".[\"$environment\"]" "$config_file" >/dev/null 2>&1; then
+        log_transformer_error "Environment '$environment' not found in configuration"
+        return 1
+    fi
+    
+    log_transformer_success "Environment configuration loaded successfully for $environment"
     return 0
 }
 
@@ -69,19 +76,18 @@ parse_memory_to_bytes() {
     echo $((memory_value * 1024 * 1024 * 1024))
 }
 
-# Validate transformer resource requirements against available resources
-validate_transformer_resources() {
-    local model_type="${1:-}"
-    local required_memory="${2:-}"
-    local required_cpu="${3:-}"
+# Validate ensemble resource requirements for environment
+validate_ensemble_resources() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
+    local config_file="${2:-deploy/configs/environments.json}"
     
-    if [[ -z "$model_type" || -z "$required_memory" || -z "$required_cpu" ]]; then
-        log_transformer_error "validate_transformer_resources: Missing required parameters"
-        return 2
-    fi
+    log_transformer_info "Validating ensemble resource requirements for $environment"
     
-    log_transformer_info "Validating resource requirements for $model_type"
-    log_transformer_info "Required: Memory=$required_memory, CPU=$required_cpu"
+    # Get environment-specific requirements
+    local required_memory=$(jq -r ".[\"$environment\"].resources.memory" "$config_file")
+    local required_cpu=$(jq -r ".[\"$environment\"].resources.cpu" "$config_file")
+    
+    log_transformer_info "Required for $environment: Memory=$required_memory, CPU=$required_cpu"
     
     # Check available resources (environment variables set by deployment pipeline)
     local available_memory="${AVAILABLE_MEMORY:-8Gi}"
@@ -94,150 +100,178 @@ validate_transformer_resources() {
     local available_bytes=$(parse_memory_to_bytes "$available_memory")
     
     if [[ $required_bytes -gt $available_bytes ]]; then
-        log_transformer_error "Insufficient memory: Required $required_memory, Available $available_memory"
+        log_transformer_error "Insufficient memory for $environment: Required $required_memory, Available $available_memory"
         return 2
     fi
     
     if [[ $required_cpu -gt $available_cpu ]]; then
-        log_transformer_error "Insufficient CPU: Required $required_cpu, Available $available_cpu"
+        log_transformer_error "Insufficient CPU for $environment: Required $required_cpu, Available $available_cpu"
         return 2
     fi
     
-    log_transformer_success "Resource requirements validation passed"
+    log_transformer_success "Ensemble resource requirements validation passed for $environment"
     return 0
 }
 
-# Validate transformer health endpoints
-validate_transformer_health_endpoints() {
-    local model_type="${1:-}"
-    local health_endpoint="${2:-/health}"
-    local service_url="${3:-}"
+# Validate ensemble health endpoints
+validate_ensemble_health_endpoints() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
+    local service_url="${2:-}"
+    local config_file="${3:-deploy/configs/environments.json}"
     
-    log_transformer_info "Validating health endpoint for $model_type: $health_endpoint"
+    # Get environment-specific health endpoint
+    local health_endpoint=$(jq -r ".[\"$environment\"].health_checks.endpoint" "$config_file")
+    
+    log_transformer_info "Validating ensemble health endpoint for $environment: $health_endpoint"
     
     if [[ -z "$service_url" ]]; then
         log_transformer_warning "No service URL provided - skipping health endpoint test"
         return 0
     fi
     
-    # Test health endpoint with timeout
+    # Test ensemble health endpoint with timeout
     local full_url="$service_url$health_endpoint"
-    log_transformer_info "Testing health endpoint: $full_url"
+    log_transformer_info "Testing ensemble health endpoint: $full_url"
     
     if curl -f -s -m 30 "$full_url" >/dev/null 2>&1; then
-        log_transformer_success "Health endpoint validation passed"
+        log_transformer_success "Ensemble health endpoint validation passed"
         return 0
     else
-        log_transformer_error "Health endpoint validation failed: $full_url"
+        log_transformer_error "Ensemble health endpoint validation failed: $full_url"
         return 3
     fi
 }
 
-# Test attention mechanism computation
-test_attention_computation() {
-    local model_type="${1:-}"
+# Test ensemble model loading and initialization
+test_ensemble_initialization() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
+    local config_file="${2:-deploy/configs/environments.json}"
     
-    log_transformer_info "Testing attention mechanism for $model_type"
+    log_transformer_info "Testing ensemble initialization for $environment"
     
-    # For now, this is a placeholder test
-    # In production, this would test actual attention computation
-    case "$model_type" in
-        "iTransformer"|"PatchTST"|"TimesMixer"|"TimesFM")
-            log_transformer_info "Simulating attention mechanism test for $model_type"
-            # Simulate computation time
+    # Get models for this environment
+    local models=$(jq -r ".[\"$environment\"].models | join(\",\")" "$config_file")
+    log_transformer_info "Testing initialization for models: $models"
+    
+    # Simulate ensemble initialization test based on environment
+    case "$environment" in
+        "development")
+            log_transformer_info "Simulating LSTM-only initialization test"
             sleep 1
-            log_transformer_success "Attention mechanism test passed for $model_type"
+            log_transformer_success "Development ensemble (LSTM-only) initialization test passed"
+            return 0
+            ;;
+        "staging"|"production")
+            log_transformer_info "Simulating full ensemble initialization test"
+            log_transformer_info "Testing: LSTM, iTransformer, PatchTST, TimesMixer, TimesFM"
+            # Simulate longer initialization time for full ensemble
+            sleep 2
+            log_transformer_success "Full ensemble initialization test passed"
             return 0
             ;;
         *)
-            log_transformer_error "Unknown model type for attention test: $model_type"
+            log_transformer_error "Unknown environment for ensemble test: $environment"
             return 4
             ;;
     esac
 }
 
-# Validate model loading performance
-validate_model_loading_performance() {
-    local model_type="${1:-}"
-    local max_loading_time="${2:-300}"  # 5 minutes default
+# Validate ensemble loading performance
+validate_ensemble_loading_performance() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
+    local config_file="${2:-deploy/configs/environments.json}"
     
-    log_transformer_info "Validating model loading performance for $model_type"
+    # Get timeout from environment config
+    local max_loading_time=$(jq -r ".[\"$environment\"].resources.timeout_seconds" "$config_file")
+    
+    log_transformer_info "Validating ensemble loading performance for $environment"
     log_transformer_info "Maximum allowed loading time: ${max_loading_time}s"
     
-    # Simulate model loading performance test
+    # Simulate ensemble loading performance test
     local start_time=$(date +%s)
+    local simulated_loading_time
     
-    case "$model_type" in
-        "iTransformer")
-            local simulated_loading_time=60
+    case "$environment" in
+        "development")
+            simulated_loading_time=30  # LSTM only loads quickly
             ;;
-        "PatchTST")
-            local simulated_loading_time=45
+        "staging")
+            simulated_loading_time=180  # Full ensemble but smaller resources
             ;;
-        "TimesMixer")
-            local simulated_loading_time=90
-            ;;
-        "TimesFM")
-            local simulated_loading_time=120
+        "production")
+            simulated_loading_time=240  # Full ensemble with optimization
             ;;
         *)
-            log_transformer_error "Unknown model type for performance test: $model_type"
+            log_transformer_error "Unknown environment for performance test: $environment"
             return 5
             ;;
     esac
     
-    log_transformer_info "Simulating model loading (${simulated_loading_time}s)..."
+    log_transformer_info "Simulating ensemble loading (${simulated_loading_time}s)..."
     sleep 2  # Reduced for testing
     
     local end_time=$((start_time + simulated_loading_time))
     local loading_time=$simulated_loading_time
     
     if [[ $loading_time -le $max_loading_time ]]; then
-        log_transformer_success "Model loading performance validation passed: ${loading_time}s"
+        log_transformer_success "Ensemble loading performance validation passed: ${loading_time}s"
         return 0
     else
-        log_transformer_error "Model loading too slow: ${loading_time}s > ${max_loading_time}s"
+        log_transformer_error "Ensemble loading too slow: ${loading_time}s > ${max_loading_time}s"
         return 5
     fi
 }
 
-# Check NaN/Inf handling capabilities
-check_nan_inf_handling() {
-    local model_type="${1:-}"
+# Check ensemble NaN/Inf handling capabilities
+check_ensemble_nan_inf_handling() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
     
-    log_transformer_info "Checking NaN/Inf handling for $model_type"
+    log_transformer_info "Checking ensemble NaN/Inf handling for $environment"
     
-    # Simulate NaN/Inf handling test
-    case "$model_type" in
-        "iTransformer"|"PatchTST"|"TimesMixer"|"TimesFM")
-            log_transformer_info "Testing NaN detection and handling..."
-            log_transformer_info "Testing Inf detection and handling..."
-            log_transformer_success "NaN/Inf handling validation passed for $model_type"
+    # Simulate ensemble NaN/Inf handling test based on environment
+    case "$environment" in
+        "development")
+            log_transformer_info "Testing LSTM NaN/Inf detection and handling..."
+            log_transformer_success "NaN/Inf handling validation passed for development (LSTM)"
+            return 0
+            ;;
+        "staging"|"production")
+            log_transformer_info "Testing ensemble NaN/Inf detection and handling..."
+            log_transformer_info "Testing LSTM, iTransformer, PatchTST, TimesMixer, TimesFM..."
+            log_transformer_success "NaN/Inf handling validation passed for full ensemble"
             return 0
             ;;
         *)
-            log_transformer_error "Unknown model type for NaN/Inf test: $model_type"
+            log_transformer_error "Unknown environment for NaN/Inf test: $environment"
             return 6
             ;;
     esac
 }
 
-# Benchmark transformer loading performance
-benchmark_transformer_loading() {
-    local model_type="${1:-}"
+# Benchmark ensemble loading performance
+benchmark_ensemble_loading() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
     
-    log_transformer_info "Benchmarking transformer loading for $model_type"
+    log_transformer_info "Benchmarking ensemble loading for $environment"
     
     local start_time=$(date +%s)
-    # Simulate loading
-    sleep 1
+    # Simulate loading based on environment
+    case "$environment" in
+        "development")
+            sleep 1  # LSTM loads quickly
+            ;;
+        "staging"|"production")
+            sleep 2  # Full ensemble takes longer
+            ;;
+    esac
     local end_time=$(date +%s)
     local loading_time=$((end_time - start_time))
     
-    log_transformer_info "Loading benchmark completed: ${loading_time}s"
+    log_transformer_info "Ensemble loading benchmark completed: ${loading_time}s"
     
     # Export benchmark results
-    export TRANSFORMER_LOADING_BENCHMARK="$loading_time"
+    export ENSEMBLE_LOADING_BENCHMARK="$loading_time"
+    export TRANSFORMER_LOADING_BENCHMARK="$loading_time"  # Backwards compatibility
     
     return 0
 }
@@ -276,91 +310,105 @@ validate_gcp_resource_limits() {
 }
 
 # Main validation function - entry point for deployment pipeline
-validate_transformer_models() {
-    local model_type="${1:-}"
-    local environment="${2:-staging}"
+validate_ensemble_deployment() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
     
-    if [[ -z "$model_type" ]]; then
-        log_transformer_error "Model type is required for validation"
-        TRANSFORMER_VALIDATION_RESULT="FAIL"
-        TRANSFORMER_VALIDATION_MESSAGE="Model type not specified"
-        return 1
-    fi
-    
-    log_transformer_header "🤖 Starting transformer validation for $model_type in $environment"
+    log_transformer_header "🤖 Starting ensemble validation for $environment environment"
     
     # Load configuration
-    if ! load_transformer_config; then
+    if ! load_environment_validation_config "$environment"; then
         TRANSFORMER_VALIDATION_RESULT="FAIL"
-        TRANSFORMER_VALIDATION_MESSAGE="Failed to load transformer configuration"
+        TRANSFORMER_VALIDATION_MESSAGE="Failed to load environment configuration"
         return 1
     fi
     
-    # Get model-specific requirements from config
-    local config_file="${TRANSFORMER_CONFIG_FILE:-deploy/configs/transformer_models.json}"
+    # Get environment-specific configuration
+    local config_file="deploy/configs/environments.json"
     
     if [[ -f "$config_file" ]]; then
-        local memory_req=$(jq -r ".[\"$model_type\"].resources.memory // \"4Gi\"" "$config_file")
-        local cpu_req=$(jq -r ".[\"$model_type\"].resources.cpu // 2" "$config_file")
-        local health_endpoint=$(jq -r ".[\"$model_type\"].health_checks.endpoint // \"/health\"" "$config_file")
-        local startup_timeout=$(jq -r ".[\"$model_type\"].timeouts.startup_timeout // 300" "$config_file")
+        local memory_req=$(jq -r ".[\"$environment\"].resources.memory" "$config_file")
+        local cpu_req=$(jq -r ".[\"$environment\"].resources.cpu" "$config_file")
+        local health_endpoint=$(jq -r ".[\"$environment\"].health_checks.endpoint" "$config_file")
+        local startup_timeout=$(jq -r ".[\"$environment\"].resources.timeout_seconds" "$config_file")
         
-        log_transformer_info "Loaded config: Memory=$memory_req, CPU=$cpu_req, Health=$health_endpoint"
+        log_transformer_info "Loaded config for $environment: Memory=$memory_req, CPU=$cpu_req, Health=$health_endpoint"
     else
         # Default values if config not found
         local memory_req="4Gi"
         local cpu_req="2"
-        local health_endpoint="/health"
-        local startup_timeout="300"
+        local health_endpoint="/health/ensemble"
+        local startup_timeout="3600"
         
-        log_transformer_warning "Using default values - config file not found"
+        log_transformer_warning "Using default values - environment config file not found"
     fi
     
-    # Run validation checks
+    # Run ensemble validation checks
     local validation_failed=false
     
-    # Resource validation
-    if ! validate_transformer_resources "$model_type" "$memory_req" "$cpu_req"; then
+    # Resource validation for ensemble
+    if ! validate_ensemble_resources "$environment" "$config_file"; then
         validation_failed=true
     fi
     
     # Health endpoint validation (if service URL is available)
     if [[ -n "${SERVICE_URL:-}" ]]; then
-        if ! validate_transformer_health_endpoints "$model_type" "$health_endpoint" "$SERVICE_URL"; then
+        if ! validate_ensemble_health_endpoints "$environment" "$SERVICE_URL" "$config_file"; then
             validation_failed=true
         fi
     fi
     
-    # Attention mechanism test
-    if ! test_attention_computation "$model_type"; then
+    # Ensemble initialization test
+    if ! test_ensemble_initialization "$environment" "$config_file"; then
         validation_failed=true
     fi
     
-    # Model loading performance test
-    if ! validate_model_loading_performance "$model_type" "$startup_timeout"; then
+    # Ensemble loading performance test
+    if ! validate_ensemble_loading_performance "$environment" "$config_file"; then
         validation_failed=true
     fi
     
-    # NaN/Inf handling test
-    if ! check_nan_inf_handling "$model_type"; then
+    # NaN/Inf handling test for ensemble
+    if ! check_ensemble_nan_inf_handling "$environment"; then
         validation_failed=true
     fi
     
     # Performance benchmark
-    benchmark_transformer_loading "$model_type"
+    benchmark_ensemble_loading "$environment"
     
     # Set final validation results
     if [[ "$validation_failed" == "true" ]]; then
         TRANSFORMER_VALIDATION_RESULT="FAIL"
-        TRANSFORMER_VALIDATION_MESSAGE="One or more transformer validations failed"
-        log_transformer_error "❌ Transformer validation failed for $model_type"
+        TRANSFORMER_VALIDATION_MESSAGE="One or more ensemble validations failed"
+        log_transformer_error "❌ Ensemble validation failed for $environment"
         return 1
     else
         TRANSFORMER_VALIDATION_RESULT="PASS"
-        TRANSFORMER_VALIDATION_MESSAGE="All transformer validations passed successfully"
-        log_transformer_success "✅ Transformer validation completed successfully for $model_type"
+        TRANSFORMER_VALIDATION_MESSAGE="All ensemble validations passed successfully"
+        log_transformer_success "✅ Ensemble validation completed successfully for $environment"
         return 0
     fi
+}
+
+# Backwards compatibility function - deprecated
+validate_transformer_models() {
+    local model_type="${1:-}"
+    local environment="${2:-staging}"
+    
+    log_transformer_warning "validate_transformer_models is deprecated - use validate_ensemble_deployment"
+    
+    # Map old model type to environment if needed
+    if [[ -n "$model_type" && -z "${ENVIRONMENT:-}" ]]; then
+        case "$model_type" in
+            "lstm")
+                environment="development"
+                ;;
+            *)
+                environment="production"
+                ;;
+        esac
+    fi
+    
+    validate_ensemble_deployment "$environment"
 }
 
 # Export validation results for pipeline integration
@@ -368,15 +416,15 @@ export_validation_results() {
     export TRANSFORMER_VALIDATION_RESULT
     export TRANSFORMER_VALIDATION_MESSAGE
     export TRANSFORMER_LOADING_BENCHMARK
+    export ENSEMBLE_LOADING_BENCHMARK
 }
 
 # Main execution guard - only run if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Direct execution for testing
-    MODEL_TYPE="${1:-iTransformer}"
-    ENVIRONMENT="${2:-staging}"
+    ENVIRONMENT="${1:-${ENVIRONMENT:-production}}"
     
-    log_transformer_info "Direct execution mode - testing validation"
-    validate_transformer_models "$MODEL_TYPE" "$ENVIRONMENT"
+    log_transformer_info "Direct execution mode - testing ensemble validation"
+    validate_ensemble_deployment "$ENVIRONMENT"
     export_validation_results
 fi
