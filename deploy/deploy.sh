@@ -117,6 +117,27 @@ check_prerequisites() {
     log_success "Prerequisites check passed"
 }
 
+# Load transformer configurations if needed
+load_transformer_config() {
+    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
+        log_info "Transformer deployment detected: $TRANSFORMER_MODEL_TYPE"
+        
+        local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+        if [[ -f "$config_loader_module" ]]; then
+            source "$config_loader_module"
+            
+            if load_transformer_configurations "$TRANSFORMER_MODEL_TYPE" "$ENVIRONMENT"; then
+                log_success "Transformer configuration loaded successfully"
+                export_all_config
+            else
+                log_warning "Failed to load transformer configuration, using defaults"
+            fi
+        else
+            log_warning "Transformer config loader module not found"
+        fi
+    fi
+}
+
 # Validation-only mode
 run_validation_only() {
     log_header "🔍 Running validation-only mode"
@@ -298,6 +319,9 @@ main() {
     
     # Check prerequisites
     check_prerequisites
+    
+    # Load transformer configurations if needed
+    load_transformer_config
     
     # Handle dry run
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
