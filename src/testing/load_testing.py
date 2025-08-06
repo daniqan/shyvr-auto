@@ -1143,7 +1143,7 @@ class LoadTestingFramework:
         duration_minutes = scenario["duration_minutes"]
         
         # Generate progression data points
-        steps = 10
+        steps = 15  # Increased to ensure > 10 data points
         for i in range(steps):
             progress = i / (steps - 1)
             current_users = int(start_users + (end_users - start_users) * progress)
