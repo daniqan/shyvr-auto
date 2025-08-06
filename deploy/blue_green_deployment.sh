@@ -143,11 +143,64 @@ validate_deployment_config() {
 deploy_new_revision() {
     log_header "🚀 Deploying new revision for $ENVIRONMENT environment"
     
+    # Load transformer configuration if model type is specified
+    local model_type="${TRANSFORMER_MODEL_TYPE:-}"
+    if [[ -n "$model_type" ]]; then
+        local script_dir="$(dirname "$0")"
+        local config_loader_module="$script_dir/modules/transformer_config_loader.sh"
+        
+        if [[ -f "$config_loader_module" ]]; then
+            log_info "Loading transformer configuration for $model_type"
+            source "$config_loader_module"
+            
+            # Load configurations for the deployment
+            if configure_for_blue_green_deployment "$model_type" "$ENVIRONMENT"; then
+                log_success "Transformer configuration loaded successfully"
+                
+                # Override deployment parameters with transformer-specific settings
+                if [[ -n "${HEALTH_CHECK_ATTEMPTS:-}" ]]; then
+                    HEALTH_CHECK_ATTEMPTS="$HEALTH_CHECK_ATTEMPTS"
+                fi
+                if [[ -n "${HEALTH_CHECK_INTERVAL:-}" ]]; then
+                    HEALTH_CHECK_INTERVAL="$HEALTH_CHECK_INTERVAL"
+                fi
+                if [[ -n "${TRAFFIC_MIGRATION_DELAY:-}" ]]; then
+                    TRAFFIC_MIGRATION_DELAY="$TRAFFIC_MIGRATION_DELAY"
+                fi
+            else
+                log_warning "Failed to load transformer configuration, using defaults"
+            fi
+        else
+            log_warning "Transformer config loader module not found, using defaults"
+        fi
+    fi
+    
     local env_vars="ENVIRONMENT=$ENVIRONMENT,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$DEPLOYMENT_ID,COMMIT_SHA=${IMAGE_TAG},TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=6,MKL_NUM_THREADS=6,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1"
+    
+    # Add transformer-specific environment variables if loaded
+    if [[ -n "${MODEL_TYPE:-}" ]]; then
+        env_vars="$env_vars,MODEL_TYPE=$MODEL_TYPE"
+    fi
+    if [[ -n "${TRANSFORMER_MEMORY:-}" ]]; then
+        env_vars="$env_vars,TRANSFORMER_MEMORY=$TRANSFORMER_MEMORY"
+    fi
+    if [[ -n "${TRANSFORMER_CPU:-}" ]]; then
+        env_vars="$env_vars,TRANSFORMER_CPU=$TRANSFORMER_CPU"
+    fi
     
     if [[ "$ENVIRONMENT" == "production" ]]; then
         env_vars="$env_vars,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true"
     fi
+    
+    # Use transformer-specific resource settings if loaded, otherwise use defaults
+    local memory_setting="${CLOUD_RUN_MEMORY:-8Gi}"
+    local cpu_setting="${CLOUD_RUN_CPU:-6}"
+    local timeout_setting="${CLOUD_RUN_TIMEOUT:-4200}"
+    local concurrency_setting="${CLOUD_RUN_CONCURRENCY:-15}"
+    local max_instances_setting="${CLOUD_RUN_MAX_INSTANCES:-10}"
+    local min_instances_setting="${CLOUD_RUN_MIN_INSTANCES:-1}"
+    
+    log_info "Deploying with resources: Memory=$memory_setting, CPU=$cpu_setting, Timeout=${timeout_setting}s"
     
     # Deploy new revision without traffic (transformer-optimized)
     if ! gcloud run deploy "$SERVICE" \
@@ -155,12 +208,12 @@ deploy_new_revision() {
         --region="$REGION" \
         --platform=managed \
         --port=8080 \
-        --memory=8Gi \
-        --cpu=6 \
-        --concurrency=15 \
-        --timeout=4200 \
-        --max-instances=10 \
-        --min-instances=1 \
+        --memory="$memory_setting" \
+        --cpu="$cpu_setting" \
+        --concurrency="$concurrency_setting" \
+        --timeout="$timeout_setting" \
+        --max-instances="$max_instances_setting" \
+        --min-instances="$min_instances_setting" \
         --allow-unauthenticated \
         --cpu-boost \
         --execution-environment=gen2 \
