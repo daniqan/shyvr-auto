@@ -10,27 +10,43 @@ set -euo pipefail
 PROJECT_ID=${PROJECT_ID:-"shvyr-ai-bots"}
 REGION=${REGION:-"us-central1"}
 REPOSITORY=${REPOSITORY:-"shyvr-ai-prod"}
-ENVIRONMENT=${1:-"staging"}  # staging or production
+ENVIRONMENT=${1:-"staging"}  # development, staging, or production
 IMAGE_TAG=${2:-"latest"}
 
-# Environment-specific settings (transformer-optimized)
-if [[ "$ENVIRONMENT" == "production" ]]; then
-    SERVICE="shyvr-rlte"
-    INITIAL_TRAFFIC_PERCENT=10
-    INTERMEDIATE_TRAFFIC_PERCENT=50
-    HEALTH_CHECK_ATTEMPTS=15
-    HEALTH_CHECK_INTERVAL=20
-    TRAFFIC_MIGRATION_DELAY=180
-    ROLLBACK_TIMEOUT=300
-else
-    SERVICE="shyvr-rlte-staging"
-    INITIAL_TRAFFIC_PERCENT=50
-    INTERMEDIATE_TRAFFIC_PERCENT=100
-    HEALTH_CHECK_ATTEMPTS=15
-    HEALTH_CHECK_INTERVAL=20
-    TRAFFIC_MIGRATION_DELAY=180
-    ROLLBACK_TIMEOUT=300
-fi
+# Environment-specific settings (ensemble-optimized)
+case "$ENVIRONMENT" in
+    "production")
+        SERVICE="shyvr-rlte"
+        INITIAL_TRAFFIC_PERCENT=10
+        INTERMEDIATE_TRAFFIC_PERCENT=50
+        HEALTH_CHECK_ATTEMPTS=15
+        HEALTH_CHECK_INTERVAL=20
+        TRAFFIC_MIGRATION_DELAY=180
+        ROLLBACK_TIMEOUT=300
+        ;;
+    "staging")
+        SERVICE="shyvr-rlte-staging"
+        INITIAL_TRAFFIC_PERCENT=50
+        INTERMEDIATE_TRAFFIC_PERCENT=100
+        HEALTH_CHECK_ATTEMPTS=15
+        HEALTH_CHECK_INTERVAL=20
+        TRAFFIC_MIGRATION_DELAY=180
+        ROLLBACK_TIMEOUT=300
+        ;;
+    "development")
+        SERVICE="shyvr-rlte-dev"
+        INITIAL_TRAFFIC_PERCENT=100
+        INTERMEDIATE_TRAFFIC_PERCENT=100
+        HEALTH_CHECK_ATTEMPTS=10
+        HEALTH_CHECK_INTERVAL=15
+        TRAFFIC_MIGRATION_DELAY=120
+        ROLLBACK_TIMEOUT=180
+        ;;
+    *)
+        log_error "Unknown environment: $ENVIRONMENT"
+        exit 1
+        ;;
+esac
 
 IMAGE_NAME="us-central1-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/shyvr-rlte"
 DEPLOYMENT_ID=$(date +"%Y%m%d-%H%M%S")
@@ -143,41 +159,38 @@ validate_deployment_config() {
 deploy_new_revision() {
     log_header "🚀 Deploying new revision for $ENVIRONMENT environment"
     
-    # Load transformer configuration if model type is specified
-    local model_type="${TRANSFORMER_MODEL_TYPE:-}"
-    if [[ -n "$model_type" ]]; then
-        local script_dir="$(dirname "$0")"
-        local config_loader_module="$script_dir/modules/transformer_config_loader.sh"
+    # Load environment configuration for deployment
+    local script_dir="$(dirname "$0")"
+    local config_loader_module="$script_dir/modules/transformer_config_loader.sh"
+    
+    if [[ -f "$config_loader_module" ]]; then
+        log_info "Loading environment configuration for $ENVIRONMENT"
+        source "$config_loader_module"
         
-        if [[ -f "$config_loader_module" ]]; then
-            log_info "Loading transformer configuration for $model_type"
-            source "$config_loader_module"
+        # Load configurations for the deployment
+        if load_environment_configurations "$ENVIRONMENT"; then
+            log_success "Environment configuration loaded successfully"
             
-            # Load configurations for the deployment
-            if configure_for_blue_green_deployment "$model_type" "$ENVIRONMENT"; then
-                log_success "Transformer configuration loaded successfully"
-                
-                # Override deployment parameters with transformer-specific settings
-                if [[ -n "${HEALTH_CHECK_ATTEMPTS:-}" ]]; then
-                    HEALTH_CHECK_ATTEMPTS="$HEALTH_CHECK_ATTEMPTS"
-                fi
-                if [[ -n "${HEALTH_CHECK_INTERVAL:-}" ]]; then
-                    HEALTH_CHECK_INTERVAL="$HEALTH_CHECK_INTERVAL"
-                fi
-                if [[ -n "${TRAFFIC_MIGRATION_DELAY:-}" ]]; then
-                    TRAFFIC_MIGRATION_DELAY="$TRAFFIC_MIGRATION_DELAY"
-                fi
-            else
-                log_warning "Failed to load transformer configuration, using defaults"
+            # Override deployment parameters with environment-specific settings
+            if [[ -n "${HEALTH_CHECK_ATTEMPTS:-}" ]]; then
+                HEALTH_CHECK_ATTEMPTS="$HEALTH_CHECK_ATTEMPTS"
+            fi
+            if [[ -n "${HEALTH_CHECK_INTERVAL:-}" ]]; then
+                HEALTH_CHECK_INTERVAL="$HEALTH_CHECK_INTERVAL"
+            fi
+            if [[ -n "${TRAFFIC_MIGRATION_DELAY:-}" ]]; then
+                TRAFFIC_MIGRATION_DELAY="$TRAFFIC_MIGRATION_DELAY"
             fi
         else
-            log_warning "Transformer config loader module not found, using defaults"
+            log_warning "Failed to load environment configuration, using defaults"
         fi
+    else
+        log_warning "Environment config loader module not found, using defaults"
     fi
     
     local env_vars="ENVIRONMENT=$ENVIRONMENT,LOG_LEVEL=INFO,TRADING_MODE=simulation,BUILD_ID=$DEPLOYMENT_ID,COMMIT_SHA=${IMAGE_TAG},TRANSFORMER_OPTIMIZED=true,TRANSFORMER_BATCH_SIZE=1,TRANSFORMER_MAX_LENGTH=512,TORCH_COMPILE_MODE=reduce-overhead,TRANSFORMERS_CACHE=/app/models/cache,TOKENIZERS_PARALLELISM=false,OMP_NUM_THREADS=6,MKL_NUM_THREADS=6,PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,TRANSFORMERS_NO_ADVISORY_WARNINGS=1,TORCH_INFERENCE_MODE=1"
     
-    # Add transformer-specific environment variables if loaded
+    # Add environment-specific variables if loaded
     if [[ -n "${MODEL_TYPE:-}" ]]; then
         env_vars="$env_vars,MODEL_TYPE=$MODEL_TYPE"
     fi
@@ -187,22 +200,55 @@ deploy_new_revision() {
     if [[ -n "${TRANSFORMER_CPU:-}" ]]; then
         env_vars="$env_vars,TRANSFORMER_CPU=$TRANSFORMER_CPU"
     fi
+    if [[ -n "${ENSEMBLE_MODELS:-}" ]]; then
+        env_vars="$env_vars,ENSEMBLE_MODELS=$ENSEMBLE_MODELS"
+    fi
     
     if [[ "$ENVIRONMENT" == "production" ]]; then
         env_vars="$env_vars,ML_OPTIMIZED=true,RL_STORAGE_ENABLED=true,MODEL_PRESERVATION_ENABLED=true"
     fi
     
-    # Use transformer-specific resource settings if loaded, otherwise use defaults
-    local memory_setting="${CLOUD_RUN_MEMORY:-8Gi}"
-    local cpu_setting="${CLOUD_RUN_CPU:-6}"
-    local timeout_setting="${CLOUD_RUN_TIMEOUT:-4200}"
-    local concurrency_setting="${CLOUD_RUN_CONCURRENCY:-15}"
-    local max_instances_setting="${CLOUD_RUN_MAX_INSTANCES:-10}"
-    local min_instances_setting="${CLOUD_RUN_MIN_INSTANCES:-1}"
+    # Use environment-specific resource settings if loaded, otherwise use defaults based on environment
+    local memory_setting="${CLOUD_RUN_MEMORY:-}"
+    local cpu_setting="${CLOUD_RUN_CPU:-}"
+    local timeout_setting="${CLOUD_RUN_TIMEOUT:-}"
+    local concurrency_setting="${CLOUD_RUN_CONCURRENCY:-}"
+    local max_instances_setting="${CLOUD_RUN_MAX_INSTANCES:-}"
+    local min_instances_setting="${CLOUD_RUN_MIN_INSTANCES:-}"
+    
+    # Set defaults based on environment if not loaded
+    if [[ -z "$memory_setting" ]]; then
+        case "$ENVIRONMENT" in
+            "development")
+                memory_setting="2Gi"
+                cpu_setting="1"
+                timeout_setting="2400"
+                concurrency_setting="3"
+                max_instances_setting="1"
+                min_instances_setting="0"
+                ;;
+            "staging")
+                memory_setting="4Gi"
+                cpu_setting="3"
+                timeout_setting="3600"
+                concurrency_setting="6"
+                max_instances_setting="3"
+                min_instances_setting="0"
+                ;;
+            "production"|*)
+                memory_setting="8Gi"
+                cpu_setting="6"
+                timeout_setting="4200"
+                concurrency_setting="15"
+                max_instances_setting="10"
+                min_instances_setting="1"
+                ;;
+        esac
+    fi
     
     log_info "Deploying with resources: Memory=$memory_setting, CPU=$cpu_setting, Timeout=${timeout_setting}s"
     
-    # Deploy new revision without traffic (transformer-optimized)
+    # Deploy new revision without traffic (ensemble-optimized)
     if ! gcloud run deploy "$SERVICE" \
         --image="$IMAGE_NAME:$IMAGE_TAG" \
         --region="$REGION" \
@@ -316,35 +362,47 @@ execute_blue_green_migration() {
             return 1
         fi
         
-        log_success "First deployment completed successfully!")
+        log_success "First deployment completed successfully!"
     fi
 }
 
-# Canary deployment mode using transformer rollout configuration
+# Canary deployment mode using environment-based configuration
 execute_canary_deployment() {
-    log_header "🐦 Executing canary deployment mode"
+    log_header "🐦 Executing canary deployment mode for $ENVIRONMENT"
     
-    local script_dir="$(dirname "$0")"
-    local rollout_config="$script_dir/transformer_rollout.yaml"
+    # Set canary parameters based on environment
+    local canary_percent
+    local canary_duration
     
-    if [[ ! -f "$rollout_config" ]]; then
-        log_warning "Transformer rollout config not found, using standard blue-green"
-        return 1
-    fi
+    case "$ENVIRONMENT" in
+        "development")
+            canary_percent=100  # Development goes straight to 100%
+            canary_duration=30
+            ;;
+        "staging")
+            canary_percent=25
+            canary_duration=300
+            ;;
+        "production")
+            canary_percent=5
+            canary_duration=600
+            ;;
+    esac
     
-    log_info "Using transformer rollout configuration: $rollout_config"
-    
-    # Apply canary traffic pattern from transformer_rollout.yaml
-    local canary_percent=$(grep -A 5 "canary:" "$rollout_config" | grep "traffic_percent:" | awk '{print $2}' || echo "5")
-    local canary_duration=$(grep -A 5 "canary:" "$rollout_config" | grep "duration:" | awk '{print $2}' || echo "300")
-    
-    log_info "Canary deployment: ${canary_percent}% traffic for ${canary_duration}s"
+    log_info "Canary deployment for $ENVIRONMENT: ${canary_percent}% traffic for ${canary_duration}s"
     
     # Deploy canary revision
-    gcloud run services update-traffic "$SERVICE" \
-        --region="$REGION" \
-        --to-revisions="$NEW_REVISION=$canary_percent,$CURRENT_REVISION=$((100-canary_percent))" \
-        --quiet
+    if [[ "$canary_percent" -lt 100 ]]; then
+        gcloud run services update-traffic "$SERVICE" \
+            --region="$REGION" \
+            --to-revisions="$NEW_REVISION=$canary_percent,$CURRENT_REVISION=$((100-canary_percent))" \
+            --quiet
+    else
+        gcloud run services update-traffic "$SERVICE" \
+            --region="$REGION" \
+            --to-revisions="$NEW_REVISION=100" \
+            --quiet
+    fi
     
     sleep "$canary_duration"
     return 0
@@ -438,10 +496,12 @@ if [[ $# -eq 0 ]]; then
     echo "Usage: $0 <environment> [image_tag]"
     echo ""
     echo "Environments:"
-    echo "  staging    - Deploy to staging environment with 50% -> 100% traffic migration"
-    echo "  production - Deploy to production with 10% -> 50% -> 100% traffic migration"
+    echo "  development - Deploy to development environment (LSTM only, immediate 100% traffic)"
+    echo "  staging     - Deploy to staging environment with 50% -> 100% traffic migration"
+    echo "  production  - Deploy to production with 10% -> 50% -> 100% traffic migration"
     echo ""
     echo "Examples:"
+    echo "  $0 development latest"
     echo "  $0 staging latest"
     echo "  $0 production v1.2.3"
     echo "  $0 production 20250803-142030"
@@ -449,8 +509,8 @@ if [[ $# -eq 0 ]]; then
 fi
 
 # Validate environment parameter
-if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
-    log_error "Invalid environment: $ENVIRONMENT (must be 'staging' or 'production')"
+if [[ "$ENVIRONMENT" != "development" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+    log_error "Invalid environment: $ENVIRONMENT (must be 'development', 'staging', or 'production')"
     exit 1
 fi
 
