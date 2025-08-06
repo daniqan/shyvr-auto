@@ -181,6 +181,23 @@ run_emergency_deployment() {
 run_blue_green_only() {
     log_header "🚦 Running blue-green deployment mode"
     
+    # Load transformer configuration if model type is specified
+    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
+        local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+        
+        if [[ -f "$config_loader_module" ]]; then
+            log_info "Loading transformer configuration for deployment"
+            source "$config_loader_module"
+            
+            if load_transformer_configurations "$TRANSFORMER_MODEL_TYPE" "$ENVIRONMENT"; then
+                log_success "Transformer configuration loaded for deploy.sh"
+                export_all_config
+            else
+                log_warning "Failed to load transformer configuration, proceeding with defaults"
+            fi
+        fi
+    fi
+    
     log_info "Executing blue-green deployment..."
     if "$SCRIPT_DIR/blue_green_deployment.sh" "$ENVIRONMENT" "$IMAGE_TAG"; then
         log_success "Blue-green deployment completed"
