@@ -1,704 +1,496 @@
-# Production Troubleshooting Guide
-## Shyvr RLTE AI Trading System
+# Comprehensive Troubleshooting Guide
 
-### Overview
+## Table of Contents
+1. [Overview](#overview)
+2. [System Health Assessment](#system-health-assessment)
+3. [Transformer Model Issues](#transformer-model-issues)
+4. [Memory and Resource Problems](#memory-and-resource-problems)
+5. [Performance Issues](#performance-issues)
+6. [Deployment Problems](#deployment-problems)
+7. [Database Connectivity Issues](#database-connectivity-issues)
+8. [API and External Service Issues](#api-and-external-service-issues)
+9. [Emergency Procedures](#emergency-procedures)
+10. [Diagnostic Tools and Commands](#diagnostic-tools-and-commands)
+11. [Common Error Codes](#common-error-codes)
 
-This comprehensive troubleshooting guide provides step-by-step procedures for diagnosing and resolving common issues in the Shyvr RLTE production environment. The guide is organized by system component and includes both automated diagnostic tools and manual investigation procedures.
+## Overview
 
----
+This troubleshooting guide provides systematic approaches to diagnosing and resolving issues in the transformer-enabled RLTE system, covering production environment problems and solutions.
 
-## Quick Diagnostic Tools
+### Troubleshooting Philosophy
+1. **Systematic Approach**: Follow structured diagnostic procedures
+2. **Evidence-Based**: Collect data before making changes
+3. **Minimal Impact**: Prefer non-disruptive solutions
+4. **Documentation**: Record findings and solutions
+5. **Prevention**: Implement fixes that prevent recurrence
 
-### System Health Check
+## System Health Assessment
+
+### Quick Health Check
 ```bash
-# Run comprehensive health check
-./scripts/production_health_check.py
+# System health check
+SERVICE_URL="https://your-service-url"
+echo "=== RLTE Health Check ==="
 
-# Quick service status
-curl -s https://shyvr-rlte.run.app/health | jq
+# Service status
+curl -f -s "${SERVICE_URL}/health" && echo "✅ Service OK" || echo "❌ Service Down"
 
-# Service logs (last 100 lines)
-gcloud run logs tail shyvr-rlte --region=us-central1 --limit=100
+# Database status  
+curl -f -s "${SERVICE_URL}/health/database" && echo "✅ Database OK" || echo "❌ Database Issues"
+
+# Transformer models
+curl -f -s "${SERVICE_URL}/health/transformers" && echo "✅ Models OK" || echo "❌ Model Issues"
 ```
 
-### Performance Quick Check
-```bash
-# CPU and memory usage
-gcloud monitoring metrics list --filter="resource.type=cloud_run_revision"
+## Transformer Model Issues
 
-# Request latency
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="latency" --limit=20
+### Model Loading Problems
+**Symptoms**: Models fail to load, timeout errors, memory allocation failures
+
+**Diagnostic Steps**:
+```bash
+# Check model status
+curl -s "${SERVICE_URL}/debug/models/status" | jq '.'
+
+# Check memory usage
+free -h
+
+# Verify model cache
+ls -la /app/models/cache/
 ```
 
----
-
-## 1. Service Availability Issues
-
-### Symptoms
-- Service returns 5xx errors
-- Health check failures
-- Connection timeouts
-- Service unreachable
-
-### Diagnostic Steps
-
-#### Step 1: Check Service Status
-```bash
-# Check Cloud Run service status
-gcloud run services describe shyvr-rlte --region=us-central1
-
-# Check service endpoints
-curl -I https://shyvr-rlte.run.app/health
-curl -I https://shyvr-rlte.run.app/api/status
-```
-
-#### Step 2: Review Recent Deployments
-```bash
-# Check recent revisions
-gcloud run revisions list --service=shyvr-rlte --region=us-central1 --limit=5
-
-# Check revision status
-gcloud run revisions describe REVISION_NAME --region=us-central1
-```
-
-#### Step 3: Analyze Error Logs
-```bash
-# Get error logs from last hour
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="severity>=ERROR" --since="1h"
-
-# Check startup errors
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="startup" --limit=50
-```
-
-### Common Resolutions
-
-#### **Container Startup Failures**
-```bash
-# Check container build
-docker build -t shyvr-rlte:debug .
-docker run --rm shyvr-rlte:debug python -c "import src; print('Import successful')"
-
-# Verify environment variables
-gcloud run services describe shyvr-rlte --region=us-central1 --format="value(spec.template.spec.template.spec.containers[0].env)"
-```
-
-#### **Resource Constraints**
-```bash
-# Increase memory and CPU
-gcloud run services update shyvr-rlte \
-  --memory=8Gi \
-  --cpu=4 \
-  --max-instances=10 \
-  --region=us-central1
-```
-
-#### **Configuration Issues**
-```bash
-# Verify secrets are accessible
-./deploy/validate_secrets.py
-
-# Check database connectivity
-python ./scripts/test_cloud_sql_connectivity.py
-```
-
----
-
-## 2. Performance Degradation
-
-### Symptoms
-- High response times
-- Request timeouts
-- Memory or CPU alerts
-- Slow trading execution
-
-### Diagnostic Steps
-
-#### Step 1: Performance Metrics Analysis
-```bash
-# Check current resource usage
-gcloud monitoring timeseries list \
-  --filter='metric.type="run.googleapis.com/container/cpu/utilizations"' \
-  --interval.end-time=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  --interval.start-time=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
-
-# Request latency analysis
-gcloud monitoring timeseries list \
-  --filter='metric.type="run.googleapis.com/request_latencies"' \
-  --interval.end-time=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  --interval.start-time=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
-```
-
-#### Step 2: Application Performance Profiling
-```bash
-# Enable profiling endpoint (if available)
-curl -s https://shyvr-rlte.run.app/debug/profiling/cpu
-
-# Check slow requests
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="duration>2000" --limit=20
-```
-
-#### Step 3: Database Performance Check
-```bash
-# Check Cloud SQL metrics
-gcloud sql operations list --instance=shyvr-rlte-db --limit=10
-
-# Database connection analysis
-python ./scripts/analyze_database_performance.py
-```
-
-### Common Resolutions
-
-#### **Memory Issues**
-```bash
-# Check memory usage patterns
-gcloud monitoring timeseries list \
-  --filter='metric.type="run.googleapis.com/container/memory/utilizations"'
-
-# Increase memory allocation
-gcloud run services update shyvr-rlte --memory=16Gi --region=us-central1
-
-# Check for memory leaks
-curl -s https://shyvr-rlte.run.app/debug/memory-stats
-```
-
-#### **CPU Bottlenecks**
-```bash
-# Increase CPU allocation
-gcloud run services update shyvr-rlte --cpu=8 --region=us-central1
-
-# Check CPU-intensive operations
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="cpu_time" --limit=20
-```
-
-#### **Database Performance**
-```bash
-# Optimize database connections
-python ./scripts/optimize_database_performance.py
-
-# Check slow queries
-gcloud sql operations list --instance=shyvr-rlte-db --filter="operationType=IMPORT"
-```
-
----
-
-## 3. Trading System Issues
-
-### Symptoms
-- Trading orders not executing
-- Incorrect position calculations
-- Risk management alerts
-- Exchange connectivity issues
-
-### Diagnostic Steps
-
-#### Step 1: Trading System Health
-```bash
-# Check trading service status
-curl -s https://shyvr-rlte.run.app/api/trading/status | jq
-
-# Verify exchange connections
-curl -s https://shyvr-rlte.run.app/api/exchanges/health | jq
-
-# Check active positions
-curl -s https://shyvr-rlte.run.app/api/positions/summary | jq
-```
-
-#### Step 2: Exchange API Connectivity
-```bash
-# Test Hyperliquid connection
-python -c "
-from src.dex.hyperliquid_client import HyperliquidClient
-client = HyperliquidClient()
-print(client.test_connection())
-"
-
-# Test Jupiter connection
-python -c "
-from src.dex.jupiter_client import JupiterClient
-client = JupiterClient()
-print(client.test_connection())
-"
-```
-
-#### Step 3: Trading Logs Analysis
-```bash
-# Check trading execution logs
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="trading_execution" --limit=50
-
-# Risk management logs
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="risk_management" --limit=30
-```
-
-### Common Resolutions
-
-#### **Exchange API Issues**
-```bash
-# Verify API keys
-./deploy/validate_secrets.py --filter="API_KEY"
-
-# Reset API connections
-curl -X POST https://shyvr-rlte.run.app/api/exchanges/reconnect
-
-# Check rate limiting
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="rate_limit" --limit=10
-```
-
-#### **Position Synchronization**
-```bash
-# Force position sync
-curl -X POST https://shyvr-rlte.run.app/api/positions/sync
-
-# Verify position accuracy
-python ./scripts/verify_position_accuracy.py
-```
-
-#### **Risk Management Issues**
-```bash
-# Check risk thresholds
-curl -s https://shyvr-rlte.run.app/api/risk/thresholds | jq
-
-# Emergency risk override (use carefully)
-curl -X POST https://shyvr-rlte.run.app/api/risk/emergency-override \
-  -H "Content-Type: application/json" \
-  -d '{"reason": "production issue", "duration": 300}'
-```
-
----
-
-## 4. ML/RL System Issues
-
-### Symptoms
-- Model prediction failures
-- Low prediction accuracy
-- RL training issues
-- Model loading errors
-
-### Diagnostic Steps
-
-#### Step 1: Model System Health
-```bash
-# Check ML model status
-curl -s https://shyvr-rlte.run.app/api/ml/models/status | jq
-
-# RL agent status
-curl -s https://shyvr-rlte.run.app/api/rl/agent/status | jq
-
-# Model loading performance
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="model_loading" --limit=20
-```
-
-#### Step 2: Model Performance Analysis
-```bash
-# Check prediction accuracy
-curl -s https://shyvr-rlte.run.app/api/ml/performance/accuracy | jq
-
-# RL episode rewards
-curl -s https://shyvr-rlte.run.app/api/rl/performance/rewards | jq
-
-# Model memory usage
-curl -s https://shyvr-rlte.run.app/debug/ml-memory-usage | jq
-```
-
-#### Step 3: Model Storage Verification
-```bash
-# Check GCS model storage
-gsutil ls gs://shyvr-rlte-models-$PROJECT_ID/
-
-# Verify model files
-python ./scripts/verify_model_integrity.py
-
-# Check model registry
-curl -s https://shyvr-rlte.run.app/api/models/registry | jq
-```
-
-### Common Resolutions
-
-#### **Model Loading Issues**
+**Solutions**:
 ```bash
 # Clear model cache
-curl -X POST https://shyvr-rlte.run.app/api/ml/cache/clear
+curl -X POST "${SERVICE_URL}/admin/cache/clear" -H "Authorization: Bearer $TOKEN"
 
-# Reload models
-curl -X POST https://shyvr-rlte.run.app/api/ml/models/reload
+# Increase memory temporarily
+gcloud run services update shyvr-rlte --memory=12Gi --region=us-central1
 
-# Check model file integrity
-python ./scripts/validate_model_files.py
+# Restart service
+gcloud run services replace service.yaml --region=us-central1
 ```
 
-#### **Prediction Performance**
+### Model Inference Issues
+**Symptoms**: Slow inference (>1000ms), timeouts, inconsistent results
+
+**Diagnostic**:
 ```bash
-# Restart ML service components
-curl -X POST https://shyvr-rlte.run.app/api/ml/restart
+# Performance benchmark
+curl -X POST "${SERVICE_URL}/debug/performance/benchmark" \
+    -H "Content-Type: application/json" \
+    -d '{"model_type": "itransformer"}'
 
-# Update model weights
-curl -X POST https://shyvr-rlte.run.app/api/ml/models/update
-
-# Performance optimization
-curl -X POST https://shyvr-rlte.run.app/api/ml/optimize
+# Monitor inference latency
+curl -s "${SERVICE_URL}/metrics" | grep transformer_inference_latency
 ```
 
-#### **RL Training Issues**
+**Solutions**:
+```python
+# Optimize inference
+torch.set_num_threads(6)
+torch.set_grad_enabled(False)
+model = torch.compile(model, mode="reduce-overhead")
+```
+
+## Memory and Resource Problems
+
+### Memory Exhaustion
+**Symptoms**: OOM kills, service restarts, slow performance
+
+**Immediate Response**:
 ```bash
-# Check experience replay buffer
-curl -s https://shyvr-rlte.run.app/api/rl/experience/status | jq
+# Check memory usage
+free -h
+ps aux --sort=-%mem | head -10
 
-# Restart RL training
-curl -X POST https://shyvr-rlte.run.app/api/rl/training/restart
+# Emergency memory increase
+gcloud run services update shyvr-rlte --memory=16Gi --region=us-central1
 
-# Clear corrupted experiences
-python ./scripts/clean_experience_buffer.py
+# Memory analysis
+curl -s "${SERVICE_URL}/debug/memory/breakdown" | jq '.'
 ```
+
+**Solutions**:
+```python
+# Memory optimization
+def optimize_memory():
+    # Clear caches
+    gc.collect()
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    
+    # Use model sharding for large models
+    model = load_model_with_sharding(max_memory_gb=6)
+    
+    # Implement cache eviction
+    cache_manager.evict_lru_items()
+```
+
+## Performance Issues
+
+### High Latency
+**Symptoms**: API responses >100ms, model inference >1000ms, slow database queries
+
+**Analysis**:
+```bash
+# End-to-end latency measurement
+curl -w "@curl-format.txt" -s "${SERVICE_URL}/api/predict"
+
+# Database performance
+curl -s "${SERVICE_URL}/debug/database/slow-queries" | jq '.'
+
+# Cache performance
+curl -s "${SERVICE_URL}/debug/cache/stats" | jq '.'
+```
+
+**Optimization**:
+```sql
+-- Add database indexes
+CREATE INDEX CONCURRENTLY idx_trades_symbol_timestamp 
+ON trades(symbol, created_at DESC);
+
+-- Update statistics
+ANALYZE trades;
+```
+
+```python
+# Implement batching
+class RequestBatcher:
+    def __init__(self, batch_size=10, max_wait_ms=50):
+        self.batch_size = batch_size
+        self.max_wait_ms = max_wait_ms
+        
+    async def process_batch(self, requests):
+        return await model.predict_batch(requests)
+```
+
+## Deployment Problems
+
+### Build Failures
+**Common Issues**:
+```bash
+# Docker build timeout - increase timeout
+gcloud builds submit --timeout=3600s --machine-type=e2-highcpu-16
+
+# Dependency conflicts - clear cache
+gcloud builds submit --no-cache
+
+# Model download failures - add retry logic
+```
+
+### Blue-Green Deployment Issues
+```bash
+# Check deployment status
+gcloud run revisions list --service=shyvr-rlte --region=us-central1
+
+# Emergency rollback
+PREV_REVISION=$(gcloud run revisions list --service=shyvr-rlte --region=us-central1 \
+    --format="value(metadata.name)" --limit=2 | tail -1)
+gcloud run services update-traffic shyvr-rlte --to-revisions=$PREV_REVISION=100 --region=us-central1
+
+# Gradual traffic migration
+gcloud run services update-traffic shyvr-rlte --to-revisions=new=25,old=75 --region=us-central1
+```
+
+## Database Connectivity Issues
+
+### Connection Problems
+**Symptoms**: Connection refused, too many connections, timeouts
+
+**Diagnostic**:
+```bash
+# Test connectivity
+gcloud sql connect shyvr-rlte-db --user=postgres
+
+# Check connection pool
+curl -s "${SERVICE_URL}/debug/database/pool-status" | jq '.'
+
+# Monitor connections
+psql -c "SELECT count(*), max_conn FROM pg_stat_activity 
+         CROSS JOIN (SELECT setting::int as max_conn FROM pg_settings 
+         WHERE name = 'max_connections') t;"
+```
+
+**Solutions**:
+```python
+# Optimize connection pool
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=20,
+    max_overflow=30,
+    pool_pre_ping=True,
+    pool_recycle=3600
+)
+
+# Connection leak detection
+@track_db_connections
+async def database_operation():
+    # Database operations
+    pass
+```
+
+## API and External Service Issues
+
+### External API Failures
+**Issues**: Rate limits, auth failures, timeouts
+
+**Resilience Patterns**:
+```python
+# Circuit breaker
+class CircuitBreaker:
+    def __init__(self, failure_threshold=5, timeout=60):
+        self.failure_threshold = failure_threshold
+        self.timeout = timeout
+        self.failure_count = 0
+        self.state = "CLOSED"
+    
+    async def call(self, func, *args):
+        if self.state == "OPEN":
+            raise Exception("Circuit breaker is OPEN")
+        
+        try:
+            result = await func(*args)
+            if self.state == "HALF_OPEN":
+                self.state = "CLOSED"
+            return result
+        except Exception:
+            self.failure_count += 1
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            raise
+
+# Retry with backoff
+async def retry_with_backoff(func, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return await func()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            await asyncio.sleep(2 ** attempt)
+```
+
+## Emergency Procedures
+
+### System-Wide Outage Response
+
+#### Immediate Actions (0-5 minutes)
+```bash
+#!/bin/bash
+# Emergency response script
+echo "=== EMERGENCY RESPONSE ==="
+
+# Check service status
+gcloud run services list --filter="shyvr-rlte"
+
+# Immediate rollback if recent deployment
+PREV_REV=$(gcloud run revisions list --service=shyvr-rlte --region=us-central1 \
+    --format="value(metadata.name)" --limit=2 | tail -1)
+gcloud run services update-traffic shyvr-rlte --to-revisions=$PREV_REV=100 --region=us-central1
+
+# Scale up resources
+gcloud run services update shyvr-rlte --memory=16Gi --cpu=8 --max-instances=20 --region=us-central1
+```
+
+#### Recovery Phase (5-60 minutes)
+```bash
+# Clear caches
+curl -X POST "${SERVICE_URL}/admin/cache/clear-all" -H "Authorization: Bearer $TOKEN"
+
+# Restart models
+curl -X POST "${SERVICE_URL}/admin/models/restart-all" -H "Authorization: Bearer $TOKEN"
+
+# Health verification
+for i in {1..10}; do
+    curl -f -s "${SERVICE_URL}/health" && echo "Health check $i: OK" && break
+    sleep 30
+done
+```
+
+### Database Emergency Recovery
+```sql
+-- Kill long-running queries
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity 
+WHERE state = 'active' AND now() - query_start > interval '5 minutes';
+
+-- Check connections
+SELECT datname, count(*) FROM pg_stat_activity GROUP BY datname;
+
+-- Check locks
+SELECT blocked_locks.pid AS blocked_pid,
+       blocking_locks.pid AS blocking_pid,
+       blocked_activity.query AS blocked_statement
+FROM pg_catalog.pg_locks blocked_locks
+    JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid
+    JOIN pg_catalog.pg_locks blocking_locks ON blocking_locks.locktype = blocked_locks.locktype
+    JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid
+WHERE NOT blocked_locks.GRANTED;
+```
+
+## Diagnostic Tools and Commands
+
+### Comprehensive Diagnostics
+```bash
+#!/bin/bash
+# comprehensive_diagnostics.sh
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+REPORT_DIR="diagnostics_$TIMESTAMP"
+mkdir -p $REPORT_DIR
+
+echo "🔍 Running comprehensive diagnostics..."
+
+# System info
+{
+    echo "=== System Information ==="
+    date; uname -a
+    gcloud config get-value project
+} > $REPORT_DIR/system_info.txt
+
+# Service status
+{
+    echo "=== Service Status ==="
+    gcloud run services describe shyvr-rlte --region=us-central1
+} > $REPORT_DIR/service_status.txt
+
+# Health checks
+{
+    echo "=== Health Checks ==="
+    curl -s "${SERVICE_URL}/health" | jq '.'
+    curl -s "${SERVICE_URL}/health/transformers" | jq '.'
+    curl -s "${SERVICE_URL}/health/database" | jq '.'
+} > $REPORT_DIR/health_checks.json
+
+# Performance metrics
+curl -s "${SERVICE_URL}/metrics" > $REPORT_DIR/metrics.txt
+curl -s "${SERVICE_URL}/debug/memory/breakdown" | jq '.' > $REPORT_DIR/memory_usage.json
+
+# Recent logs
+gcloud logging read "resource.type=cloud_run_revision AND \
+    resource.labels.service_name=shyvr-rlte AND \
+    timestamp >= \"$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)\"" \
+    --limit=500 > $REPORT_DIR/recent_logs.json
+
+# Error logs
+gcloud logging read "resource.type=cloud_run_revision AND \
+    resource.labels.service_name=shyvr-rlte AND \
+    severity>=ERROR" --limit=100 > $REPORT_DIR/error_logs.json
+
+echo "✅ Diagnostics complete: $REPORT_DIR"
+```
+
+### Monitoring Commands
+```bash
+# Real-time health monitoring
+watch -n 5 'curl -s "${SERVICE_URL}/health" | jq ".status, .checks"'
+
+# Resource monitoring
+watch -n 10 'curl -s "${SERVICE_URL}/metrics" | grep -E "(memory|cpu|latency)"'
+
+# Error monitoring
+watch -n 30 'gcloud logging read "resource.type=cloud_run_revision AND \
+    severity>=ERROR" --limit=10 --format="value(textPayload)"'
+
+# Model performance monitoring
+watch -n 15 'for model in itransformer patchtst timesmixer timesfm; do
+    echo "=== $model ==="
+    curl -s "${SERVICE_URL}/health/models/$model" | jq ".status, .avg_inference_latency_ms"
+done'
+```
+
+## Common Error Codes
+
+### HTTP Status Codes
+```yaml
+client_errors:
+  400: "Bad Request - Invalid input parameters"
+  401: "Unauthorized - Missing or invalid authentication"
+  403: "Forbidden - Insufficient permissions"
+  404: "Not Found - Resource does not exist"
+  429: "Too Many Requests - Rate limit exceeded"
+
+server_errors:
+  500: "Internal Server Error - Unexpected error"
+  502: "Bad Gateway - Upstream service error"
+  503: "Service Unavailable - Service temporarily down"
+  504: "Gateway Timeout - Request timeout"
+```
+
+### Application Error Codes
+```yaml
+model_errors:
+  MODEL_001: "Model loading failed"
+  MODEL_002: "Model inference timeout"
+  MODEL_003: "Model memory allocation failed"
+  MODEL_004: "Model version incompatible"
+
+database_errors:
+  DB_001: "Database connection failed"
+  DB_002: "Database query timeout"
+  DB_003: "Database transaction failed"
+  DB_004: "Connection pool exhausted"
+
+api_errors:
+  API_001: "External API unavailable"
+  API_002: "API rate limit exceeded"
+  API_003: "API authentication failed"
+  API_004: "API response timeout"
+```
+
+### Resolution Strategies by Error Type
+
+#### Model Errors
+- **MODEL_001**: Clear cache, restart service, check memory
+- **MODEL_002**: Optimize inference, increase timeout, check resources
+- **MODEL_003**: Increase memory allocation, enable model sharding
+- **MODEL_004**: Rollback to compatible version, update model
+
+#### Database Errors  
+- **DB_001**: Check network, verify credentials, test connectivity
+- **DB_002**: Optimize queries, add indexes, increase timeout
+- **DB_003**: Check locks, retry transaction, investigate conflicts
+- **DB_004**: Increase pool size, kill idle connections, restart service
+
+#### API Errors
+- **API_001**: Enable circuit breaker, use fallback data, check network
+- **API_002**: Implement rate limiting, add delays, upgrade plan
+- **API_003**: Verify credentials, refresh tokens, check permissions
+- **API_004**: Increase timeout, implement retry logic, check network
+
+## Best Practices for Troubleshooting
+
+### General Guidelines
+1. **Start with health checks** - Always verify overall system health first
+2. **Collect evidence** - Gather logs, metrics, and diagnostic data before changes
+3. **Make minimal changes** - Prefer small, targeted fixes over large changes
+4. **Test changes** - Verify fixes work before considering issue resolved
+5. **Document solutions** - Record what worked for future reference
+
+### Escalation Procedures
+1. **Level 1** (0-15 minutes): Self-service diagnostics and common fixes
+2. **Level 2** (15-60 minutes): Advanced troubleshooting and service restarts  
+3. **Level 3** (1+ hours): Engineering escalation and architectural changes
+
+### Post-Incident Actions
+- Conduct root cause analysis
+- Update monitoring and alerting
+- Improve documentation
+- Implement preventive measures
+- Schedule follow-up review
+
+## Conclusion
+
+This troubleshooting guide provides systematic approaches to resolving issues in the transformer-enabled RLTE system. Key takeaways:
+
+- **Use systematic diagnosis** to identify root causes efficiently
+- **Implement comprehensive monitoring** to detect issues early
+- **Maintain emergency procedures** for rapid incident response
+- **Document all solutions** to improve future troubleshooting
+- **Focus on prevention** through proper monitoring and alerting
+
+For critical issues requiring immediate escalation, contact the technical team using the emergency procedures outlined above.
 
 ---
 
-## 5. Database Issues
-
-### Symptoms
-- Database connection errors
-- Slow query performance
-- Transaction timeouts
-- Data inconsistencies
-
-### Diagnostic Steps
-
-#### Step 1: Database Connectivity
-```bash
-# Test database connection
-python ./scripts/test_cloud_sql_connectivity.py
-
-# Check connection pool status
-curl -s https://shyvr-rlte.run.app/debug/db-pool-status | jq
-
-# Database instance status
-gcloud sql instances describe shyvr-rlte-db --format="value(state)"
-```
-
-#### Step 2: Performance Analysis
-```bash
-# Check slow queries
-gcloud sql operations list --instance=shyvr-rlte-db --filter="operationType=QUERY" --limit=10
-
-# Database metrics
-gcloud monitoring timeseries list \
-  --filter='metric.type="cloudsql.googleapis.com/database/cpu/utilization"'
-
-# Connection count
-gcloud monitoring timeseries list \
-  --filter='metric.type="cloudsql.googleapis.com/database/network/connections"'
-```
-
-#### Step 3: Data Integrity Check
-```bash
-# Run database validation
-python ./scripts/validate_database_schema.py
-
-# Check for data corruption
-python ./scripts/check_data_integrity.py
-
-# Verify recent migrations
-python ./scripts/verify_migration_status.py
-```
-
-### Common Resolutions
-
-#### **Connection Issues**
-```bash
-# Restart database connections
-curl -X POST https://shyvr-rlte.run.app/debug/db-restart-connections
-
-# Update connection configuration
-gcloud sql instances patch shyvr-rlte-db \
-  --database-flags=max_connections=200
-
-# Check firewall rules
-gcloud sql instances describe shyvr-rlte-db --format="value(settings.ipConfiguration)"
-```
-
-#### **Performance Optimization**
-```bash
-# Optimize database performance
-python ./scripts/optimize_database_performance.py
-
-# Update statistics
-gcloud sql operations create \
-  --instance=shyvr-rlte-db \
-  --type=ANALYZE_TABLE
-```
-
-#### **Data Recovery**
-```bash
-# Create backup
-gcloud sql backups create \
-  --instance=shyvr-rlte-db \
-  --description="Emergency backup $(date)"
-
-# Restore from backup (if needed)
-gcloud sql backups restore BACKUP_ID \
-  --restore-instance=shyvr-rlte-db
-```
-
----
-
-## 6. Security Issues
-
-### Symptoms
-- Authentication failures
-- Unauthorized access attempts
-- API key issues
-- Certificate problems
-
-### Diagnostic Steps
-
-#### Step 1: Security Status Check
-```bash
-# Check authentication system
-curl -s https://shyvr-rlte.run.app/api/auth/status | jq
-
-# Verify SSL certificate
-curl -I https://shyvr-rlte.run.app/
-
-# Check secret manager access
-gcloud secrets list --filter="name:shyvr-rlte"
-```
-
-#### Step 2: Access Log Analysis
-```bash
-# Check unauthorized access attempts
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="401 OR 403" --limit=50
-
-# API key usage analysis
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="api_key" --limit=30
-
-# Security alert logs
-gcloud run logs tail shyvr-rlte --region=us-central1 --filter="security_alert" --limit=20
-```
-
-#### Step 3: Compliance Verification
-```bash
-# Run security audit
-python ./scripts/security_audit.py
-
-# Check compliance status
-curl -s https://shyvr-rlte.run.app/api/compliance/status | jq
-
-# Verify data encryption
-python ./scripts/verify_encryption.py
-```
-
-### Common Resolutions
-
-#### **Authentication Issues**
-```bash
-# Regenerate API keys
-./deploy/rotate_secrets.py --keys="API_KEYS"
-
-# Reset authentication system
-curl -X POST https://shyvr-rlte.run.app/api/auth/reset
-
-# Update secret manager
-gcloud secrets versions add SECRET_NAME --data-file=new_secret.txt
-```
-
-#### **Certificate Problems**
-```bash
-# Check certificate expiry
-curl -s https://shyvr-rlte.run.app/ | openssl x509 -noout -dates
-
-# Update SSL configuration
-gcloud run services update shyvr-rlte \
-  --region=us-central1 \
-  --update-env-vars SSL_CERT_PATH=/etc/ssl/certs
-```
-
----
-
-## 7. Monitoring & Alerting Issues
-
-### Symptoms
-- Missing alerts
-- False positive alerts
-- Dashboard loading issues
-- Metric collection problems
-
-### Diagnostic Steps
-
-#### Step 1: Monitoring System Check
-```bash
-# Check monitoring service
-gcloud services list --enabled --filter="name:monitoring.googleapis.com"
-
-# Verify alert policies
-gcloud alpha monitoring policies list --filter="enabled=true"
-
-# Check notification channels
-gcloud alpha monitoring channels list
-```
-
-#### Step 2: Metric Collection Analysis
-```bash
-# Check custom metrics
-gcloud monitoring metrics list --filter="metric.type:custom.googleapis.com"
-
-# Verify metric ingestion
-gcloud monitoring timeseries list \
-  --filter='metric.type="custom.googleapis.com/trading/execution_latency"' \
-  --interval.end-time=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  --interval.start-time=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-```
-
-#### Step 3: Dashboard Verification
-```bash
-# Check dashboard configuration
-gcloud monitoring dashboards list
-
-# Verify dashboard access
-curl -s "https://monitoring.googleapis.com/v1/projects/$PROJECT_ID/dashboards"
-```
-
-### Common Resolutions
-
-#### **Alert Configuration**
-```bash
-# Recreate alert policies
-./deploy/sla_monitoring_setup.sh
-
-# Test notification channels
-gcloud alpha monitoring channels verify CHANNEL_ID
-
-# Update alert thresholds
-python ./scripts/update_alert_thresholds.py
-```
-
-#### **Metric Collection**
-```bash
-# Restart metric collection
-curl -X POST https://shyvr-rlte.run.app/debug/restart-metrics
-
-# Verify metric format
-python ./scripts/validate_custom_metrics.py
-
-# Clear metric cache
-curl -X POST https://shyvr-rlte.run.app/debug/clear-metric-cache
-```
-
----
-
-## 8. Emergency Procedures
-
-### Complete System Recovery
-
-#### **Emergency Stop Sequence**
-```bash
-# 1. Stop all trading
-curl -X POST https://shyvr-rlte.run.app/api/emergency-stop
-
-# 2. Verify all positions are safe
-./scripts/verify_position_safety.sh
-
-# 3. Scale service to minimum
-gcloud run services update shyvr-rlte --max-instances=1 --region=us-central1
-
-# 4. Enable maintenance mode
-curl -X POST https://shyvr-rlte.run.app/api/maintenance-mode/enable
-```
-
-#### **Service Restart Sequence**
-```bash
-# 1. Deploy latest known good version
-./deploy/deploy_latest.sh --version=KNOWN_GOOD_VERSION
-
-# 2. Validate deployment
-./deploy/validate_deployment.sh
-
-# 3. Gradually restore traffic
-./deploy/gradual_traffic_restoration.sh
-
-# 4. Resume trading (manual approval required)
-curl -X POST https://shyvr-rlte.run.app/api/resume-trading
-```
-
-### Disaster Recovery
-
-#### **Complete Infrastructure Recovery**
-```bash
-# 1. Deploy to backup region
-./deploy/disaster_recovery_deployment.sh --region=us-east1
-
-# 2. Restore database from backup
-./scripts/restore_database_backup.sh --backup-id=LATEST
-
-# 3. Sync model storage
-./scripts/sync_model_storage.sh --source=primary --target=backup
-
-# 4. Update DNS routing
-./scripts/update_dns_routing.sh --region=us-east1
-```
-
----
-
-## 9. Preventive Maintenance
-
-### Daily Checks
-```bash
-# Run daily health check
-./scripts/daily_health_check.sh
-
-# Check system performance
-./scripts/performance_check.sh --comprehensive
-
-# Verify backup integrity
-./scripts/verify_backup_integrity.sh
-```
-
-### Weekly Maintenance
-```bash
-# Database maintenance
-./scripts/weekly_database_maintenance.sh
-
-# Model performance review
-./scripts/weekly_model_review.sh
-
-# Security audit
-./scripts/weekly_security_audit.sh
-```
-
-### Monthly Tasks
-```bash
-# Comprehensive system audit
-./scripts/monthly_system_audit.sh
-
-# Performance optimization
-./scripts/monthly_optimization.sh
-
-# Documentation updates
-./scripts/update_documentation.sh
-```
-
----
-
-## 10. Escalation Procedures
-
-### Internal Escalation
-1. **Level 1**: On-call Engineer (0-15 minutes)
-2. **Level 2**: Technical Lead (15-30 minutes)
-3. **Level 3**: Operations Manager (30-60 minutes)
-4. **Level 4**: CTO/Executive (1+ hours)
-
-### External Escalation
-1. **Cloud Provider Support**: For infrastructure issues
-2. **Exchange Support**: For trading connectivity issues
-3. **Security Vendor**: For security incidents
-4. **Regulatory Bodies**: For compliance issues
-
-### Emergency Contacts
-- **On-call Engineer**: +1-xxx-xxx-xxxx
-- **Technical Lead**: +1-xxx-xxx-xxxx
-- **Operations Manager**: +1-xxx-xxx-xxxx
-- **Security Team**: security@shyvr.ai
-- **Legal/Compliance**: compliance@shyvr.ai
-
----
-
-**Last Updated**: August 3, 2025  
 **Document Version**: 1.0  
-**Next Review**: November 3, 2025
+**Last Updated**: 2025-08-06  
+**Maintained By**: ML Development Team
