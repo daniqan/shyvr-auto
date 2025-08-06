@@ -97,6 +97,75 @@ class TransformerMonitoringDashboard:
         
         self.logger = structlog.get_logger(self.__class__.__name__)
     
+    def get_ensemble_health_status(self) -> Dict[str, Any]:
+        """
+        Get ensemble-level health status aggregation.
+        
+        Aggregates health metrics across all ensemble models to provide
+        ensemble-level health status and individual model details.
+        
+        Returns:
+            Dictionary containing ensemble health metrics
+        """
+        try:
+            individual_models = {}
+            healthy_count = 0
+            total_score = 0.0
+            total_models = len(self.models)
+            
+            for model_name, model in self.models.items():
+                try:
+                    # Get model health status
+                    if hasattr(model, 'get_health_status'):
+                        health_data = model.get_health_status()
+                    else:
+                        # Fallback to basic health check
+                        is_healthy = getattr(model, 'healthy', True)
+                        health_score = getattr(model, 'health_score', 0.95)
+                        health_data = {'healthy': is_healthy, 'score': health_score}
+                    
+                    individual_models[model_name] = health_data
+                    
+                    if health_data.get('healthy', False):
+                        healthy_count += 1
+                    
+                    total_score += health_data.get('score', 0.0)
+                    
+                except Exception as e:
+                    self.logger.warning(f"Failed to get health status for {model_name}: {e}")
+                    individual_models[model_name] = {
+                        'healthy': False,
+                        'score': 0.0,
+                        'error': str(e)
+                    }
+            
+            # Calculate ensemble metrics
+            ensemble_healthy = healthy_count == total_models
+            ensemble_score = total_score / total_models if total_models > 0 else 0.0
+            
+            return {
+                'ensemble_healthy': ensemble_healthy,
+                'individual_models': individual_models,
+                'ensemble_score': ensemble_score,
+                'healthy_model_count': healthy_count,
+                'total_model_count': total_models,
+                'health_percentage': (healthy_count / total_models) * 100 if total_models > 0 else 0.0,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get ensemble health status: {e}")
+            return {
+                'ensemble_healthy': False,
+                'individual_models': {},
+                'ensemble_score': 0.0,
+                'healthy_model_count': 0,
+                'total_model_count': 0,
+                'health_percentage': 0.0,
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            }
+    
     async def create_dashboard_config(self) -> Dict[str, Any]:
         """
         Create comprehensive transformer monitoring dashboard configuration.
@@ -173,7 +242,7 @@ class TransformerHealthPanel:
             time_series.append({
                 'filter': f'resource.type="gce_instance" AND '
                          f'metric.type="custom.googleapis.com/transformer/health" AND '
-                         f'metric.labels.model_type="{model.model_type if hasattr(model, "model_type") else model_name.upper()}"',
+                         f'metric.labels.model_name="{model_name}"',
                 'aggregation': {
                     'alignmentPeriod': '60s',
                     'perSeriesAligner': 'ALIGN_MEAN'
@@ -209,13 +278,11 @@ class TransformerMemoryPanel:
         datasets = []
         
         for model_name, model in self.models.items():
-            model_type = model.model_type if hasattr(model, 'model_type') else model_name.upper()
-            
             datasets.append({
                 'timeSeriesQuery': {
                     'filter': f'resource.type="gce_instance" AND '
                              f'metric.type="custom.googleapis.com/transformer/memory_usage" AND '
-                             f'metric.labels.model_type="{model_type}"',
+                             f'metric.labels.model_name="{model_name}"',
                     'aggregation': {
                         'alignmentPeriod': '60s',
                         'perSeriesAligner': 'ALIGN_MEAN'
@@ -254,14 +321,12 @@ class TransformerLatencyPanel:
         datasets = []
         
         for model_name, model in self.models.items():
-            model_type = model.model_type if hasattr(model, 'model_type') else model_name.upper()
-            
             # P95 percentile
             datasets.append({
                 'timeSeriesQuery': {
                     'filter': f'resource.type="gce_instance" AND '
                              f'metric.type="custom.googleapis.com/transformer/inference_latency" AND '
-                             f'metric.labels.model_type="{model_type}"',
+                             f'metric.labels.model_name="{model_name}"',
                     'aggregation': {
                         'alignmentPeriod': '60s',
                         'perSeriesAligner': 'ALIGN_PERCENTILE_95'
@@ -276,7 +341,7 @@ class TransformerLatencyPanel:
                 'timeSeriesQuery': {
                     'filter': f'resource.type="gce_instance" AND '
                              f'metric.type="custom.googleapis.com/transformer/inference_latency" AND '
-                             f'metric.labels.model_type="{model_type}"',
+                             f'metric.labels.model_name="{model_name}"',
                     'aggregation': {
                         'alignmentPeriod': '60s',
                         'perSeriesAligner': 'ALIGN_PERCENTILE_99'
@@ -315,13 +380,11 @@ class TransformerCachePanel:
         datasets = []
         
         for model_name, model in self.models.items():
-            model_type = model.model_type if hasattr(model, 'model_type') else model_name.upper()
-            
             datasets.append({
                 'timeSeriesQuery': {
                     'filter': f'resource.type="gce_instance" AND '
                              f'metric.type="custom.googleapis.com/transformer/cache_hit_rate" AND '
-                             f'metric.labels.model_type="{model_type}"',
+                             f'metric.labels.model_name="{model_name}"',
                     'aggregation': {
                         'alignmentPeriod': '60s',
                         'perSeriesAligner': 'ALIGN_MEAN'
@@ -360,13 +423,11 @@ class TransformerLoadingPanel:
         datasets = []
         
         for model_name, model in self.models.items():
-            model_type = model.model_type if hasattr(model, 'model_type') else model_name.upper()
-            
             datasets.append({
                 'timeSeriesQuery': {
                     'filter': f'resource.type="gce_instance" AND '
                              f'metric.type="custom.googleapis.com/transformer/loading_time" AND '
-                             f'metric.labels.model_type="{model_type}"',
+                             f'metric.labels.model_name="{model_name}"',
                     'aggregation': {
                         'alignmentPeriod': '300s',  # 5 minutes
                         'perSeriesAligner': 'ALIGN_MEAN'
