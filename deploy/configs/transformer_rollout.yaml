@@ -1,0 +1,98 @@
+# Transformer Rollout Configuration
+# Progressive rollout configuration for transformer model deployments
+# Integrates with existing blue_green_deployment.sh script
+
+rollout_stages:
+  - name: "canary"
+    traffic_percentage: 10
+    duration_minutes: 5
+    validation_checks:
+      - "health_endpoint"
+      - "error_rate"
+      - "response_time"
+      - "resource_utilization"
+
+  - name: "limited"
+    traffic_percentage: 25
+    duration_minutes: 10
+    validation_checks:
+      - "health_endpoint"
+      - "error_rate"
+      - "response_time"
+      - "resource_utilization"
+      - "transformer_model_accuracy"
+
+  - name: "expanded"
+    traffic_percentage: 50
+    duration_minutes: 15
+    validation_checks:
+      - "health_endpoint"
+      - "error_rate"
+      - "response_time"
+      - "resource_utilization"
+      - "transformer_model_accuracy"
+      - "prediction_quality"
+
+  - name: "full"
+    traffic_percentage: 100
+    duration_minutes: 30
+    validation_checks:
+      - "health_endpoint"
+      - "error_rate"
+      - "response_time"
+      - "resource_utilization"
+      - "transformer_model_accuracy"
+      - "prediction_quality"
+      - "end_to_end_validation"
+
+canary_deployment:
+  initial_traffic_percent: 10
+  intermediate_traffic_percent: 50
+  final_traffic_percent: 100
+  model_warmup_time_seconds: 60
+  traffic_ramp_delay_seconds: 180
+
+validation:
+  health_check_attempts: 15
+  health_check_interval: 20
+  success_threshold: 95  # percentage
+  error_threshold: 5     # percentage
+  response_time_threshold_ms: 2000
+  resource_utilization_threshold: 80  # percentage
+
+rollback_triggers:
+  error_rate_threshold: 10          # percentage
+  response_time_threshold: 3000     # milliseconds
+  health_check_failures: 5          # consecutive failures
+  resource_exhaustion_threshold: 90 # percentage
+  model_accuracy_drop_threshold: 15 # percentage
+  prediction_quality_threshold: 0.7 # minimum quality score
+
+integration:
+  blue_green_deployment:
+    source_script: "./blue_green_deployment.sh"
+    config_injection_method: "environment_variables"
+    environment_variables:
+      - "TRANSFORMER_ROLLOUT_CONFIG=/app/deploy/configs/transformer_rollout.yaml"
+      - "TRANSFORMER_MODELS_CONFIG=/app/deploy/configs/transformer_models.json"
+      - "ROLLOUT_MODE=progressive"
+      - "MODEL_VALIDATION_ENABLED=true"
+    
+    # Override parameters for transformer deployments
+    overrides:
+      health_check_attempts: 15
+      health_check_interval: 20
+      traffic_migration_delay: 180
+      rollback_timeout: 300
+
+  monitoring:
+    enable_detailed_metrics: true
+    transformer_specific_metrics: true
+    model_performance_tracking: true
+    resource_monitoring: true
+
+  safety:
+    enable_circuit_breaker: true
+    fallback_to_previous_model: true
+    automatic_rollback_on_failure: true
+    preserve_model_state: true

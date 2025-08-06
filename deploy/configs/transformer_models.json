@@ -1,0 +1,148 @@
+{
+  "iTransformer": {
+    "resources": {
+      "memory": "4Gi",
+      "cpu": 2,
+      "scaling_factor": 1.2,
+      "max_concurrent_requests": 10,
+      "startup_cpu_boost": true
+    },
+    "health_checks": {
+      "endpoint": "/health/iTransformer",
+      "timeout_seconds": 30,
+      "interval_seconds": 15,
+      "max_failures": 3,
+      "startup_probe_delay": 60
+    },
+    "timeouts": {
+      "request_timeout": 120,
+      "startup_timeout": 300,
+      "shutdown_timeout": 30
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "iTransformer",
+        "TRANSFORMER_MAX_LENGTH": "512",
+        "TRANSFORMER_BATCH_SIZE": "1",
+        "TORCH_COMPILE_MODE": "reduce-overhead",
+        "MODEL_CACHE_DIR": "/app/models/cache/iTransformer",
+        "ATTENTION_DROPOUT": "0.1",
+        "FEED_FORWARD_DROPOUT": "0.1"
+      }
+    }
+  },
+  "PatchTST": {
+    "resources": {
+      "memory": "3Gi",
+      "cpu": 2,
+      "scaling_factor": 0.8,
+      "max_concurrent_requests": 12,
+      "startup_cpu_boost": true
+    },
+    "health_checks": {
+      "endpoint": "/health/PatchTST",
+      "timeout_seconds": 25,
+      "interval_seconds": 15,
+      "max_failures": 3,
+      "startup_probe_delay": 45
+    },
+    "timeouts": {
+      "request_timeout": 100,
+      "startup_timeout": 240,
+      "shutdown_timeout": 30
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "PatchTST",
+        "TRANSFORMER_MAX_LENGTH": "336",
+        "TRANSFORMER_BATCH_SIZE": "1",
+        "PATCH_LENGTH": "16",
+        "STRIDE": "8",
+        "MODEL_CACHE_DIR": "/app/models/cache/PatchTST",
+        "PATCH_DROPOUT": "0.1"
+      }
+    }
+  },
+  "TimesMixer": {
+    "resources": {
+      "memory": "5Gi",
+      "cpu": 3,
+      "scaling_factor": 1.5,
+      "max_concurrent_requests": 8,
+      "startup_cpu_boost": true
+    },
+    "health_checks": {
+      "endpoint": "/health/TimesMixer",
+      "timeout_seconds": 35,
+      "interval_seconds": 20,
+      "max_failures": 3,
+      "startup_probe_delay": 75
+    },
+    "timeouts": {
+      "request_timeout": 150,
+      "startup_timeout": 360,
+      "shutdown_timeout": 45
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "TimesMixer",
+        "TRANSFORMER_MAX_LENGTH": "672",
+        "TRANSFORMER_BATCH_SIZE": "1",
+        "MIXER_LAYERS": "4",
+        "MIXER_DROPOUT": "0.1",
+        "MODEL_CACHE_DIR": "/app/models/cache/TimesMixer",
+        "TEMPORAL_MIXING": "true"
+      }
+    }
+  },
+  "TimesFM": {
+    "resources": {
+      "memory": "6Gi",
+      "cpu": 4,
+      "scaling_factor": 2.0,
+      "max_concurrent_requests": 6,
+      "startup_cpu_boost": true
+    },
+    "health_checks": {
+      "endpoint": "/health/TimesFM",
+      "timeout_seconds": 45,
+      "interval_seconds": 25,
+      "max_failures": 3,
+      "startup_probe_delay": 90
+    },
+    "timeouts": {
+      "request_timeout": 180,
+      "startup_timeout": 480,
+      "shutdown_timeout": 60
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "TimesFM",
+        "TRANSFORMER_MAX_LENGTH": "1024",
+        "TRANSFORMER_BATCH_SIZE": "1",
+        "FOUNDATION_MODEL": "true",
+        "ZERO_SHOT_ENABLED": "true",
+        "MODEL_CACHE_DIR": "/app/models/cache/TimesFM",
+        "PRETRAINED_CHECKPOINT": "/app/models/timesfm/checkpoint",
+        "FORECASTING_HORIZON": "32"
+      }
+    }
+  },
+  "_metadata": {
+    "version": "1.0.0",
+    "created_by": "transformer_rollout_config_generator",
+    "created_at": "2025-08-06",
+    "phase": "3.3.3",
+    "description": "Transformer model configuration for Cloud Run deployment",
+    "compatibility": {
+      "blue_green_deployment": ">=1.0",
+      "cloud_run": ">=gen2",
+      "phase_326_optimizations": true
+    },
+    "validation": {
+      "schema_version": "1.0",
+      "required_fields": ["resources", "health_checks", "timeouts", "environment"],
+      "resource_validation": true
+    }
+  }
+}
