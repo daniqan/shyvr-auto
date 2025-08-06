@@ -1,38 +1,41 @@
-# Production Rollout Documentation - Transformer Deployment
+# Production Rollout Documentation - Ensemble Deployment
 
 ## Rollout Overview
 
-This document provides comprehensive operational procedures for the production deployment of Transformer models within the existing Shyvr RLTE infrastructure. The rollout leverages and enhances the current deployment pipeline without replacing core components.
+This document provides comprehensive operational procedures for the production deployment of the ML ensemble (LSTM + 4 Transformers) within the existing Shyvr RLTE infrastructure. The rollout leverages and enhances the current deployment pipeline without replacing core components.
 
 ### Integration with Existing Deployment Pipeline
 
-The transformer deployment **integrates with** the existing infrastructure:
+The ensemble deployment **integrates with** the existing infrastructure:
 - **Primary Orchestrator**: `./deploy/deploy.sh` remains the main deployment command
 - **Pipeline Engine**: `automated_deployment_pipeline.sh` handles comprehensive validation
 - **Traffic Management**: `blue_green_deployment.sh` manages zero-downtime deployments
 - **Rollback System**: `automated_rollback.sh` provides emergency recovery
 
-### How Transformers Enhance Current System
+### Environment-Based Deployment Strategy
 
-Transformers **enhance** rather than replace the existing system:
-- **Ensemble Approach**: Transformers work alongside existing LSTM models
-- **Gradual Rollout**: Progressive traffic migration ensures system stability
-- **Fallback Capability**: Automatic fallback to LSTM models if transformer issues occur
-- **Resource Optimization**: Phase 3.2.6 optimizations ensure efficient resource usage
-- **Monitoring Integration**: Existing monitoring systems extended with transformer-specific metrics
+The ensemble deployment uses **ENVIRONMENT variable** for configuration:
+- **Development Mode**: `ENVIRONMENT=development` - LSTM only (2Gi RAM, 1 CPU)
+- **Production Mode**: `ENVIRONMENT=production` - Full ensemble (8Gi RAM, 6 CPU)
+- **Staging Mode**: `ENVIRONMENT=staging` - Full ensemble with reduced resources (4Gi RAM, 3 CPU)
+- **Fallback Capability**: Automatic fallback to LSTM if ensemble issues occur
+- **Resource Optimization**: Environment-based resource allocation ensures efficiency
 
 ### Key Deployment Commands Remain Unchanged
 
 Core deployment commands maintain consistency:
 ```bash
-# Standard production deployment
-./deploy/deploy.sh production standard
+# Standard production deployment (full ensemble)
+ENVIRONMENT=production ./deploy/deploy.sh production standard
 
-# Blue-green deployment
-./deploy/deploy.sh production blue-green
+# Development deployment (LSTM only)
+ENVIRONMENT=development ./deploy/deploy.sh staging standard
+
+# Blue-green deployment with full ensemble
+ENVIRONMENT=production ./deploy/deploy.sh production blue-green
 
 # Validation only
-./deploy/deploy.sh production validation-only
+ENVIRONMENT=production ./deploy/deploy.sh production validation-only
 
 # Rollback to previous version
 ./deploy/deploy.sh production rollback
@@ -84,7 +87,7 @@ ls -la /app/models/cache/
 
 **Required Configuration Files:**
 - `deploy/configs/transformer_rollout.yaml` - Progressive rollout settings ✅ READY
-- `deploy/configs/transformer_models.json` - Model-specific configurations ✅ READY
+- `deploy/configs/environments.json` - Environment-based configurations ✅ READY
 - `deploy/modules/transformer_config_loader.sh` - Configuration injection module
 - `deploy/modules/transformer_validation.sh` - Validation enhancement module
 
@@ -93,8 +96,8 @@ ls -la /app/models/cache/
 # Validate YAML configuration syntax
 python -c "import yaml; yaml.safe_load(open('deploy/configs/transformer_rollout.yaml'))"
 
-# Validate JSON model configuration
-python -c "import json; json.load(open('deploy/configs/transformer_models.json'))"
+# Validate JSON environment configuration
+python -c "import json; json.load(open('deploy/configs/environments.json'))"
 ```
 
 ### Health Monitoring Endpoints Verified
@@ -143,8 +146,8 @@ python -m pytest tests/integration/ --staging
 **Production canary deployment with 10% traffic:**
 
 ```bash
-# Enable canary mode for transformer deployment
-CANARY_MODE=true TRANSFORMER_MODEL_TYPE=iTransformer ./deploy/deploy.sh production blue-green
+# Enable canary mode for ensemble deployment
+CANARY_MODE=true ENVIRONMENT=production ./deploy/deploy.sh production blue-green
 ```
 
 **Canary Configuration (from transformer_rollout.yaml):**
@@ -252,25 +255,24 @@ gcloud run services describe shyvr-rlte --region us-central1 --format="table(sta
 The main deployment orchestrator automatically detects transformer deployments:
 
 ```bash
-# In deploy.sh, transformer configuration loading:
-load_transformer_config() {
-    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
-        local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
-        if [[ -f "$config_loader_module" ]]; then
-            source "$config_loader_module"
-            if load_transformer_configurations "$TRANSFORMER_MODEL_TYPE" "$ENVIRONMENT"; then
-                export_all_config
-            fi
+# In deploy.sh, ensemble configuration loading:
+load_environment_config() {
+    local environment="${ENVIRONMENT:-production}"
+    local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+    if [[ -f "$config_loader_module" ]]; then
+        source "$config_loader_module"
+        if load_environment_configurations "$environment"; then
+            export_all_config
         fi
     fi
 }
 ```
 
 **Configuration Loading Process:**
-1. **Detection**: Environment variable `TRANSFORMER_MODEL_TYPE` triggers config loading
-2. **Loading**: `transformer_config_loader.sh` module injects model-specific settings
+1. **Detection**: Environment variable `ENVIRONMENT` selects deployment mode
+2. **Loading**: `transformer_config_loader.sh` module loads environment-specific settings
 3. **Validation**: Configuration integrity checked before deployment proceeds
-4. **Export**: All transformer settings exported to deployment environment
+4. **Export**: All environment settings exported to deployment environment
 
 ### How blue_green_deployment.sh Handles Canary Mode
 
@@ -303,15 +305,14 @@ The comprehensive pipeline includes transformer-specific validation:
 5. **Build and Test** - Enhanced testing with transformer integration
 6. **Blue-green Deployment** - Enhanced with canary mode support
 
-**Transformer Validation Stage:**
+**Ensemble Validation Stage:**
 ```bash
 # Stage 4 enhancement in automated_deployment_pipeline.sh
-run_transformer_validation() {
-    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
-        log_info "Running transformer-specific validation..."
-        source "$SCRIPT_DIR/modules/transformer_validation.sh"
-        validate_transformer_deployment || return 1
-    fi
+run_ensemble_validation() {
+    local environment="${ENVIRONMENT:-production}"
+    log_info "Running ensemble validation for environment: $environment"
+    source "$SCRIPT_DIR/modules/transformer_validation.sh"
+    validate_ensemble_deployment "$environment" || return 1
 }
 ```
 
@@ -356,30 +357,30 @@ IMAGE_TAG=v1.2.3 ./deploy/deploy.sh production standard
 
 ### Canary Deployment
 
-**Production Canary with Transformer Support:**
+**Production Canary with Ensemble Support:**
 ```bash
-# Enable canary mode with transformer model
-CANARY_MODE=true ./deploy/deploy.sh production blue-green
+# Enable canary mode with full ensemble
+CANARY_MODE=true ENVIRONMENT=production ./deploy/deploy.sh production blue-green
 
-# Canary with specific transformer model
-CANARY_MODE=true TRANSFORMER_MODEL_TYPE=iTransformer ./deploy/deploy.sh production blue-green
+# Development canary (LSTM only)
+CANARY_MODE=true ENVIRONMENT=development ./deploy/deploy.sh staging blue-green
 ```
 
-### Transformer-Specific Deployment
+### Environment-Based Deployment
 
-**Deploy Specific Transformer Model:**
+**Deploy Based on Environment Mode:**
 ```bash
-# Deploy iTransformer model
-TRANSFORMER_MODEL_TYPE=iTransformer ./deploy/deploy.sh production standard
+# Deploy development mode (LSTM only)
+ENVIRONMENT=development ./deploy/deploy.sh staging standard
 
-# Deploy PatchTST model  
-TRANSFORMER_MODEL_TYPE=PatchTST ./deploy/deploy.sh production standard
+# Deploy production mode (full ensemble)
+ENVIRONMENT=production ./deploy/deploy.sh production standard
 
-# Deploy TimesMixer model
-TRANSFORMER_MODEL_TYPE=TimesMixer ./deploy/deploy.sh production standard
+# Deploy staging mode (full ensemble, reduced resources)
+ENVIRONMENT=staging ./deploy/deploy.sh staging standard
 
-# Deploy TimesFM foundation model
-TRANSFORMER_MODEL_TYPE=TimesFM ./deploy/deploy.sh production standard
+# Default deployment (defaults to production)
+./deploy/deploy.sh production standard
 ```
 
 ### Rollback Operations
