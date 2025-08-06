@@ -26,13 +26,13 @@
 set -euo pipefail
 
 # Global configuration variables
+ENVIRONMENTS_CONFIG="${ENVIRONMENTS_CONFIG:-deploy/configs/environments.json}"
 TRANSFORMER_ROLLOUT_CONFIG="${TRANSFORMER_ROLLOUT_CONFIG:-deploy/configs/transformer_rollout.yaml}"
-TRANSFORMER_MODELS_CONFIG="${TRANSFORMER_MODELS_CONFIG:-deploy/configs/transformer_models.json}"
 
 # Configuration results
+ENVIRONMENT="${ENVIRONMENT:-production}"
 ROLLOUT_STAGE=""
 TRAFFIC_PERCENTAGE=""
-MODEL_TYPE=""
 MODEL_MEMORY=""
 MODEL_CPU=""
 HEALTH_ENDPOINT=""
@@ -55,18 +55,61 @@ log_config_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 log_config_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_config_header() { echo -e "${PURPLE}[CONFIG-LOADER]${NC} $1"; }
 
+# Load environment-based configuration from environments.json
+load_environment_config() {
+    local environment="${1:-${ENVIRONMENT}}"
+    local config_file="${2:-$ENVIRONMENTS_CONFIG}"
+    
+    log_config_info "Loading environment configuration for: $environment"
+    
+    if [[ ! -f "$config_file" ]]; then
+        log_config_error "Environment config file not found: $config_file"
+        return 1
+    fi
+    
+    # Validate JSON syntax
+    if ! jq . "$config_file" >/dev/null 2>&1; then
+        log_config_error "Invalid JSON in environment config file: $config_file"
+        return 1
+    fi
+    
+    # Check if environment exists in config
+    if ! jq -e ".[\"$environment\"]" "$config_file" >/dev/null 2>&1; then
+        log_config_error "Environment '$environment' not found in configuration"
+        return 1
+    fi
+    
+    # Parse environment-specific configuration
+    MODEL_MEMORY=$(jq -r ".[\"$environment\"].resources.memory" "$config_file")
+    MODEL_CPU=$(jq -r ".[\"$environment\"].resources.cpu" "$config_file")
+    HEALTH_ENDPOINT=$(jq -r ".[\"$environment\"].health_checks.endpoint" "$config_file")
+    local timeout_seconds=$(jq -r ".[\"$environment\"].resources.timeout_seconds" "$config_file")
+    
+    # Export environment-specific variables
+    export ENVIRONMENT="$environment"
+    export MODEL_MEMORY
+    export MODEL_CPU
+    export HEALTH_ENDPOINT
+    export TRANSFORMER_TIMEOUT="$timeout_seconds"
+    
+    log_config_success "Environment configuration loaded: $environment"
+    log_config_info "Memory: $MODEL_MEMORY, CPU: $MODEL_CPU, Health: $HEALTH_ENDPOINT"
+    
+    return 0
+}
+
 # Check if required tools are available
 check_config_dependencies() {
     local missing_tools=()
     
-    # Check for yq (YAML parser)
-    if ! command -v yq >/dev/null 2>&1; then
-        missing_tools+=("yq")
-    fi
-    
     # Check for jq (JSON parser)
     if ! command -v jq >/dev/null 2>&1; then
         missing_tools+=("jq")
+    fi
+    
+    # Check for yq (YAML parser) - still needed for rollout config
+    if ! command -v yq >/dev/null 2>&1; then
+        missing_tools+=("yq")
     fi
     
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
@@ -113,96 +156,13 @@ parse_transformer_rollout_yaml() {
     return 0
 }
 
-# Parse transformer models JSON configuration
-parse_transformer_models_json() {
-    local model_type="${1:-}"
-    local config_file="${2:-$TRANSFORMER_MODELS_CONFIG}"
+# Set resource limits based on environment configuration
+set_environment_resource_limits() {
+    local environment="${1:-${ENVIRONMENT}}"
+    local memory="${2:-$MODEL_MEMORY}"
+    local cpu="${3:-$MODEL_CPU}"
     
-    if [[ -z "$model_type" ]]; then
-        log_config_error "Model type is required for JSON parsing"
-        return 3
-    fi
-    
-    log_config_info "Parsing transformer models configuration for $model_type: $config_file"
-    
-    if [[ ! -f "$config_file" ]]; then
-        log_config_error "Models config file not found: $config_file"
-        return 3
-    fi
-    
-    # Validate JSON syntax
-    if ! jq . "$config_file" >/dev/null 2>&1; then
-        log_config_error "Invalid JSON in models config file: $config_file"
-        return 3
-    fi
-    
-    # Check if model type exists in config
-    if ! jq -e ".[\"$model_type\"]" "$config_file" >/dev/null 2>&1; then
-        log_config_error "Model type '$model_type' not found in configuration"
-        return 3
-    fi
-    
-    # Parse model-specific configuration
-    MODEL_MEMORY=$(jq -r ".[\"$model_type\"].resources.memory" "$config_file")
-    MODEL_CPU=$(jq -r ".[\"$model_type\"].resources.cpu" "$config_file")
-    HEALTH_ENDPOINT=$(jq -r ".[\"$model_type\"].health_checks.endpoint" "$config_file")
-    local health_timeout=$(jq -r ".[\"$model_type\"].health_checks.timeout_seconds" "$config_file")
-    local health_interval=$(jq -r ".[\"$model_type\"].health_checks.interval_seconds" "$config_file")
-    local max_failures=$(jq -r ".[\"$model_type\"].health_checks.max_failures" "$config_file")
-    
-    # Export for deployment script compatibility
-    export MODEL_MEMORY
-    export MODEL_CPU
-    export HEALTH_ENDPOINT
-    
-    log_config_success "Models configuration parsed successfully for $model_type"
-    log_config_info "Model memory: $MODEL_MEMORY"
-    log_config_info "Model CPU: $MODEL_CPU"
-    log_config_info "Health endpoint: $HEALTH_ENDPOINT"
-    
-    return 0
-}
-
-# Export transformer environment variables for deployment scripts
-export_transformer_env_vars() {
-    local model_type="${1:-}"
-    local memory="${2:-}"
-    local cpu="${3:-}"
-    local health_endpoint="${4:-}"
-    local health_timeout="${5:-30}"
-    
-    if [[ -z "$model_type" ]]; then
-        log_config_error "Model type is required for environment variable export"
-        return 4
-    fi
-    
-    log_config_info "Exporting transformer environment variables for $model_type"
-    
-    # Set core transformer variables
-    export MODEL_TYPE="$model_type"
-    export TRANSFORMER_MEMORY="${memory:-4Gi}"
-    export TRANSFORMER_CPU="${cpu:-2}"
-    export TRANSFORMER_HEALTH_ENDPOINT="${health_endpoint:-/health}"
-    export TRANSFORMER_HEALTH_TIMEOUT="$health_timeout"
-    
-    # Set deployment-specific variables
-    export TRANSFORMER_OPTIMIZED="true"
-    export ROLLOUT_MODE="progressive"
-    export MODEL_VALIDATION_ENABLED="true"
-    
-    log_config_success "Environment variables exported successfully"
-    
-    return 0
-}
-
-# Set transformer resource limits based on model requirements
-set_transformer_resource_limits() {
-    local model_type="${1:-}"
-    local memory="${2:-4Gi}"
-    local cpu="${3:-2}"
-    local max_instances="${4:-10}"
-    
-    log_config_info "Setting resource limits for $model_type"
+    log_config_info "Setting resource limits for $environment environment"
     
     # Validate memory format
     if [[ ! "$memory" =~ ^[0-9]+Gi$ ]]; then
@@ -219,14 +179,112 @@ set_transformer_resource_limits() {
     # Set resource limit variables
     export MEMORY_LIMIT="$memory"
     export CPU_LIMIT="$cpu"
-    export MAX_INSTANCES="$max_instances"
     
-    # Set Cloud Run specific variables
+    # Set Cloud Run specific variables based on environment
     export CLOUD_RUN_MEMORY="$memory"
     export CLOUD_RUN_CPU="$cpu"
-    export CLOUD_RUN_TIMEOUT="4200"  # 70 minutes for transformer loading
+    export CLOUD_RUN_TIMEOUT="${TRANSFORMER_TIMEOUT:-4200}"
     
-    log_config_success "Resource limits configured: Memory=$memory, CPU=$cpu, MaxInstances=$max_instances"
+    # Environment-specific scaling
+    case "$environment" in
+        "development")
+            export CLOUD_RUN_MIN_INSTANCES="0"
+            export CLOUD_RUN_MAX_INSTANCES="1"
+            export CLOUD_RUN_CONCURRENCY="3"
+            ;;
+        "staging")
+            export CLOUD_RUN_MIN_INSTANCES="0"
+            export CLOUD_RUN_MAX_INSTANCES="3"
+            export CLOUD_RUN_CONCURRENCY="6"
+            ;;
+        "production")
+            export CLOUD_RUN_MIN_INSTANCES="1"
+            export CLOUD_RUN_MAX_INSTANCES="10"
+            export CLOUD_RUN_CONCURRENCY="15"
+            ;;
+    esac
+    
+    log_config_success "Resource limits configured: Memory=$memory, CPU=$cpu"
+    log_config_info "Environment: $environment, Min/Max instances: ${CLOUD_RUN_MIN_INSTANCES}/${CLOUD_RUN_MAX_INSTANCES}"
+    
+    return 0
+}
+
+# Export environment variables for deployment scripts
+export_environment_vars() {
+    local environment="${1:-${ENVIRONMENT}}"
+    local memory="${2:-$MODEL_MEMORY}"
+    local cpu="${3:-$MODEL_CPU}"
+    local health_endpoint="${4:-$HEALTH_ENDPOINT}"
+    
+    log_config_info "Exporting environment variables for $environment"
+    
+    # Set core environment variables
+    export ENVIRONMENT="$environment"
+    export TRANSFORMER_MEMORY="$memory"
+    export TRANSFORMER_CPU="$cpu"
+    export TRANSFORMER_HEALTH_ENDPOINT="$health_endpoint"
+    export TRANSFORMER_TIMEOUT="${TRANSFORMER_TIMEOUT:-4200}"
+    
+    # Set deployment-specific variables
+    export TRANSFORMER_OPTIMIZED="true"
+    export ROLLOUT_MODE="progressive"
+    export MODEL_VALIDATION_ENABLED="true"
+    
+    # Environment-specific model configuration
+    case "$environment" in
+        "development")
+            export MODEL_TYPE="lstm"
+            export MOCK_TRANSFORMERS="true"
+            export DEVELOPMENT_MODE="true"
+            ;;
+        "staging"|"production")
+            export MODEL_TYPE="ensemble"
+            export MOCK_TRANSFORMERS="false"
+            export ENSEMBLE_MODELS="lstm,iTransformer,PatchTST,TimesMixer,TimesFM"
+            if [[ "$environment" == "production" ]]; then
+                export PRODUCTION_MODE="true"
+                export ENSEMBLE_OPTIMIZATION="true"
+            else
+                export STAGING_MODE="true"
+            fi
+            ;;
+    esac
+    
+    log_config_success "Environment variables exported successfully for $environment"
+    
+    return 0
+}
+
+# Configure health check parameters for environment
+configure_environment_health_checks() {
+    local environment="${1:-${ENVIRONMENT}}"
+    local health_endpoint="${2:-$HEALTH_ENDPOINT}"
+    
+    log_config_info "Configuring health check parameters for $environment"
+    
+    # Set health check variables based on environment
+    case "$environment" in
+        "development")
+            export HEALTH_CHECK_TIMEOUT="30"
+            export HEALTH_CHECK_INTERVAL="15"
+            export HEALTH_CHECK_MAX_FAILURES="3"
+            ;;
+        "staging")
+            export HEALTH_CHECK_TIMEOUT="40"
+            export HEALTH_CHECK_INTERVAL="20"
+            export HEALTH_CHECK_MAX_FAILURES="3"
+            ;;
+        "production")
+            export HEALTH_CHECK_TIMEOUT="45"
+            export HEALTH_CHECK_INTERVAL="20"
+            export HEALTH_CHECK_MAX_FAILURES="3"
+            ;;
+    esac
+    
+    export HEALTH_CHECK_ENDPOINT="$health_endpoint"
+    
+    log_config_success "Health checks configured: Endpoint=$health_endpoint, Timeout=${HEALTH_CHECK_TIMEOUT}s"
     
     return 0
 }
@@ -398,20 +456,20 @@ configure_for_cloud_run() {
 }
 
 # Main configuration loading function - entry point for deployment scripts
-load_transformer_configurations() {
-    local model_type="${1:-}"
-    local environment="${2:-staging}"
+load_environment_configurations() {
+    local environment="${1:-${ENVIRONMENT:-production}}"
     
-    if [[ -z "$model_type" ]]; then
-        log_config_error "Model type is required for configuration loading"
-        return 1
-    fi
-    
-    log_config_header "🔧 Loading transformer configurations for $model_type in $environment"
+    log_config_header "🔧 Loading ensemble configurations for $environment environment"
     
     # Check dependencies
     if ! check_config_dependencies; then
         log_config_error "Configuration dependencies check failed"
+        return 1
+    fi
+    
+    # Load environment-specific configuration
+    if ! load_environment_config "$environment"; then
+        log_config_error "Failed to load environment configuration"
         return 1
     fi
     
@@ -421,26 +479,20 @@ load_transformer_configurations() {
         return 1
     fi
     
-    # Load model-specific configuration
-    if ! parse_transformer_models_json "$model_type"; then
-        log_config_error "Failed to parse model configuration"
-        return 1
-    fi
-    
-    # Export environment variables
-    if ! export_transformer_env_vars "$model_type" "$MODEL_MEMORY" "$MODEL_CPU" "$HEALTH_ENDPOINT"; then
-        log_config_error "Failed to export environment variables"
-        return 1
-    fi
-    
-    # Set resource limits
-    if ! set_transformer_resource_limits "$model_type" "$MODEL_MEMORY" "$MODEL_CPU"; then
+    # Set resource limits based on environment
+    if ! set_environment_resource_limits "$environment"; then
         log_config_error "Failed to set resource limits"
         return 1
     fi
     
+    # Export environment variables
+    if ! export_environment_vars "$environment"; then
+        log_config_error "Failed to export environment variables"
+        return 1
+    fi
+    
     # Configure health checks
-    if ! configure_transformer_health_checks "$HEALTH_ENDPOINT"; then
+    if ! configure_environment_health_checks "$environment"; then
         log_config_error "Failed to configure health checks"
         return 1
     fi
@@ -451,16 +503,39 @@ load_transformer_configurations() {
         return 1
     fi
     
-    log_config_success "✅ Transformer configurations loaded successfully for $model_type"
+    log_config_success "✅ Ensemble configurations loaded successfully for $environment"
     
     return 0
+}
+
+# Backwards compatibility function - deprecated
+load_transformer_configurations() {
+    local model_type="${1:-}"
+    local environment="${2:-staging}"
+    
+    log_config_warning "load_transformer_configurations is deprecated - use load_environment_configurations"
+    
+    # Map old model type to environment if needed
+    if [[ -n "$model_type" && -z "${ENVIRONMENT:-}" ]]; then
+        case "$model_type" in
+            "lstm")
+                environment="development"
+                ;;
+            *)
+                environment="production"
+                ;;
+        esac
+    fi
+    
+    load_environment_configurations "$environment"
 }
 
 # Export all configuration for deployment script integration
 export_all_config() {
     # Export all key variables that deployment scripts expect
+    export ENVIRONMENTS_CONFIG
     export TRANSFORMER_ROLLOUT_CONFIG
-    export TRANSFORMER_MODELS_CONFIG
+    export ENVIRONMENT
     export MODEL_TYPE
     export MODEL_MEMORY
     export MODEL_CPU
@@ -473,21 +548,27 @@ export_all_config() {
     export TRANSFORMER_OPTIMIZED
     export ROLLOUT_MODE
     export MODEL_VALIDATION_ENABLED
+    export CLOUD_RUN_MEMORY
+    export CLOUD_RUN_CPU
+    export CLOUD_RUN_TIMEOUT
+    export CLOUD_RUN_MIN_INSTANCES
+    export CLOUD_RUN_MAX_INSTANCES
+    export CLOUD_RUN_CONCURRENCY
 }
 
 # Main execution guard - only run if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Direct execution for testing
-    MODEL_TYPE="${1:-iTransformer}"
-    ENVIRONMENT="${2:-staging}"
+    ENVIRONMENT="${1:-${ENVIRONMENT:-production}}"
     
-    log_config_info "Direct execution mode - testing configuration loading"
-    load_transformer_configurations "$MODEL_TYPE" "$ENVIRONMENT"
+    log_config_info "Direct execution mode - testing ensemble configuration loading"
+    load_environment_configurations "$ENVIRONMENT"
     export_all_config
     
     # Show loaded configuration
     log_config_info "Loaded configuration:"
-    log_config_info "  Model: $MODEL_TYPE"
+    log_config_info "  Environment: $ENVIRONMENT"
+    log_config_info "  Model Type: $MODEL_TYPE"
     log_config_info "  Memory: $MODEL_MEMORY"
     log_config_info "  CPU: $MODEL_CPU"
     log_config_info "  Health: $HEALTH_ENDPOINT"
