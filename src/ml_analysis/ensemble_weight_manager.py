@@ -340,7 +340,14 @@ class EnsembleWeightManager:
                                    current_weights: Dict[ModelType, float],
                                    regime: str,
                                    confidence: float) -> Dict[ModelType, float]:
-        """Calculate base sentiment-adjusted weights"""
+        """Calculate base sentiment-adjusted weights (environment-aware)"""
+        # Handle single-model case (development environment)
+        if len(current_weights) == 1:
+            model_type = next(iter(current_weights.keys()))
+            self.logger.debug("Single model detected, maintaining weight", 
+                            model_type=model_type.value)
+            return {model_type: 1.0}
+        
         adjustment_map = {
             "extreme_fear": self.config.extreme_adjustments,
             "fear": self.config.fear_adjustments,
@@ -371,7 +378,14 @@ class EnsembleWeightManager:
     def _apply_volatility_adjustments(self, 
                                     weights: Dict[ModelType, float],
                                     volatility: float) -> Dict[ModelType, float]:
-        """Apply volatility-based adjustments to weights"""
+        """Apply volatility-based adjustments to weights (environment-aware)"""
+        # Handle single-model case (development environment)
+        if len(weights) == 1:
+            model_type = next(iter(weights.keys()))
+            self.logger.debug("Single model detected, skipping volatility adjustment", 
+                            model_type=model_type.value)
+            return {model_type: 1.0}
+            
         # High volatility favors models that handle volatility well
         volatility_preferences = {
             ModelType.LSTM: max(0.7, 1.0 - volatility * 0.4),  # LSTM struggles with high volatility
@@ -397,8 +411,15 @@ class EnsembleWeightManager:
     async def _apply_performance_adjustments(self, 
                                            weights: Dict[ModelType, float],
                                            regime: str) -> Dict[ModelType, float]:
-        """Apply historical performance adjustments for the current regime"""
+        """Apply historical performance adjustments for the current regime (environment-aware)"""
         try:
+            # Handle single-model case (development environment)
+            if len(weights) == 1:
+                model_type = next(iter(weights.keys()))
+                self.logger.debug("Single model detected, skipping performance adjustment", 
+                                model_type=model_type.value)
+                return {model_type: 1.0}
+                
             performance_data = self._regime_performance.get(regime, {})
             
             if not performance_data:
@@ -436,8 +457,15 @@ class EnsembleWeightManager:
     async def _smooth_regime_transitions(self, 
                                        target_weights: Dict[ModelType, float],
                                        current_weights: Dict[ModelType, float]) -> Dict[ModelType, float]:
-        """Smooth weight transitions to prevent abrupt changes"""
+        """Smooth weight transitions to prevent abrupt changes (environment-aware)"""
         try:
+            # Handle single-model case (development environment)
+            if len(target_weights) == 1 or len(current_weights) == 1:
+                model_type = next(iter(target_weights.keys()))
+                self.logger.debug("Single model detected, skipping transition smoothing", 
+                                model_type=model_type.value)
+                return {model_type: 1.0}
+                
             # Check if we're in a regime transition period
             current_time = datetime.now()
             recent_transitions = [
