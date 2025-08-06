@@ -320,6 +320,36 @@ execute_blue_green_migration() {
     fi
 }
 
+# Canary deployment mode using transformer rollout configuration
+execute_canary_deployment() {
+    log_header "🐦 Executing canary deployment mode"
+    
+    local script_dir="$(dirname "$0")"
+    local rollout_config="$script_dir/transformer_rollout.yaml"
+    
+    if [[ ! -f "$rollout_config" ]]; then
+        log_warning "Transformer rollout config not found, using standard blue-green"
+        return 1
+    fi
+    
+    log_info "Using transformer rollout configuration: $rollout_config"
+    
+    # Apply canary traffic pattern from transformer_rollout.yaml
+    local canary_percent=$(grep -A 5 "canary:" "$rollout_config" | grep "traffic_percent:" | awk '{print $2}' || echo "5")
+    local canary_duration=$(grep -A 5 "canary:" "$rollout_config" | grep "duration:" | awk '{print $2}' || echo "300")
+    
+    log_info "Canary deployment: ${canary_percent}% traffic for ${canary_duration}s"
+    
+    # Deploy canary revision
+    gcloud run services update-traffic "$SERVICE" \
+        --region="$REGION" \
+        --to-revisions="$NEW_REVISION=$canary_percent,$CURRENT_REVISION=$((100-canary_percent))" \
+        --quiet
+    
+    sleep "$canary_duration"
+    return 0
+}
+
 # Update external integrations
 update_integrations() {
     log_header "🔗 Updating external integrations"
@@ -373,8 +403,22 @@ main() {
     # Deploy new revision
     deploy_new_revision
     
-    # Execute traffic migration
-    if execute_blue_green_migration; then
+    # Execute traffic migration (with canary mode support)
+    if [[ "${CANARY_MODE:-false}" == "true" ]]; then
+        if execute_canary_deployment && execute_blue_green_migration; then
+            deployment_success=true
+        else
+            deployment_success=false
+        fi
+    else
+        if execute_blue_green_migration; then
+            deployment_success=true
+        else
+            deployment_success=false
+        fi
+    fi
+    
+    if [[ "$deployment_success" == "true" ]]; then
         # Update integrations
         update_integrations
         
