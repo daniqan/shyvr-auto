@@ -1,0 +1,93 @@
+{
+  "development": {
+    "models": ["lstm"],
+    "resources": {
+      "memory": "2Gi",
+      "cpu": 1,
+      "timeout_seconds": 2400,
+      "scaling_factor": 1.0,
+      "max_concurrent_requests": 5
+    },
+    "health_checks": {
+      "endpoint": "/health/lstm",
+      "timeout_seconds": 30,
+      "interval_seconds": 15,
+      "max_failures": 3,
+      "startup_probe_delay": 30
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "lstm",
+        "DEVELOPMENT_MODE": "true",
+        "MOCK_TRANSFORMERS": "true",
+        "MODEL_CACHE_DIR": "/app/models/cache/dev"
+      }
+    },
+    "description": "Development mode with LSTM only - transformers mocked for faster iteration"
+  },
+  "staging": {
+    "models": ["lstm", "iTransformer", "PatchTST", "TimesMixer", "TimesFM"],
+    "resources": {
+      "memory": "4Gi",
+      "cpu": 3,
+      "timeout_seconds": 3600,
+      "scaling_factor": 1.2,
+      "max_concurrent_requests": 6
+    },
+    "health_checks": {
+      "endpoint": "/health/ensemble",
+      "timeout_seconds": 40,
+      "interval_seconds": 20,
+      "max_failures": 3,
+      "startup_probe_delay": 60
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "ensemble",
+        "STAGING_MODE": "true",
+        "ENSEMBLE_MODELS": "lstm,iTransformer,PatchTST,TimesMixer,TimesFM",
+        "MODEL_CACHE_DIR": "/app/models/cache/staging"
+      }
+    },
+    "description": "Staging mode with full ensemble - reduced resources for testing"
+  },
+  "production": {
+    "models": ["lstm", "iTransformer", "PatchTST", "TimesMixer", "TimesFM"],
+    "resources": {
+      "memory": "8Gi",
+      "cpu": 6,
+      "timeout_seconds": 4200,
+      "scaling_factor": 1.5,
+      "max_concurrent_requests": 8
+    },
+    "health_checks": {
+      "endpoint": "/health/ensemble",
+      "timeout_seconds": 45,
+      "interval_seconds": 20,
+      "max_failures": 3,
+      "startup_probe_delay": 90
+    },
+    "environment": {
+      "variables": {
+        "MODEL_TYPE": "ensemble",
+        "PRODUCTION_MODE": "true",
+        "ENSEMBLE_MODELS": "lstm,iTransformer,PatchTST,TimesMixer,TimesFM",
+        "MODEL_CACHE_DIR": "/app/models/cache/prod",
+        "ENSEMBLE_OPTIMIZATION": "true"
+      }
+    },
+    "description": "Production mode with full ensemble - maximum performance and reliability"
+  },
+  "_metadata": {
+    "version": "1.0.0",
+    "created_at": "2025-08-06",
+    "description": "Environment-based configuration for ensemble deployment modes",
+    "integration_points": [
+      "deploy.sh",
+      "transformer_config_loader.sh",
+      "monitoring dashboard",
+      "resource allocation"
+    ],
+    "default_environment": "production"
+  }
+}
