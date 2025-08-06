@@ -281,6 +281,30 @@ stage_transformer_validation() {
     export AVAILABLE_MEMORY="${TRANSFORMER_MEMORY:-8Gi}"
     export AVAILABLE_CPU="${TRANSFORMER_CPU:-6}"
     
+    # Add production-specific transformer checks
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+        log_info "Performing production-specific transformer checks..."
+        
+        # Validate production memory requirements (minimum 8Gi)
+        if [[ "${AVAILABLE_MEMORY:-}" =~ ([0-9]+)Gi ]]; then
+            local memory_value="${BASH_REMATCH[1]}"
+            if [[ "$memory_value" -lt 8 ]]; then
+                log_error "Production transformer requires minimum 8Gi memory, got: ${AVAILABLE_MEMORY}"
+                update_stage_status "transformer_validation" "failed"
+                return 1
+            fi
+        fi
+        
+        # Validate production CPU requirements (minimum 6 vCPUs)
+        if [[ "${AVAILABLE_CPU:-}" -lt 6 ]]; then
+            log_error "Production transformer requires minimum 6 vCPUs, got: ${AVAILABLE_CPU}"
+            update_stage_status "transformer_validation" "failed"
+            return 1
+        fi
+        
+        log_success "Production transformer resource requirements validated"
+    fi
+    
     # Run comprehensive transformer validation
     if validate_transformer_models "$model_type" "$ENVIRONMENT"; then
         log_success "✅ Transformer validation completed successfully"
