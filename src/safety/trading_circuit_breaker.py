@@ -125,6 +125,13 @@ class CircuitBreakerConfig:
     auto_recovery_enabled: bool = False
     monitoring_interval_seconds: int = 10
     
+    # Ensemble monitoring settings
+    enable_ensemble_monitoring: bool = True
+    ensemble_performance_threshold: Decimal = Decimal("0.70")  # 70% minimum ensemble performance
+    ensemble_degradation_threshold: Decimal = Decimal("0.50")  # 50% degradation threshold
+    model_failure_threshold: int = 2  # Max failed models before circuit breaker
+    ensemble_confidence_threshold: Decimal = Decimal("0.60")  # 60% minimum ensemble confidence
+    
     def __post_init__(self):
         """Validate configuration parameters."""
         # Validate thresholds are positive
@@ -184,6 +191,8 @@ class MarketData:
     bid_ask_spread: Decimal
     market_cap: Decimal
     volatility_24h: Decimal
+    ensemble_performance: Optional[Dict[str, Any]] = None  # Ensemble performance metrics
+    ensemble_confidence: Optional[Decimal] = None  # Overall ensemble confidence
     
     def calculate_price_change_pct(self, previous_price: Decimal) -> Decimal:
         """Calculate price change percentage."""
@@ -731,6 +740,205 @@ class TradingCircuitBreaker:
             )
         
         return CircuitBreakerResult(should_trigger=False)
+    
+    async def check_ensemble_performance_triggers(self, market_data: MarketData) -> CircuitBreakerResult:
+        """Check for ensemble performance-based circuit breaker triggers."""
+        if not self.config.enable_ensemble_monitoring:
+            return CircuitBreakerResult(should_trigger=False)
+        
+        if not market_data.ensemble_performance:
+            return CircuitBreakerResult(should_trigger=False)
+        
+        ensemble_perf = market_data.ensemble_performance
+        overall_accuracy = Decimal(str(ensemble_perf.get('overall_accuracy', 1.0)))
+        failed_models = ensemble_perf.get('failed_models', [])
+        ensemble_confidence = market_data.ensemble_confidence or Decimal("1.0")
+        
+        # Check for too many model failures
+        if len(failed_models) > self.config.model_failure_threshold:
+            return CircuitBreakerResult(
+                should_trigger=True,
+                breaker_type=CircuitBreakerType.MARKET_WIDE,
+                level=CircuitBreakerLevel.CRITICAL,
+                reason=CircuitBreakerReason.SUSPICIOUS_ACTIVITY,
+                message=f"Too many model failures: {len(failed_models)} models failed",
+                symbol=market_data.symbol,
+                market_data=market_data,
+                triggered_at=market_data.timestamp
+            )
+        
+        # Check ensemble performance degradation
+        if overall_accuracy < self.config.ensemble_degradation_threshold:
+            return CircuitBreakerResult(
+                should_trigger=True,
+                breaker_type=CircuitBreakerType.VOLATILITY,
+                level=CircuitBreakerLevel.CRITICAL,
+                reason=CircuitBreakerReason.VOLATILITY_CRITICAL,
+                message=f"Ensemble performance degraded: {overall_accuracy:.2f} accuracy",
+                symbol=market_data.symbol,
+                market_data=market_data,
+                triggered_at=market_data.timestamp
+            )
+        
+        # Check ensemble confidence
+        if ensemble_confidence < self.config.ensemble_confidence_threshold:
+            return CircuitBreakerResult(
+                should_trigger=True,
+                breaker_type=CircuitBreakerType.VOLATILITY,
+                level=CircuitBreakerLevel.WARNING,
+                reason=CircuitBreakerReason.VOLATILITY_WARNING,
+                message=f"Low ensemble confidence: {ensemble_confidence:.2f}",
+                symbol=market_data.symbol,
+                market_data=market_data,
+                triggered_at=market_data.timestamp
+            )
+        
+        return CircuitBreakerResult(should_trigger=False)
+    
+    def assess_ensemble_health(self, ensemble_health_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Assess overall health of ensemble system."""
+        overall_accuracy = ensemble_health_data.get('overall_accuracy', 0.0)
+        model_failures = ensemble_health_data.get('model_failures', 0)
+        ensemble_confidence = ensemble_health_data.get('ensemble_confidence', 0.0)
+        prediction_variance = ensemble_health_data.get('prediction_variance', 0.0)
+        
+        is_healthy = True
+        failing_components = []
+        
+        # Check accuracy
+        if overall_accuracy < float(self.config.ensemble_performance_threshold):
+            is_healthy = False
+            failing_components.append('model_accuracy')
+        
+        # Check model failures
+        if model_failures > self.config.model_failure_threshold:
+            is_healthy = False
+            failing_components.append('model_availability')
+        
+        # Check confidence
+        if ensemble_confidence < float(self.config.ensemble_confidence_threshold):
+            is_healthy = False
+            failing_components.append('ensemble_confidence')
+        
+        # Check prediction stability
+        if prediction_variance > 0.3:  # High variance threshold
+            is_healthy = False
+            failing_components.append('prediction_stability')
+        
+        # Determine degradation severity
+        if len(failing_components) >= 3:
+            severity = 'critical'
+        elif len(failing_components) >= 2:
+            severity = 'moderate'
+        elif len(failing_components) >= 1:
+            severity = 'mild'
+        else:
+            severity = 'none'
+        
+        return {
+            'is_healthy': is_healthy,
+            'degradation_severity': severity,
+            'failing_components': failing_components,
+            'overall_accuracy': overall_accuracy,
+            'model_failures': model_failures,
+            'ensemble_confidence': ensemble_confidence,
+            'prediction_variance': prediction_variance
+        }
+    
+    def check_model_failure_threshold(self, model_health_data: Dict[str, Any]) -> CircuitBreakerResult:
+        """Check if model failure threshold is exceeded."""
+        failed_models = model_health_data.get('failed_models', 0)
+        total_models = model_health_data.get('total_models', 5)
+        
+        if failed_models > self.config.model_failure_threshold:
+            severity = CircuitBreakerLevel.CRITICAL if failed_models >= total_models // 2 else CircuitBreakerLevel.WARNING
+            
+            return CircuitBreakerResult(
+                should_trigger=True,
+                breaker_type=CircuitBreakerType.MARKET_WIDE,
+                level=severity,
+                reason=CircuitBreakerReason.SUSPICIOUS_ACTIVITY,
+                message=f"Model failure threshold exceeded: {failed_models}/{total_models} models failed"
+            )
+        
+        return CircuitBreakerResult(should_trigger=False)
+    
+    def validate_ensemble_recovery(self, recovery_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate ensemble recovery conditions."""
+        ensemble_accuracy = recovery_metrics.get('ensemble_accuracy', 0.0)
+        model_health_scores = recovery_metrics.get('model_health_scores', {})
+        ensemble_confidence = recovery_metrics.get('ensemble_confidence', 0.0)
+        stability_window_minutes = recovery_metrics.get('stability_window_minutes', 0)
+        
+        is_recovered = True
+        recovery_conditions = []
+        
+        # Check ensemble accuracy recovery
+        if ensemble_accuracy >= float(self.config.ensemble_performance_threshold):
+            recovery_conditions.append('accuracy_recovered')
+        else:
+            is_recovered = False
+        
+        # Check individual model health
+        healthy_models = sum(1 for score in model_health_scores.values() if score >= 0.7)
+        if healthy_models >= 3:  # At least 3 healthy models
+            recovery_conditions.append('model_health_recovered')
+        else:
+            is_recovered = False
+        
+        # Check ensemble confidence
+        if ensemble_confidence >= float(self.config.ensemble_confidence_threshold):
+            recovery_conditions.append('confidence_recovered')
+        else:
+            is_recovered = False
+        
+        # Check stability duration
+        if stability_window_minutes >= 10:  # Stable for at least 10 minutes
+            recovery_conditions.append('stability_validated')
+        else:
+            is_recovered = False
+        
+        confidence_level = len(recovery_conditions) / 4.0  # 4 total conditions
+        
+        return {
+            'is_recovered': is_recovered,
+            'confidence_level': confidence_level,
+            'stability_validated': 'stability_validated' in recovery_conditions,
+            'recovery_conditions_met': recovery_conditions,
+            'recovery_duration_minutes': stability_window_minutes
+        }
+    
+    def handle_fallback_integration(self, fallback_scenario: Dict[str, Any]) -> CircuitBreakerResult:
+        """Handle circuit breaker integration with fallback strategies."""
+        primary_models_failed = fallback_scenario.get('primary_models_failed', [])
+        fallback_models_active = fallback_scenario.get('fallback_models_active', [])
+        fallback_confidence = fallback_scenario.get('fallback_confidence', 0.0)
+        
+        # If fallback is working well, don't trigger circuit breaker
+        if (len(fallback_models_active) >= 2 and 
+            fallback_confidence >= float(self.config.ensemble_confidence_threshold) * 0.8):
+            return CircuitBreakerResult(
+                should_trigger=False,
+                message=f"Fallback models active: {', '.join(fallback_models_active)}"
+            )
+        
+        # If fallback is struggling, consider circuit breaker
+        if fallback_confidence < float(self.config.ensemble_confidence_threshold) * 0.6:
+            return CircuitBreakerResult(
+                should_trigger=True,
+                breaker_type=CircuitBreakerType.MANUAL,
+                level=CircuitBreakerLevel.WARNING,
+                reason=CircuitBreakerReason.SUSPICIOUS_ACTIVITY,
+                message="Fallback models underperforming, monitoring closely"
+            )
+        
+        return CircuitBreakerResult(should_trigger=False)
+    
+    def _get_ensemble_confidence(self, symbol: str) -> float:
+        """Get current ensemble confidence for a symbol."""
+        # This would integrate with the actual ensemble system
+        # For now, return a default value
+        return 0.75
     
     async def can_trigger_circuit_breaker(
         self,
