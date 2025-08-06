@@ -171,7 +171,7 @@ class GCPCloudRunIntegrator:
             return {
                 "success": result.success,
                 "deployment_id": deployment_id,
-                "rollout_status": result.rollout_status or "in_progress",
+                "rollout_status": "in_progress" if result.success else result.rollout_status,
                 "error_message": result.error_message
             }
             
