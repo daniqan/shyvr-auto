@@ -157,6 +157,13 @@ class TradingSafetyConfig:
     enable_rate_limit_validation: bool = True
     enable_balance_validation: bool = True
     enable_risk_exposure_validation: bool = True
+    enable_ensemble_validation: bool = True
+    
+    # Ensemble-specific controls
+    ensemble_confidence_threshold: Decimal = Decimal("0.6")  # 60% minimum ensemble confidence
+    min_ensemble_size: int = 3  # Minimum models in ensemble for production
+    model_agreement_threshold: Decimal = Decimal("0.7")  # 70% model agreement required
+    ensemble_variance_threshold: Decimal = Decimal("0.2")  # Max prediction variance allowed
     
     def __post_init__(self):
         """Validate configuration parameters."""
@@ -310,6 +317,11 @@ class TradingSafetyManager:
         
         if self.config.enable_risk_exposure_validation:
             validation_tasks.append(self.validate_risk_exposure(trade_order))
+        
+        # Add ensemble validation if metadata indicates ensemble prediction
+        if (self.config.enable_ensemble_validation and 
+            trade_order.metadata.get('prediction_type') == 'ensemble'):
+            validation_tasks.append(self.validate_ensemble_prediction(trade_order))
         
         # Run all validations concurrently
         results = await asyncio.gather(*validation_tasks, return_exceptions=True)
@@ -593,6 +605,142 @@ class TradingSafetyManager:
                 reasons=[ValidationReason.SYSTEM_ERROR],
                 recommendations=["Risk exposure validation failed - contact support"]
             )
+    
+    async def validate_ensemble_prediction(self, trade_order: TradeOrder) -> PreTradeValidationResult:
+        """Validate ensemble prediction quality and characteristics."""
+        try:
+            ensemble_size = trade_order.metadata.get('ensemble_size', 0)
+            model_agreement = trade_order.metadata.get('model_agreement', 0.0)
+            prediction_variance = trade_order.metadata.get('prediction_variance', 0.0)
+            model_confidences = trade_order.metadata.get('model_confidences', {})
+            
+            # Check minimum ensemble size
+            if ensemble_size < self.config.min_ensemble_size:
+                return PreTradeValidationResult(
+                    is_valid=False,
+                    status=ValidationStatus.REJECTED,
+                    reasons=[ValidationReason.SYSTEM_ERROR],
+                    recommendations=[
+                        f"Ensemble size {ensemble_size} below minimum {self.config.min_ensemble_size}"
+                    ]
+                )
+            
+            # Check ensemble confidence
+            if trade_order.confidence < float(self.config.ensemble_confidence_threshold):
+                return PreTradeValidationResult(
+                    is_valid=False,
+                    status=ValidationStatus.REJECTED,
+                    reasons=[ValidationReason.SYSTEM_ERROR],
+                    recommendations=[
+                        f"Ensemble confidence {trade_order.confidence:.3f} below threshold {self.config.ensemble_confidence_threshold}"
+                    ]
+                )
+            
+            # Check model agreement
+            if model_agreement < float(self.config.model_agreement_threshold):
+                return PreTradeValidationResult(
+                    is_valid=False,
+                    status=ValidationStatus.REJECTED,
+                    reasons=[ValidationReason.SYSTEM_ERROR],
+                    recommendations=[
+                        f"Model agreement {model_agreement:.3f} below threshold {self.config.model_agreement_threshold}"
+                    ]
+                )
+            
+            # Check prediction variance
+            if prediction_variance > float(self.config.ensemble_variance_threshold):
+                return PreTradeValidationResult(
+                    is_valid=False,
+                    status=ValidationStatus.REJECTED,
+                    reasons=[ValidationReason.SYSTEM_ERROR],
+                    recommendations=[
+                        f"Prediction variance {prediction_variance:.3f} exceeds threshold {self.config.ensemble_variance_threshold}"
+                    ]
+                )
+            
+            return PreTradeValidationResult(
+                is_valid=True,
+                status=ValidationStatus.APPROVED,
+                recommendations=["Ensemble prediction quality validated"]
+            )
+        
+        except Exception as e:
+            logger.error("Ensemble prediction validation failed", error=str(e))
+            return PreTradeValidationResult(
+                is_valid=False,
+                status=ValidationStatus.REJECTED,
+                reasons=[ValidationReason.SYSTEM_ERROR],
+                recommendations=["Ensemble validation failed - contact support"]
+            )
+    
+    async def validate_degraded_ensemble(self, trade_order: TradeOrder) -> PreTradeValidationResult:
+        """Validate trading decision when ensemble is degraded."""
+        try:
+            degraded_models = trade_order.metadata.get('degraded_models', [])
+            remaining_ensemble_size = trade_order.metadata.get('ensemble_size', 0)
+            fallback_active = trade_order.metadata.get('fallback_active', False)
+            
+            # Apply more conservative thresholds for degraded ensemble
+            degraded_confidence_threshold = float(self.config.ensemble_confidence_threshold) * 0.8
+            
+            if trade_order.confidence < degraded_confidence_threshold:
+                return PreTradeValidationResult(
+                    is_valid=False,
+                    status=ValidationStatus.REJECTED,
+                    reasons=[ValidationReason.SYSTEM_ERROR],
+                    recommendations=[
+                        f"Degraded ensemble confidence {trade_order.confidence:.3f} below adjusted threshold {degraded_confidence_threshold:.3f}"
+                    ]
+                )
+            
+            # Reduce position size for degraded ensemble
+            if remaining_ensemble_size <= 2:
+                return PreTradeValidationResult(
+                    is_valid=True,
+                    status=ValidationStatus.CONDITIONAL,
+                    recommendations=[
+                        "Degraded ensemble - consider reducing position size by 50%",
+                        f"Models degraded: {', '.join(degraded_models)}"
+                    ]
+                )
+            
+            return PreTradeValidationResult(
+                is_valid=True,
+                status=ValidationStatus.APPROVED,
+                recommendations=["Degraded ensemble validated with conservative approach"]
+            )
+        
+        except Exception as e:
+            logger.error("Degraded ensemble validation failed", error=str(e))
+            return PreTradeValidationResult(
+                is_valid=False,
+                status=ValidationStatus.REJECTED,
+                reasons=[ValidationReason.SYSTEM_ERROR],
+                recommendations=["Degraded ensemble validation failed - contact support"]
+            )
+    
+    def calculate_ensemble_confidence(self, individual_confidences: List[float], method: str = 'weighted_average') -> float:
+        """Calculate ensemble confidence from individual model confidences."""
+        if not individual_confidences:
+            return 0.0
+        
+        if method == 'weighted_average':
+            return sum(individual_confidences) / len(individual_confidences)
+        elif method == 'conservative_min':
+            return min(individual_confidences)
+        elif method == 'confidence_weighted':
+            # Weight by confidence itself
+            weights = [c for c in individual_confidences]
+            total_weight = sum(weights)
+            if total_weight == 0:
+                return 0.0
+            return sum(c * w for c, w in zip(individual_confidences, weights)) / total_weight
+        else:
+            return sum(individual_confidences) / len(individual_confidences)
+    
+    def validate_model_agreement(self, model_agreement: float) -> bool:
+        """Validate if model agreement meets threshold."""
+        return model_agreement >= float(self.config.model_agreement_threshold)
     
     async def record_trade_execution(self, trade_order: TradeOrder) -> None:
         """Record trade execution for rate limiting."""
