@@ -388,6 +388,196 @@ class ResourceUsageValidator:
         )
 
 
+class EnsemblePerformanceValidator:
+    """
+    Ensemble Performance Validator
+    
+    Validates performance metrics specific to ensemble models including
+    consensus time, individual model performance, and ensemble-level metrics.
+    """
+    
+    def __init__(self, ensemble_requirements: Dict[str, Any]):
+        """Initialize ensemble performance validator."""
+        self.ensemble_requirements = ensemble_requirements
+        self.benchmarks = self._initialize_ensemble_benchmarks()
+    
+    def _initialize_ensemble_benchmarks(self) -> List[PerformanceBenchmark]:
+        """Initialize ensemble-specific benchmarks."""
+        return [
+            PerformanceBenchmark(
+                name="ensemble_consensus_time",
+                metric_type="latency",
+                excellent_threshold=30.0,
+                good_threshold=50.0,
+                acceptable_threshold=100.0,
+                unit="ms",
+                higher_is_better=False
+            ),
+            PerformanceBenchmark(
+                name="ensemble_accuracy",
+                metric_type="accuracy",
+                excellent_threshold=0.90,
+                good_threshold=0.85,
+                acceptable_threshold=0.80,
+                unit="%",
+                higher_is_better=True
+            ),
+            PerformanceBenchmark(
+                name="model_disagreement_rate",
+                metric_type="consistency",
+                excellent_threshold=0.02,
+                good_threshold=0.05,
+                acceptable_threshold=0.10,
+                unit="%",
+                higher_is_better=False
+            )
+        ]
+    
+    def validate_ensemble_metrics(self, ensemble_data: Dict[str, Any]) -> ValidationResult:
+        """Validate ensemble-specific performance metrics."""
+        violations = []
+        warnings = []
+        score = 1.0
+        
+        # Validate consensus time
+        consensus_time = ensemble_data.get("consensus_time", 0)
+        max_consensus_time = self.ensemble_requirements.get("max_ensemble_consensus_time_ms", 50)
+        
+        if consensus_time > max_consensus_time:
+            violations.append({
+                "type": "ensemble_violation",
+                "metric": "consensus_time",
+                "expected": max_consensus_time,
+                "actual": consensus_time,
+                "severity": "medium"
+            })
+            score *= 0.8
+        
+        # Validate ensemble accuracy
+        accuracy = ensemble_data.get("accuracy", 0.0)
+        min_accuracy = self.ensemble_requirements.get("min_ensemble_accuracy", 0.85)
+        
+        if accuracy < min_accuracy:
+            violations.append({
+                "type": "ensemble_violation", 
+                "metric": "ensemble_accuracy",
+                "expected": min_accuracy,
+                "actual": accuracy,
+                "severity": "high"
+            })
+            score *= 0.6
+        
+        # Validate model disagreement rate
+        disagreement_rate = ensemble_data.get("disagreement_rate", 0.0)
+        max_disagreement = self.ensemble_requirements.get("max_ensemble_disagreement_rate", 0.05)
+        
+        if disagreement_rate > max_disagreement:
+            warnings.append({
+                "type": "ensemble_warning",
+                "metric": "model_disagreement_rate", 
+                "expected": max_disagreement,
+                "actual": disagreement_rate,
+                "severity": "low"
+            })
+            score *= 0.95
+        
+        # Validate individual model performance
+        individual_models = ensemble_data.get("individual_models", {})
+        if individual_models:
+            healthy_models = sum(1 for model_data in individual_models.values() 
+                               if model_data.get("healthy", False))
+            total_models = len(individual_models)
+            health_percentage = healthy_models / total_models if total_models > 0 else 0
+            
+            if health_percentage < 0.8:  # At least 80% of models should be healthy
+                violations.append({
+                    "type": "ensemble_violation",
+                    "metric": "individual_model_health",
+                    "expected": 0.8,
+                    "actual": health_percentage,
+                    "severity": "high"
+                })
+                score *= 0.7
+        
+        return ValidationResult(
+            valid=len(violations) == 0,
+            score=score,
+            violations=violations,
+            warnings=warnings,
+            metrics={"ensemble_performance_score": score}
+        )
+
+
+class EnsembleResourceUsageValidator:
+    """
+    Ensemble Resource Usage Validator
+    
+    Validates resource usage across all ensemble models including
+    total memory consumption, individual model limits, and scaling efficiency.
+    """
+    
+    def __init__(self, resource_limits: Dict[str, Any]):
+        """Initialize ensemble resource validator."""
+        self.resource_limits = resource_limits
+    
+    def validate_ensemble_resource_usage(self, resource_data: Dict[str, Any]) -> ValidationResult:
+        """Validate ensemble resource usage metrics."""
+        violations = []
+        warnings = []
+        score = 1.0
+        
+        # Validate total ensemble memory
+        ensemble_memory = resource_data.get("ensemble_memory_gb", 0.0)
+        max_ensemble_memory = self.resource_limits.get("max_ensemble_memory_gb", 8.0)
+        
+        if ensemble_memory > max_ensemble_memory:
+            violations.append({
+                "type": "ensemble_resource_violation",
+                "metric": "ensemble_memory_gb",
+                "expected": max_ensemble_memory,
+                "actual": ensemble_memory,
+                "severity": "high"
+            })
+            score *= 0.6
+        
+        # Validate individual model memory limits
+        individual_models = resource_data.get("individual_models", {})
+        max_individual_memory = self.resource_limits.get("max_individual_model_memory_gb", 2.0)
+        
+        for model_name, model_data in individual_models.items():
+            model_memory = model_data.get("memory_gb", 0.0)
+            if model_memory > max_individual_memory:
+                violations.append({
+                    "type": "individual_model_violation",
+                    "metric": f"{model_name}_memory_gb",
+                    "expected": max_individual_memory,
+                    "actual": model_memory,
+                    "severity": "medium"
+                })
+                score *= 0.9
+        
+        # Check resource efficiency
+        if individual_models:
+            total_individual = sum(model_data.get("memory_gb", 0) for model_data in individual_models.values())
+            if ensemble_memory > total_individual * 1.2:  # Allow 20% overhead
+                warnings.append({
+                    "type": "efficiency_warning",
+                    "metric": "memory_efficiency",
+                    "message": "High memory overhead detected in ensemble",
+                    "overhead_ratio": ensemble_memory / total_individual if total_individual > 0 else 0,
+                    "severity": "medium"
+                })
+                score *= 0.95
+        
+        return ValidationResult(
+            valid=len(violations) == 0,
+            score=score,
+            violations=violations,
+            warnings=warnings,
+            metrics={"ensemble_resource_score": score}
+        )
+
+
 class ResponseTimeValidator:
     """
     Response Time Validator
@@ -686,10 +876,13 @@ def create_performance_validator_suite(config: Dict[str, Any]) -> Dict[str, Any]
         "throughput": ThroughputValidator(capacity_requirements),
         "resource_usage": ResourceUsageValidator(resource_limits),
         "response_time": ResponseTimeValidator(response_time_targets),
-        "error_rate": ErrorRateValidator(error_rate_targets)
+        "error_rate": ErrorRateValidator(error_rate_targets),
+        # Ensemble-specific validators
+        "ensemble_performance": EnsemblePerformanceValidator(sla_requirements),
+        "ensemble_resource_usage": EnsembleResourceUsageValidator(resource_limits)
     }
     
-    logger.info("Created performance validation suite with all validators")
+    logger.info("Created performance validation suite with all validators including ensemble validators")
     return validators
 
 
@@ -749,6 +942,22 @@ async def run_comprehensive_validation(validators: Dict[str, Any], performance_d
         overall_score *= error_rate_result.score
         total_violations.extend(error_rate_result.violations)
         total_warnings.extend(error_rate_result.warnings)
+    
+    # Run ensemble performance validation
+    if "ensemble_performance" in validators and "ensemble_data" in performance_data:
+        ensemble_performance_result = validators["ensemble_performance"].validate_ensemble_metrics(performance_data["ensemble_data"])
+        results["ensemble_performance"] = ensemble_performance_result
+        overall_score *= ensemble_performance_result.score
+        total_violations.extend(ensemble_performance_result.violations)
+        total_warnings.extend(ensemble_performance_result.warnings)
+    
+    # Run ensemble resource usage validation
+    if "ensemble_resource_usage" in validators and "ensemble_resource_data" in performance_data:
+        ensemble_resource_result = validators["ensemble_resource_usage"].validate_ensemble_resource_usage(performance_data["ensemble_resource_data"])
+        results["ensemble_resource_usage"] = ensemble_resource_result
+        overall_score *= ensemble_resource_result.score
+        total_violations.extend(ensemble_resource_result.violations)
+        total_warnings.extend(ensemble_resource_result.warnings)
     
     # Calculate overall validation status
     validation_passed = len(total_violations) == 0
