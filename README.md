@@ -75,22 +75,28 @@ docker-compose -f docker/docker-compose.yml up
 
 ### Production Deployment
 
-#### Option 1: Complete Deployment (Recommended)
+#### Environment-Based Deployment
 ```bash
-./deploy/deploy_and_configure.sh
+# Production deployment (full ensemble: LSTM + 4 Transformers)
+ENVIRONMENT=production ./deploy/deploy.sh production standard
+
+# Development deployment (LSTM only)
+ENVIRONMENT=development ./deploy/deploy.sh staging standard
+
+# Staging deployment (full ensemble, reduced resources)
+ENVIRONMENT=staging ./deploy/deploy.sh staging standard
+
+# Default deployment (defaults to production)
+./deploy/deploy.sh production standard
 ```
-This script will:
-1. Build and deploy to Google Cloud Run
-2. Configure Telegram webhook
-3. Verify all endpoints
-4. Provide status overview
 
-#### Option 2: Manual Steps
+#### Complete Deployment Pipeline
 ```bash
-# Deploy to Cloud Run
-./deploy/deploy_latest.sh
+# One-command deployment with webhook configuration
+./deploy/deploy_and_configure.sh
 
-# Set up Telegram webhook
+# Or manual steps
+./deploy/deploy_latest.sh
 ./scripts/set_webhook.sh https://your-service-url.run.app/webhook
 ```
 
@@ -123,7 +129,7 @@ graph TB
         end
 
         subgraph "ML/AI Components"
-            MLAnalysis[ML Analysis<br/>LSTM Networks]
+            MLAnalysis[ML Ensemble<br/>LSTM + 4 Transformers]
             RLAgent[RL Agent<br/>DQN]
             XAI[XAI System<br/>Explainability]
             ModelPreservation[Model Preservation<br/>System]
@@ -200,19 +206,19 @@ sequenceDiagram
     alt Analysis Mode
         Mode->>ML: Analyze token
         ML->>ML: Technical indicators
-        ML->>ML: LSTM prediction
+        ML->>ML: Ensemble prediction (LSTM + 4 Transformers)
         ML->>XAI: Generate explanations
         XAI-->>Bot: Analysis report
     else Simulation Mode
         Mode->>ML: Analyze token
-        ML->>RL: Get trading decision
+        ML->>RL: Get ensemble trading decision
         RL->>RL: Experience replay
         RL->>RL: Update Q-network
-        RL->>XAI: Explain decision
+        RL->>XAI: Explain ensemble decision
         XAI-->>Bot: Simulation result
     else Live Mode
         Mode->>ML: Analyze token
-        ML->>RL: Get trading decision
+        ML->>RL: Get ensemble trading decision
         RL->>Trade: Execute trade
         Trade->>DEX: Route order
         DEX-->>Trade: Execution result
@@ -231,7 +237,8 @@ sequenceDiagram
 ### Key Components
 - **Token Discovery**: Multi-chain scanning (Solana, Ethereum, Base)
 - **Fundamental Evaluation**: Liquidity, holder analysis, security checks
-- **ML Analysis**: LSTM neural networks with ensemble predictions and technical indicators
+- **ML Ensemble**: LSTM + 4 Transformer models (iTransformer, PatchTST, TimesMixer, TimesFM) with environment-based deployment
+- **Environment Configuration**: `ENVIRONMENT` variable controls deployment mode (development: LSTM only, production: full ensemble)
 - **RL Agent**: DQN-based trading decision system with database-first experience storage
 - **RL Experience Storage**: Production-ready PostgreSQL database system for experience replay
 - **XAI System**: Explainable AI with LIME, Permutation, and Gradient explainers for trading decision transparency
@@ -615,6 +622,46 @@ modes:
       require_confirmation: true
 ```
 
+## 🌍 Environment Configuration
+
+The system uses the `ENVIRONMENT` variable to control ensemble deployment and resource allocation, replacing the previous single-model approach:
+
+### Environment Modes
+
+| Environment | Models | Resources | Purpose |
+|-------------|--------|-----------|---------|
+| **development** | LSTM only | 2Gi RAM, 1 CPU | Local testing, debugging |
+| **staging** | Full ensemble | 4Gi RAM, 3 CPU | Integration testing |
+| **production** | Full ensemble | 8Gi RAM, 6 CPU | Live trading |
+
+### Usage Examples
+
+```bash
+# Development mode (lightweight, LSTM only)
+ENVIRONMENT=development uv run python src/main.py
+
+# Production mode (full ensemble)
+ENVIRONMENT=production uv run python src/main.py
+
+# Default (production if not specified)
+uv run python src/main.py
+```
+
+### Model Initialization by Environment
+
+```python
+# The system automatically configures models based on ENVIRONMENT
+import os
+from src.ml_analysis.model_manager import ModelManager
+
+# Initialize model manager (automatically detects ENVIRONMENT)
+model_manager = ModelManager()
+
+# Development: Uses LSTM only for fast iteration
+# Production: Uses full ensemble (LSTM + iTransformer + PatchTST + TimesMixer + TimesFM)
+predictions = await model_manager.get_ensemble_prediction(token_data)
+```
+
 ## ⚙️ Configuration
 
 ### Required Secrets (Google Cloud Secret Manager)
@@ -707,14 +754,15 @@ Live trading mode is **disabled by default** and requires:
 - ✅ Security evaluation and honeypot detection
 - ✅ <30 second evaluation pipeline
 
-### Phase 3 (Completed) - ML Analysis  
+### Phase 3 (Completed) - ML Ensemble Analysis  
 - ✅ 89 passing ML tests with 84% module coverage
-- ✅ LSTM neural networks with attention mechanism
+- ✅ ML Ensemble: LSTM + 4 Transformer models (iTransformer, PatchTST, TimesMixer, TimesFM)
+- ✅ Environment-based model deployment (`ENVIRONMENT` variable configuration)
 - ✅ 17 technical indicators with feature engineering
-- ✅ Ensemble model system with performance tracking
+- ✅ Dynamic ensemble weighting with performance tracking
 - ✅ ML-enhanced evaluation pipeline integration
 - ✅ Multi-timeframe predictions (1h, 4h, 24h)
-- ✅ <1 second inference time achieved
+- ✅ <1 second ensemble inference time achieved
 
 ### Phase 4 (Completed) - RL Trading Agent
 - ✅ 125 passing RL tests with 91-97% coverage per component
@@ -963,10 +1011,11 @@ The Shyvr AI Reinforcement Learning Trading Engine (RLTE) has achieved **complet
 #### 🤖 AI/ML Systems (Core Complete)
 - **Token Discovery**: Multi-chain scanning across Solana, Ethereum, Base (101 tests)
 - **Fundamental Analysis**: Security evaluation, liquidity analysis, holder distribution (98 tests)
-- **ML Analysis**: LSTM neural networks with 17 technical indicators (89 tests, 84% coverage)
+- **ML Ensemble**: LSTM + 4 Transformer models with environment-based deployment (89 tests, 84% coverage)
+- **Environment Configuration**: Automatic model selection based on `ENVIRONMENT` variable
 - **RL Agent**: DQN-based trading with advanced reward engineering (125 tests, 91-97% coverage)
 - **XAI System**: Explainable AI with LIME, Permutation, and Gradient explainers (90+ tests, production-ready)
-- **ML-RL Integration**: Seamless hybrid decision making (16 tests, 99% coverage)
+- **ML-RL Integration**: Seamless ensemble-RL hybrid decision making (16 tests, 99% coverage)
 
 #### 🛡️ Safety & Risk Management (Framework Complete)
 - **Mode Framework**: Analysis, simulation, live trading modes (121 tests, 83% coverage)
