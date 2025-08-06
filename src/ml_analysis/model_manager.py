@@ -95,51 +95,72 @@ class ModelManager:
         self._initialize_models()
     
     def _initialize_models(self):
-        """Initialize available ML models including all Transformer variants"""
+        """Initialize ML models based on environment"""
+        import os
+        
         try:
-            self.logger.info("Initializing ML models", model_dir=str(self.model_dir))
+            # Get environment from environment variable or config
+            environment = os.environ.get('ENVIRONMENT', 
+                                       self.config.get('environment', 'production'))
             
-            # Initialize LSTM model with reduced weight for Transformer ensemble
+            self.logger.info("Initializing ML models", 
+                           model_dir=str(self.model_dir),
+                           environment=environment)
+            
+            # Always initialize LSTM model (used in all environments)
             lstm_config = self.config.get('lstm', {})
             self._models[ModelType.LSTM] = LSTMPricePredictor(lstm_config)
-            self._model_weights[ModelType.LSTM] = 0.2  # Reduced for 6-model ensemble
             
-            # Initialize basic Transformer model
-            transformer_config = self.config.get('transformer', {})
-            self._models[ModelType.TRANSFORMER] = TransformerPredictor(transformer_config)
-            self._model_weights[ModelType.TRANSFORMER] = 0.15  # Base Transformer weight
-            
-            # Initialize iTransformer model (inverted attention for multivariate)
-            itransformer_config = self.config.get('itransformer', transformer_config)
-            self._models[ModelType.ITRANSFORMER] = iTransformerPredictor(itransformer_config)
-            self._model_weights[ModelType.ITRANSFORMER] = 0.2  # Higher weight for multivariate focus
-            
-            # Initialize PatchTST model (patch-based for long sequences)
-            patchtst_config = self.config.get('patchtst', transformer_config)
-            self._models[ModelType.PATCHTST] = PatchTSTPredictor(patchtst_config)
-            self._model_weights[ModelType.PATCHTST] = 0.15  # Good for long-horizon predictions
-            
-            # Initialize TimesMixer model (decomposition-based mixing)
-            timesmixer_config = self.config.get('timesmixer', transformer_config)
-            self._models[ModelType.TIMESMIXER] = TimesMixerPredictor(timesmixer_config)
-            self._model_weights[ModelType.TIMESMIXER] = 0.1  # Experimental model, lower initial weight
-            
-            # Initialize TimesFM model (Google's foundation model for zero-shot predictions)
-            timesfm_config = self.config.get('timesfm', {
-                'model_name': 'google/timesfm-1.0-200m',
-                'prediction_length': 24,
-                'context_length': 512,
-                'use_zero_shot': True,
-                'gcp_optimized': True
-            })
-            self._models[ModelType.TIMESFM] = TimesFMWrapper(timesfm_config)
-            self._model_weights[ModelType.TIMESFM] = 0.2  # Higher weight due to foundation model capabilities
-            
-            # Ensure weights sum to 1.0
-            total_weight = sum(self._model_weights.values())
-            if total_weight != 1.0:
-                for model_type in self._model_weights:
-                    self._model_weights[model_type] /= total_weight
+            if environment == 'development':
+                # Development mode: LSTM only
+                self._model_weights[ModelType.LSTM] = 1.0
+                
+                self.logger.info("Development mode: initialized LSTM only",
+                               models=[ModelType.LSTM.value])
+                
+            else:
+                # Production/staging mode: Full ensemble
+                self._model_weights[ModelType.LSTM] = 0.2  # Reduced for 6-model ensemble
+                
+                # Initialize basic Transformer model
+                transformer_config = self.config.get('transformer', {})
+                self._models[ModelType.TRANSFORMER] = TransformerPredictor(transformer_config)
+                self._model_weights[ModelType.TRANSFORMER] = 0.15  # Base Transformer weight
+                
+                # Initialize iTransformer model (inverted attention for multivariate)
+                itransformer_config = self.config.get('itransformer', transformer_config)
+                self._models[ModelType.ITRANSFORMER] = iTransformerPredictor(itransformer_config)
+                self._model_weights[ModelType.ITRANSFORMER] = 0.2  # Higher weight for multivariate focus
+                
+                # Initialize PatchTST model (patch-based for long sequences)
+                patchtst_config = self.config.get('patchtst', transformer_config)
+                self._models[ModelType.PATCHTST] = PatchTSTPredictor(patchtst_config)
+                self._model_weights[ModelType.PATCHTST] = 0.15  # Good for long-horizon predictions
+                
+                # Initialize TimesMixer model (decomposition-based mixing)
+                timesmixer_config = self.config.get('timesmixer', transformer_config)
+                self._models[ModelType.TIMESMIXER] = TimesMixerPredictor(timesmixer_config)
+                self._model_weights[ModelType.TIMESMIXER] = 0.1  # Experimental model, lower initial weight
+                
+                # Initialize TimesFM model (Google's foundation model for zero-shot predictions)
+                timesfm_config = self.config.get('timesfm', {
+                    'model_name': 'google/timesfm-1.0-200m',
+                    'prediction_length': 24,
+                    'context_length': 512,
+                    'use_zero_shot': True,
+                    'gcp_optimized': True
+                })
+                self._models[ModelType.TIMESFM] = TimesFMWrapper(timesfm_config)
+                self._model_weights[ModelType.TIMESFM] = 0.2  # Higher weight due to foundation model capabilities
+                
+                # Normalize weights to sum to 1.0
+                total_weight = sum(self._model_weights.values())
+                if total_weight != 1.0:
+                    for model_type in self._model_weights:
+                        self._model_weights[model_type] /= total_weight
+                
+                self.logger.info("Production/staging mode: initialized full ensemble",
+                               models=[mt.value for mt in self._models.keys()])
             
             # Initialize performance tracking for all models
             for model_type in self._models.keys():
@@ -151,7 +172,8 @@ class ModelManager:
                     'avg_inference_time_ms': 0.0  # Track inference performance
                 }
             
-            self.logger.info("All models initialized successfully", 
+            self.logger.info("Models initialized successfully", 
+                           environment=environment,
                            models=[mt.value for mt in self._models.keys()],
                            model_weights=self._model_weights,
                            model_dir=str(self.model_dir))
