@@ -6,6 +6,7 @@ of multiple trading modes, mode switching, scheduling, and coordination.
 """
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
@@ -84,14 +85,23 @@ class ModeManager:
         self._initialized = False
         self._mode_type_registry: Dict[ModeType, UUID] = {}
         
+        # Ensemble configuration
+        self.environment = os.getenv('ENVIRONMENT', 'production')
+        self.ensemble_models_available = []
+        self.model_availability_status = {}
+        
         # Configure logger
         self.logger = logger.bind(
             portfolio_id=str(portfolio.portfolio_id),
-            max_concurrent=config.max_concurrent_modes
+            max_concurrent=config.max_concurrent_modes,
+            environment=self.environment
         )
     
     async def initialize(self) -> None:
         """Initialize the mode manager."""
+        # Check ensemble models availability first
+        await self._check_ensemble_models_availability()
+        
         # Log mode manager initialization start
         await activity_logger.log_activity(
             category=ActivityCategory.SYSTEM,
@@ -103,11 +113,17 @@ class ModeManager:
             metadata={
                 "portfolio_id": str(self.portfolio.portfolio_id),
                 "max_concurrent_modes": self.config.max_concurrent_modes,
-                "default_modes_count": len(self.config.default_modes)
+                "default_modes_count": len(self.config.default_modes),
+                "environment": self.environment,
+                "available_models": self.ensemble_models_available
             }
         )
         
-        self.logger.info("Initializing mode manager")
+        self.logger.info(
+            "Initializing mode manager",
+            environment=self.environment,
+            available_models=self.ensemble_models_available
+        )
         
         # Initialize any default modes
         for mode_config in self.config.default_modes:
@@ -412,6 +428,74 @@ class ModeManager:
                 )
         
         self.logger.info("Mode manager cleanup completed")
+    
+    async def _check_ensemble_models_availability(self) -> None:
+        """Check availability of ensemble models based on environment."""
+        try:
+            if self.environment == 'development':
+                # Development mode: only LSTM
+                self.ensemble_models_available = ['lstm']
+                self.model_availability_status = {
+                    'lstm': True,
+                    'itransformer': False,
+                    'patchtst': False,
+                    'timesmixer': False,
+                    'timesfm': False
+                }
+            else:
+                # Production mode: check all models
+                await self._check_model_availability()
+        except Exception as e:
+            self.logger.error("Failed to check ensemble models availability", error=str(e))
+            # Fallback to LSTM only
+            self.ensemble_models_available = ['lstm']
+    
+    async def _check_model_availability(self) -> None:
+        """Check which ensemble models are actually available."""
+        models_to_check = ['lstm', 'itransformer', 'patchtst', 'timesmixer', 'timesfm']
+        available_models = []
+        
+        for model_name in models_to_check:
+            try:
+                # In a real implementation, this would check if the model is loaded and healthy
+                # For now, we simulate availability based on environment
+                is_available = await self._is_model_healthy(model_name)
+                self.model_availability_status[model_name] = is_available
+                if is_available:
+                    available_models.append(model_name)
+            except Exception as e:
+                self.logger.warning(f"Model {model_name} availability check failed", error=str(e))
+                self.model_availability_status[model_name] = False
+        
+        self.ensemble_models_available = available_models
+        
+        if not available_models:
+            self.logger.warning("No models available, falling back to LSTM only")
+            self.ensemble_models_available = ['lstm']
+            self.model_availability_status['lstm'] = True
+    
+    async def _is_model_healthy(self, model_name: str) -> bool:
+        """Check if a specific model is healthy and available."""
+        try:
+            # This is a simplified implementation
+            # In production, this would check actual model health
+            if model_name == 'lstm':
+                return True  # LSTM always available
+            else:
+                # For transformers, check if they're available in production
+                return self.environment == 'production'
+        except Exception:
+            return False
+    
+    def get_ensemble_status(self) -> Dict[str, Any]:
+        """Get current ensemble status and model availability."""
+        return {
+            'environment': self.environment,
+            'available_models': self.ensemble_models_available,
+            'model_availability_status': self.model_availability_status,
+            'total_available_models': len(self.ensemble_models_available),
+            'is_ensemble_mode': len(self.ensemble_models_available) > 1
+        }
     
     def _create_mode(self, mode_id: UUID, mode_config: ModeConfig) -> ModeBase:
         """Create a mode instance based on configuration."""
