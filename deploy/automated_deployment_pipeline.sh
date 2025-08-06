@@ -260,18 +260,46 @@ stage_transformer_validation() {
     update_stage_status "transformer_validation" "in_progress"
     log_header "🤖 Stage 2.5: Transformer Validation"
     
-    log_info "Validating transformer model requirements..."
+    # Source the transformer validation module
+    local script_dir="$(dirname "$0")"
+    local validation_module="$script_dir/modules/transformer_validation.sh"
     
-    # Attention mechanism test placeholder
-    log_info "Testing attention mechanism functionality..."
-    # This would test that attention mechanisms can be loaded and computed
+    if [[ ! -f "$validation_module" ]]; then
+        log_error "Transformer validation module not found: $validation_module"
+        update_stage_status "transformer_validation" "failed"
+        return 1
+    fi
     
-    # Transformer model loading test placeholder
-    log_info "Testing transformer model loading performance..."
-    # This would test model loading times and memory usage
+    log_info "Loading transformer validation module..."
+    source "$validation_module"
     
-    update_stage_status "transformer_validation" "completed"
-    log_success "Transformer validation completed"
+    # Determine the transformer model to validate
+    local model_type="${TRANSFORMER_MODEL_TYPE:-iTransformer}"
+    log_info "Validating transformer model: $model_type"
+    
+    # Set available resources for validation
+    export AVAILABLE_MEMORY="${TRANSFORMER_MEMORY:-8Gi}"
+    export AVAILABLE_CPU="${TRANSFORMER_CPU:-6}"
+    
+    # Run comprehensive transformer validation
+    if validate_transformer_models "$model_type" "$ENVIRONMENT"; then
+        log_success "✅ Transformer validation completed successfully"
+        log_info "Validation result: $TRANSFORMER_VALIDATION_RESULT"
+        log_info "Validation message: $TRANSFORMER_VALIDATION_MESSAGE"
+        
+        # Export validation results for subsequent stages
+        export_validation_results
+        
+        update_stage_status "transformer_validation" "completed"
+        return 0
+    else
+        log_error "❌ Transformer validation failed"
+        log_error "Validation result: $TRANSFORMER_VALIDATION_RESULT"
+        log_error "Validation message: $TRANSFORMER_VALIDATION_MESSAGE"
+        
+        update_stage_status "transformer_validation" "failed"
+        return 1
+    fi
 }
 
 # Stage 3: Build and test
