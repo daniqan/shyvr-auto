@@ -13,6 +13,7 @@ dependencies = [
     "scikit-learn>=1.7.1",
     "scipy>=1.16.0",
     "matplotlib>=3.10.3",
+    "seaborn>=0.12.0",
     "gymnasium>=1.1.1",
     "joblib>=1.5.1",
     # LLM/AI Framework
