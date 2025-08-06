@@ -20,7 +20,7 @@ rollout_stages:
       - "error_rate"
       - "response_time"
       - "resource_utilization"
-      - "transformer_model_accuracy"
+      - "ensemble_accuracy"
 
   - name: "expanded"
     traffic_percentage: 50
@@ -30,7 +30,7 @@ rollout_stages:
       - "error_rate"
       - "response_time"
       - "resource_utilization"
-      - "transformer_model_accuracy"
+      - "ensemble_accuracy"
       - "prediction_quality"
 
   - name: "full"
@@ -41,7 +41,7 @@ rollout_stages:
       - "error_rate"
       - "response_time"
       - "resource_utilization"
-      - "transformer_model_accuracy"
+      - "ensemble_accuracy"
       - "prediction_quality"
       - "end_to_end_validation"
 
