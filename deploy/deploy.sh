@@ -35,8 +35,9 @@ show_usage() {
     echo "Usage: $0 <environment> [mode] [image_tag]"
     echo ""
     echo "Environments:"
-    echo "  staging     - Deploy to staging environment"
-    echo "  production  - Deploy to production environment"
+    echo "  development - Deploy to development environment (LSTM only)"
+    echo "  staging     - Deploy to staging environment (full ensemble)"
+    echo "  production  - Deploy to production environment (full ensemble)"
     echo ""
     echo "Modes:"
     echo "  standard         - Full deployment pipeline (default)"
@@ -66,7 +67,7 @@ validate_arguments() {
         exit 1
     fi
     
-    if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+    if [[ "$ENVIRONMENT" != "development" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
         log_error "Invalid environment: $ENVIRONMENT"
         show_usage
         exit 1
@@ -117,24 +118,22 @@ check_prerequisites() {
     log_success "Prerequisites check passed"
 }
 
-# Load transformer configurations if needed
-load_transformer_config() {
-    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
-        log_info "Transformer deployment detected: $TRANSFORMER_MODEL_TYPE"
+# Load environment-based configurations
+load_environment_config() {
+    log_info "Loading environment configuration for: $ENVIRONMENT"
+    
+    local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+    if [[ -f "$config_loader_module" ]]; then
+        source "$config_loader_module"
         
-        local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
-        if [[ -f "$config_loader_module" ]]; then
-            source "$config_loader_module"
-            
-            if load_transformer_configurations "$TRANSFORMER_MODEL_TYPE" "$ENVIRONMENT"; then
-                log_success "Transformer configuration loaded successfully"
-                export_all_config
-            else
-                log_warning "Failed to load transformer configuration, using defaults"
-            fi
+        if load_environment_configurations "$ENVIRONMENT"; then
+            log_success "Environment configuration loaded successfully"
+            export_all_config
         else
-            log_warning "Transformer config loader module not found"
+            log_warning "Failed to load environment configuration, using defaults"
         fi
+    else
+        log_warning "Environment config loader module not found"
     fi
 }
 
@@ -202,20 +201,18 @@ run_emergency_deployment() {
 run_blue_green_only() {
     log_header "🚦 Running blue-green deployment mode"
     
-    # Load transformer configuration if model type is specified
-    if [[ -n "${TRANSFORMER_MODEL_TYPE:-}" ]]; then
-        local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+    # Load environment configuration for deployment
+    log_info "Loading environment configuration for deployment"
+    local config_loader_module="$SCRIPT_DIR/modules/transformer_config_loader.sh"
+    
+    if [[ -f "$config_loader_module" ]]; then
+        source "$config_loader_module"
         
-        if [[ -f "$config_loader_module" ]]; then
-            log_info "Loading transformer configuration for deployment"
-            source "$config_loader_module"
-            
-            if load_transformer_configurations "$TRANSFORMER_MODEL_TYPE" "$ENVIRONMENT"; then
-                log_success "Transformer configuration loaded for deploy.sh"
-                export_all_config
-            else
-                log_warning "Failed to load transformer configuration, proceeding with defaults"
-            fi
+        if load_environment_configurations "$ENVIRONMENT"; then
+            log_success "Environment configuration loaded for deploy.sh"
+            export_all_config
+        else
+            log_warning "Failed to load environment configuration, proceeding with defaults"
         fi
     fi
     
@@ -320,8 +317,8 @@ main() {
     # Check prerequisites
     check_prerequisites
     
-    # Load transformer configurations if needed
-    load_transformer_config
+    # Load environment configurations
+    load_environment_config
     
     # Handle dry run
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
