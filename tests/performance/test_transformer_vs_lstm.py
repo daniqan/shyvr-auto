@@ -45,20 +45,8 @@ from tests.conftest_integration import (
     load_test_config
 )
 
-# Import ML models for comparison
-try:
-    from src.ml_analysis.transformers.itransformer import iTransformer
-    from src.ml_analysis.transformers.patchtst import PatchTST
-    from src.ml_analysis.transformers.timesmixer import TimesMixer
-    from src.ml_analysis.transformers.timesfm_wrapper import TimesFMWrapper
-    from src.ml_analysis.lstm_model import LSTMPricePredictor
-    from src.ml_analysis.model_manager import ModelManager
-    from src.ml_analysis.ensemble_weight_manager import EnsembleWeightManager
-    from src.ml_analysis.base import ModelType, PredictionDirection
-    from src.discovery.base import DiscoveredToken
-    from src.monitoring.transformer_metrics import TransformerMetrics
-except ImportError as e:
-    print(f"Warning: Import failed - {e}")
+# ML models will be imported within test functions to avoid configuration issues
+# This follows TDD - imports will initially fail until proper implementations exist
 
 
 @dataclass
