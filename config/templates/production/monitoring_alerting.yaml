@@ -1,0 +1,560 @@
+# ============================================================================
+# Monitoring and Alerting Configuration Templates - Production
+# Transformer-Enabled RLTE Trading System
+# ============================================================================
+#
+# This template provides comprehensive monitoring and alerting configuration
+# based on actual implementation from:
+# - src/monitoring/transformer_monitoring_dashboard.py
+# - src/monitoring/gcp_transformer_monitoring.py  
+# - src/monitoring/transformer_health_endpoints.py
+# - config/monitoring_config.json
+#
+# Last Updated: 2025-08-06
+
+# ============================================================================
+# TRANSFORMER-SPECIFIC CUSTOM METRICS
+# ============================================================================
+# Based on actual implementation in GCPTransformerMonitoring
+
+custom_metrics:
+  # Model Health Metrics
+  - name: "transformer_model_health"
+    display_name: "Transformer Model Health Status"
+    description: "Health status of individual transformer models (1 = healthy, 0 = unhealthy)"
+    metric_kind: "GAUGE"
+    value_type: "INT64"
+    unit: "1"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model (itransformer, patchtst, timesmixer, timesfm)"
+      - key: "model_instance"
+        description: "Instance identifier for the model"
+      - key: "health_check_type"
+        description: "Type of health check (startup, liveness, readiness)"
+
+  # Memory Usage Metrics
+  - name: "transformer_memory_usage"
+    display_name: "Transformer Memory Usage"
+    description: "Current memory usage by transformer models in MB"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "MB"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "memory_type"
+        description: "Type of memory (peak, current, allocated)"
+
+  # Inference Latency Metrics
+  - name: "transformer_inference_latency"
+    display_name: "Transformer Inference Latency"
+    description: "Inference latency for transformer models in milliseconds"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "ms"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "sequence_length"
+        description: "Input sequence length bucket"
+      - key: "batch_size"
+        description: "Batch size bucket"
+
+  # Cache Performance Metrics
+  - name: "transformer_cache_hit_rate"
+    display_name: "Transformer Cache Hit Rate"
+    description: "Cache hit rate for transformer model operations (0-100%)"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "%"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "cache_type"
+        description: "Type of cache (model, attention, embedding)"
+
+  # Model Loading Metrics
+  - name: "transformer_model_loading_time"
+    display_name: "Transformer Model Loading Time"
+    description: "Time taken to load transformer models in seconds"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "s"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "loading_stage"
+        description: "Loading stage (weights, tokenizer, config)"
+
+  # Attention Pattern Metrics
+  - name: "transformer_attention_entropy"
+    display_name: "Transformer Attention Entropy"
+    description: "Entropy of attention patterns (measure of focus distribution)"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "1"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "layer_number"
+        description: "Transformer layer number"
+      - key: "attention_head"
+        description: "Attention head number"
+
+  # Drift Detection Metrics
+  - name: "transformer_drift_score"
+    display_name: "Transformer Drift Detection Score"
+    description: "Model drift detection score (0-1, higher = more drift)"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "1"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "drift_type"
+        description: "Type of drift (attention, embedding, prediction)"
+
+  # Prediction Confidence Metrics
+  - name: "transformer_prediction_confidence"
+    display_name: "Transformer Prediction Confidence"
+    description: "Confidence score of transformer predictions (0-1)"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "1"
+    labels:
+      - key: "model_type"
+        description: "Type of transformer model"
+      - key: "prediction_horizon"
+        description: "Prediction time horizon"
+
+  # Resource Utilization Metrics
+  - name: "transformer_resource_utilization"
+    display_name: "Transformer Resource Utilization"
+    description: "Resource utilization specific to transformer workloads"
+    metric_kind: "GAUGE"
+    value_type: "DOUBLE"
+    unit: "%"
+    labels:
+      - key: "resource_type"
+        description: "Type of resource (cpu, memory, gpu)"
+      - key: "model_type"
+        description: "Type of transformer model using the resource"
+
+# ============================================================================
+# ALERT POLICIES FOR TRANSFORMER MONITORING
+# ============================================================================
+# Based on actual thresholds from implementation
+
+alert_policies:
+  # Critical Alerts
+  - name: "transformer-high-memory-usage"
+    display_name: "Transformer High Memory Usage"
+    severity: "CRITICAL"
+    conditions:
+      - display_name: "Memory usage above 90% of 8Gi limit"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_memory_usage"'
+          comparison: "COMPARISON_GREATER_THAN"
+          threshold_value: 7372.8  # 90% of 8192 MB
+          duration: "300s"  # 5 minutes
+          aggregation:
+            alignment_period: "300s"
+            per_series_aligner: "ALIGN_MEAN"
+            cross_series_reducer: "REDUCE_MAX"
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/critical-alerts"
+    documentation: |
+      ## Transformer High Memory Usage Alert
+      
+      **Severity**: CRITICAL
+      **Threshold**: Memory usage > 90% (7.37Gi) of 8Gi limit
+      
+      **Immediate Actions**:
+      1. Check transformer model health dashboard
+      2. Verify if memory leak or model size issue
+      3. Consider scaling up memory allocation
+      4. Review recent model deployments
+      
+      **Investigation**:
+      - Check model loading patterns
+      - Verify attention mechanism memory usage
+      - Review cache performance metrics
+      - Monitor for memory pressure indicators
+
+  - name: "transformer-slow-inference"
+    display_name: "Transformer Slow Inference Latency"
+    severity: "WARNING"
+    conditions:
+      - display_name: "P99 inference latency above 1000ms"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_inference_latency"'
+          comparison: "COMPARISON_GREATER_THAN"
+          threshold_value: 1000
+          duration: "180s"  # 3 minutes
+          aggregation:
+            alignment_period: "60s"
+            per_series_aligner: "ALIGN_PERCENTILE_99"
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/performance-alerts"
+    documentation: |
+      ## Transformer Slow Inference Alert
+      
+      **Severity**: WARNING
+      **Threshold**: P99 latency > 1000ms for 3 minutes
+      
+      **Investigation Steps**:
+      1. Check sequence length distribution
+      2. Verify model complexity factors
+      3. Review attention computation efficiency
+      4. Monitor resource utilization correlation
+
+  - name: "transformer-low-cache-hit-rate"
+    display_name: "Transformer Low Cache Hit Rate"
+    severity: "INFO"
+    conditions:
+      - display_name: "Cache hit rate below 50%"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_cache_hit_rate"'
+          comparison: "COMPARISON_LESS_THAN"
+          threshold_value: 50
+          duration: "600s"  # 10 minutes
+          aggregation:
+            alignment_period: "300s"
+            per_series_aligner: "ALIGN_MEAN"
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/performance-alerts"
+    documentation: |
+      ## Transformer Low Cache Hit Rate Alert
+      
+      **Severity**: INFO
+      **Threshold**: Cache hit rate < 50% for 10 minutes
+      
+      **Optimization Actions**:
+      1. Analyze cache warming strategies
+      2. Review model loading patterns
+      3. Consider cache size adjustments
+      4. Monitor memory pressure impact
+
+  - name: "transformer-model-health-failure"
+    display_name: "Transformer Model Health Check Failure"
+    severity: "CRITICAL"
+    conditions:
+      - display_name: "Model health status is 0 (unhealthy)"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_model_health"'
+          comparison: "COMPARISON_EQUAL"
+          threshold_value: 0
+          duration: "60s"  # 1 minute
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/critical-alerts"
+    documentation: |
+      ## Transformer Model Health Failure Alert
+      
+      **Severity**: CRITICAL
+      **Threshold**: Model health = 0 (unhealthy)
+      
+      **Emergency Actions**:
+      1. Check model loading status
+      2. Verify service health endpoints
+      3. Review error logs immediately
+      4. Consider model reload or rollback
+
+  - name: "transformer-attention-anomaly"
+    display_name: "Transformer Attention Pattern Anomaly"
+    severity: "WARNING"
+    conditions:
+      - display_name: "High attention entropy indicating drift"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_attention_entropy"'
+          comparison: "COMPARISON_GREATER_THAN"
+          threshold_value: 3.0  # High entropy threshold
+          duration: "900s"  # 15 minutes
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/ml-alerts"
+    documentation: |
+      ## Transformer Attention Anomaly Alert
+      
+      **Severity**: WARNING
+      **Threshold**: Attention entropy > 3.0 for 15 minutes
+      
+      **Analysis Required**:
+      1. Review recent training data quality
+      2. Check for distribution shift in inputs
+      3. Validate attention pattern changes
+      4. Consider model retraining if persistent
+
+  - name: "transformer-drift-detection"
+    display_name: "Transformer Model Drift Detected"
+    severity: "WARNING"
+    conditions:
+      - display_name: "Model drift score above 0.3"
+        condition_threshold:
+          filter: 'resource.type="cloud_run_revision" AND metric.type="custom.googleapis.com/transformer_drift_score"'
+          comparison: "COMPARISON_GREATER_THAN"
+          threshold_value: 0.3
+          duration: "1800s"  # 30 minutes
+    notification_channels:
+      - "projects/${GCP_PROJECT_ID}/notificationChannels/ml-alerts"
+    documentation: |
+      ## Transformer Model Drift Alert
+      
+      **Severity**: WARNING
+      **Threshold**: Drift score > 0.3 for 30 minutes
+      
+      **Model Management Actions**:
+      1. Analyze drift components (attention, embedding, prediction)
+      2. Review input data distribution changes
+      3. Schedule model retraining evaluation
+      4. Consider gradual model rollback if severe
+
+# ============================================================================
+# MONITORING DASHBOARDS CONFIGURATION
+# ============================================================================
+# Based on TransformerMonitoringDashboard implementation
+
+dashboards:
+  # Main Transformer Monitoring Dashboard
+  transformer_overview:
+    display_name: "Transformer Models - Production Overview"
+    description: "Comprehensive monitoring dashboard for transformer-enabled RLTE system"
+    
+    # Dashboard layout configuration
+    grid_layout:
+      columns: 12
+      
+      # Panel definitions
+      widgets:
+        # Model Health Overview Panel
+        - title: "Model Health Overview"
+          type: "scorecard"
+          position: { x: 0, y: 0, width: 3, height: 2 }
+          scorecard:
+            time_series_query:
+              time_series_filter:
+                filter: 'metric.type="custom.googleapis.com/transformer_model_health"'
+                aggregation:
+                  alignment_period: "300s"
+                  per_series_aligner: "ALIGN_MEAN"
+                  cross_series_reducer: "REDUCE_MEAN"
+            gauge_view:
+              lower_bound: 0.0
+              upper_bound: 1.0
+            spark_chart_view:
+              spark_chart_type: "SPARK_LINE"
+
+        # Memory Usage Panel
+        - title: "Memory Usage by Model Type"
+          type: "xy_chart"
+          position: { x: 3, y: 0, width: 4, height: 3 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_memory_usage"'
+                    aggregation:
+                      alignment_period: "60s"
+                      per_series_aligner: "ALIGN_MEAN"
+                      cross_series_reducer: "REDUCE_SUM"
+                      group_by_fields: ["metric.label.model_type"]
+            y_axis:
+              label: "Memory Usage (MB)"
+              scale: "LINEAR"
+            chart_options:
+              mode: "COLOR"
+
+        # Inference Latency Panel
+        - title: "Inference Latency P95/P99"
+          type: "xy_chart"
+          position: { x: 7, y: 0, width: 5, height: 3 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_inference_latency"'
+                    aggregation:
+                      alignment_period: "60s"
+                      per_series_aligner: "ALIGN_PERCENTILE_95"
+                      cross_series_reducer: "REDUCE_MEAN"
+                      group_by_fields: ["metric.label.model_type"]
+                plot_type: "LINE"
+                target_axis: "Y1"
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_inference_latency"'
+                    aggregation:
+                      alignment_period: "60s"
+                      per_series_aligner: "ALIGN_PERCENTILE_99"
+                      cross_series_reducer: "REDUCE_MEAN"
+                      group_by_fields: ["metric.label.model_type"]
+                plot_type: "LINE"
+                target_axis: "Y1"
+
+        # Cache Hit Rates Panel
+        - title: "Cache Hit Rates"
+          type: "xy_chart"
+          position: { x: 0, y: 3, width: 6, height: 2 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_cache_hit_rate"'
+                    aggregation:
+                      alignment_period: "300s"
+                      per_series_aligner: "ALIGN_MEAN"
+                      group_by_fields: ["metric.label.model_type", "metric.label.cache_type"]
+
+        # Model Loading Times Panel
+        - title: "Model Loading Times"
+          type: "xy_chart"
+          position: { x: 6, y: 3, width: 6, height: 2 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_model_loading_time"'
+                    aggregation:
+                      alignment_period: "300s"
+                      per_series_aligner: "ALIGN_MEAN"
+                      group_by_fields: ["metric.label.model_type"]
+            chart_options:
+              mode: "STACKED_BAR"
+
+        # Attention Entropy Panel
+        - title: "Attention Pattern Entropy (Drift Indicator)"
+          type: "xy_chart"
+          position: { x: 0, y: 5, width: 6, height: 2 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_attention_entropy"'
+                    aggregation:
+                      alignment_period: "600s"
+                      per_series_aligner: "ALIGN_MEAN"
+                      group_by_fields: ["metric.label.model_type"]
+
+        # Prediction Confidence Panel
+        - title: "Prediction Confidence Distribution"
+          type: "xy_chart"
+          position: { x: 6, y: 5, width: 6, height: 2 }
+          xy_chart:
+            data_sets:
+              - time_series_query:
+                  time_series_filter:
+                    filter: 'metric.type="custom.googleapis.com/transformer_prediction_confidence"'
+                    aggregation:
+                      alignment_period: "300s"
+                      per_series_aligner: "ALIGN_MEAN"
+                      group_by_fields: ["metric.label.model_type", "metric.label.prediction_horizon"]
+
+  # Detailed Model Performance Dashboard
+  model_performance:
+    display_name: "Transformer Models - Detailed Performance"
+    description: "Detailed performance metrics and diagnostics for transformer models"
+    
+    # Focus on performance analysis
+    widgets:
+      - title: "Resource Utilization by Model"
+        type: "xy_chart"
+        xy_chart:
+          data_sets:
+            - time_series_query:
+                time_series_filter:
+                  filter: 'metric.type="custom.googleapis.com/transformer_resource_utilization"'
+                  aggregation:
+                    alignment_period: "60s"
+                    per_series_aligner: "ALIGN_MEAN"
+                    group_by_fields: ["metric.label.model_type", "metric.label.resource_type"]
+
+      - title: "Drift Detection Trends"
+        type: "xy_chart"
+        xy_chart:
+          data_sets:
+            - time_series_query:
+                time_series_filter:
+                  filter: 'metric.type="custom.googleapis.com/transformer_drift_score"'
+                  aggregation:
+                    alignment_period: "1800s"  # 30 minutes
+                    per_series_aligner: "ALIGN_MEAN"
+                    group_by_fields: ["metric.label.model_type", "metric.label.drift_type"]
+
+# ============================================================================
+# NOTIFICATION CHANNELS CONFIGURATION
+# ============================================================================
+
+notification_channels:
+  # Critical alerts for immediate response
+  critical_alerts:
+    type: "email"
+    display_name: "Critical Production Alerts"
+    description: "Critical alerts requiring immediate attention"
+    labels:
+      email_address: "${ALERT_EMAIL_CRITICAL}"
+    enabled: true
+
+  # Performance alerts for monitoring team
+  performance_alerts:
+    type: "slack"
+    display_name: "Performance Monitoring Alerts"
+    description: "Performance and latency related alerts"
+    labels:
+      channel_name: "#transformer-performance"
+      url: "${SLACK_PERFORMANCE_WEBHOOK_URL}"
+    enabled: true
+
+  # ML/Model alerts for data science team
+  ml_alerts:
+    type: "email"
+    display_name: "ML Model Alerts"
+    description: "Model drift and ML performance alerts"
+    labels:
+      email_address: "${ALERT_EMAIL_ML_TEAM}"
+    enabled: true
+
+  # PagerDuty integration for on-call
+  oncall_alerts:
+    type: "pagerduty"
+    display_name: "On-Call Emergency Alerts"
+    description: "Critical system alerts for on-call engineer"
+    labels:
+      service_key: "${PAGERDUTY_SERVICE_KEY}"
+    enabled: true
+
+# ============================================================================
+# LOG-BASED METRICS FOR ADDITIONAL MONITORING
+# ============================================================================
+
+log_metrics:
+  # Error rate tracking
+  - name: "transformer_error_rate"
+    description: "Rate of transformer model errors"
+    filter: 'resource.type="cloud_run_revision" AND severity="ERROR" AND jsonPayload.component="transformer"'
+    metric_descriptor:
+      metric_kind: "GAUGE"
+      value_type: "DOUBLE"
+    label_extractors:
+      model_type: 'EXTRACT(jsonPayload.model_type)'
+      error_type: 'EXTRACT(jsonPayload.error_type)'
+
+  # Model loading events
+  - name: "transformer_model_loads"
+    description: "Count of transformer model loading events"
+    filter: 'resource.type="cloud_run_revision" AND jsonPayload.event="model_loaded"'
+    metric_descriptor:
+      metric_kind: "CUMULATIVE"
+      value_type: "INT64"
+    label_extractors:
+      model_type: 'EXTRACT(jsonPayload.model_type)'
+      success: 'EXTRACT(jsonPayload.success)'
+
+  # Attention computation warnings
+  - name: "attention_computation_warnings"
+    description: "Attention computation performance warnings"
+    filter: 'resource.type="cloud_run_revision" AND severity="WARNING" AND jsonPayload.component="attention"'
+    metric_descriptor:
+      metric_kind: "CUMULATIVE"
+      value_type: "INT64"
+    label_extractors:
+      model_type: 'EXTRACT(jsonPayload.model_type)'
+      warning_type: 'EXTRACT(jsonPayload.warning_type)'

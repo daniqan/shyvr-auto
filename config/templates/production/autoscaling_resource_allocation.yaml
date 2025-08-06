@@ -1,0 +1,460 @@
+# ============================================================================
+# Auto-Scaling and Resource Allocation Templates - Production
+# Transformer-Enabled RLTE Trading System
+# ============================================================================
+#
+# This template provides comprehensive auto-scaling and dynamic resource 
+# allocation configuration based on the actual implementation in:
+# - src/deploy/dynamic_resource_allocator.py
+# - src/monitoring/resource_monitoring.py
+# - GCP Cloud Run auto-scaling policies
+#
+# Last Updated: 2025-08-06
+
+# ============================================================================
+# TRANSFORMER MODEL RESOURCE PROFILES
+# ============================================================================
+# Based on actual implementation in DynamicResourceAllocator
+
+transformer_resource_profiles:
+  # iTransformer Resource Profile
+  itransformer:
+    memory_requirements:
+      base: "4Gi"
+      max: "12Gi"
+      scaling_threshold: "85%"
+      emergency_threshold: "95%"
+    cpu_requirements:
+      base: 2
+      max: 8
+      scaling_threshold: "80%"
+      emergency_threshold: "95%"
+    attention_complexity: 1.2
+    inference_characteristics:
+      latency_factor: 1.0
+      memory_efficiency: 0.8
+      cache_hit_preference: "high"
+    scaling_policies:
+      scale_up_threshold: 0.8
+      scale_down_threshold: 0.3
+      cooldown_period_up: "180s"
+      cooldown_period_down: "300s"
+      max_scale_factor: 3.0
+
+  # PatchTST Resource Profile  
+  patchtst:
+    memory_requirements:
+      base: "3Gi"
+      max: "10Gi"
+      scaling_threshold: "80%"
+      emergency_threshold: "90%"
+    cpu_requirements:
+      base: 2
+      max: 6
+      scaling_threshold: "75%"
+      emergency_threshold: "90%"
+    attention_complexity: 0.8
+    inference_characteristics:
+      latency_factor: 0.9
+      memory_efficiency: 0.9
+      cache_hit_preference: "medium"
+    scaling_policies:
+      scale_up_threshold: 0.75
+      scale_down_threshold: 0.35
+      cooldown_period_up: "120s"
+      cooldown_period_down: "240s"
+      max_scale_factor: 2.5
+
+  # TimesMixer Resource Profile
+  timesmixer:
+    memory_requirements:
+      base: "5Gi"
+      max: "15Gi"
+      scaling_threshold: "85%"
+      emergency_threshold: "95%"
+    cpu_requirements:
+      base: 3
+      max: 10
+      scaling_threshold: "80%"
+      emergency_threshold: "95%"
+    attention_complexity: 1.5
+    inference_characteristics:
+      latency_factor: 1.2
+      memory_efficiency: 0.7
+      cache_hit_preference: "high"
+    scaling_policies:
+      scale_up_threshold: 0.8
+      scale_down_threshold: 0.25
+      cooldown_period_up: "200s"
+      cooldown_period_down: "360s"
+      max_scale_factor: 3.5
+
+  # TimesFM Resource Profile
+  timesfm:
+    memory_requirements:
+      base: "6Gi"
+      max: "20Gi"
+      scaling_threshold: "90%"
+      emergency_threshold: "98%"
+    cpu_requirements:
+      base: 4
+      max: 12
+      scaling_threshold: "85%"
+      emergency_threshold: "98%"
+    attention_complexity: 2.0
+    inference_characteristics:
+      latency_factor: 1.5
+      memory_efficiency: 0.6
+      cache_hit_preference: "critical"
+    scaling_policies:
+      scale_up_threshold: 0.85
+      scale_down_threshold: 0.2
+      cooldown_period_up: "240s"
+      cooldown_period_down: "420s"
+      max_scale_factor: 4.0
+
+# ============================================================================
+# CLOUD RUN AUTO-SCALING CONFIGURATION
+# ============================================================================
+
+cloud_run_autoscaling:
+  # Production Auto-scaling Configuration
+  production:
+    min_instances: 2
+    max_instances: 100
+    target_cpu_utilization: 70
+    target_memory_utilization: 80
+    target_concurrency: 15  # Reduced for transformer workloads
+    target_utilization_percentage: 70
+    
+    # Advanced scaling metrics
+    custom_metrics:
+      - name: "inference_latency_p95"
+        target_value: "1000m"  # 1 second
+        type: "AverageValue"
+      - name: "transformer_cache_hit_rate"
+        target_value: "50"  # 50% minimum
+        type: "AverageValue"
+      - name: "model_load_queue_depth"
+        target_value: "5"
+        type: "AverageValue"
+    
+    # Scaling behavior configuration
+    scaling_behavior:
+      scale_up:
+        stabilization_window: "180s"
+        policies:
+          - type: "Percent"
+            value: 50
+            period: "60s"
+          - type: "Pods"
+            value: 5
+            period: "60s"
+        select_policy: "Max"
+      
+      scale_down:
+        stabilization_window: "300s"
+        policies:
+          - type: "Percent"
+            value: 25
+            period: "60s"
+          - type: "Pods"
+            value: 2
+            period: "60s"
+        select_policy: "Min"
+
+  # Staging Auto-scaling Configuration
+  staging:
+    min_instances: 1
+    max_instances: 20
+    target_cpu_utilization: 60
+    target_memory_utilization: 70
+    target_concurrency: 20
+    target_utilization_percentage: 60
+    
+    scaling_behavior:
+      scale_up:
+        stabilization_window: "120s"
+        policies:
+          - type: "Percent"
+            value: 100
+            period: "60s"
+        select_policy: "Max"
+      
+      scale_down:
+        stabilization_window: "180s"
+        policies:
+          - type: "Percent"
+            value: 50
+            period: "60s"
+        select_policy: "Min"
+
+# ============================================================================
+# DYNAMIC RESOURCE ALLOCATION POLICIES
+# ============================================================================
+# Based on ResourceScalingPolicy implementation
+
+resource_scaling_policies:
+  # CPU Scaling Policy
+  cpu_scaling:
+    scale_up_threshold: 80.0
+    scale_down_threshold: 30.0
+    scale_up_factor: 1.5
+    scale_down_factor: 0.75
+    cooldown_period_up: 180  # seconds
+    cooldown_period_down: 300  # seconds
+    max_scale_factor: 4.0
+    min_scale_factor: 0.5
+    
+  # Memory Scaling Policy  
+  memory_scaling:
+    scale_up_threshold: 85.0
+    scale_down_threshold: 40.0
+    scale_up_factor: 1.3
+    scale_down_factor: 0.8
+    cooldown_period_up: 180
+    cooldown_period_down: 300
+    max_scale_factor: 3.5
+    min_scale_factor: 0.6
+
+  # Latency-based Scaling
+  latency_scaling:
+    scale_up_threshold: 100.0  # milliseconds
+    scale_down_threshold: 25.0  # milliseconds
+    scale_up_factor: 1.4
+    scale_down_factor: 0.85
+    cooldown_period_up: 120
+    cooldown_period_down: 240
+    target_latency_p95: 100.0
+    target_latency_p99: 200.0
+
+  # Multi-model Load Balancing
+  load_balancing:
+    enabled: true
+    balance_strategy: "complexity_aware"  # Options: round_robin, complexity_aware, performance_based
+    priority_weights:
+      itransformer: 1.2
+      patchtst: 0.8  
+      timesmixer: 1.5
+      timesfm: 2.0
+    failover_enabled: true
+    failover_threshold: 95.0  # percentage
+    degraded_service_threshold: 90.0
+
+# ============================================================================
+# COST OPTIMIZATION CONFIGURATION
+# ============================================================================
+
+cost_optimization:
+  # Resource cost preferences
+  resource_preferences:
+    cpu_memory_ratio: 1.0  # Balanced
+    cost_performance_balance: 0.7  # 70% performance, 30% cost
+    peak_hour_scaling: true
+    off_peak_scaling_factor: 0.6
+    
+  # Peak hours configuration (UTC)
+  peak_hours:
+    start_hour: 13  # 1 PM UTC (trading hours)
+    end_hour: 21    # 9 PM UTC
+    days: [1, 2, 3, 4, 5]  # Monday-Friday
+    peak_scaling_factor: 1.2
+    off_peak_scaling_factor: 0.6
+
+  # Budget constraints
+  budget_constraints:
+    daily_budget_usd: 500.0
+    monthly_budget_usd: 10000.0
+    alert_threshold_percent: 80.0
+    hard_limit_threshold_percent: 95.0
+    
+  # Cost allocation tags
+  cost_allocation_labels:
+    team: "ml-platform"
+    project: "shyvr-rlte"
+    environment: "production"
+    cost_center: "engineering"
+
+# ============================================================================
+# MONITORING AND ALERTING FOR RESOURCE ALLOCATION
+# ============================================================================
+
+resource_monitoring:
+  # Performance metrics collection
+  metrics:
+    collection_interval: 30  # seconds
+    retention_period: "30d"
+    
+    # Resource utilization metrics
+    resource_metrics:
+      - name: "cpu_utilization"
+        type: "gauge"
+        unit: "percent"
+        alert_threshold: 85.0
+      - name: "memory_utilization"
+        type: "gauge"
+        unit: "percent"
+        alert_threshold: 90.0
+      - name: "inference_latency"
+        type: "histogram"
+        unit: "milliseconds"
+        alert_threshold: 1000.0
+      - name: "cache_hit_rate"
+        type: "gauge"
+        unit: "percent"
+        alert_threshold: 50.0
+      - name: "concurrent_requests"
+        type: "gauge"
+        unit: "count"
+        alert_threshold: 100
+    
+    # Model-specific metrics
+    model_metrics:
+      - name: "model_load_time"
+        type: "histogram"
+        unit: "seconds"
+        alert_threshold: 120.0
+      - name: "attention_computation_time"
+        type: "histogram" 
+        unit: "milliseconds"
+        alert_threshold: 500.0
+      - name: "memory_pressure"
+        type: "gauge"
+        unit: "percent"
+        alert_threshold: 85.0
+
+  # Alert policies
+  alert_policies:
+    - name: "high_resource_utilization"
+      condition: "cpu_utilization > 85 OR memory_utilization > 90"
+      duration: "5m"
+      severity: "warning"
+      actions:
+        - "scale_up"
+        - "notify_ops_team"
+    
+    - name: "critical_resource_exhaustion"
+      condition: "memory_utilization > 95 OR cpu_utilization > 95"
+      duration: "2m"
+      severity: "critical"
+      actions:
+        - "emergency_scale_up"
+        - "alert_on_call"
+        - "prepare_failover"
+    
+    - name: "high_inference_latency"
+      condition: "inference_latency_p95 > 1000"
+      duration: "3m"
+      severity: "warning"
+      actions:
+        - "scale_up"
+        - "check_model_health"
+    
+    - name: "low_cache_hit_rate"
+      condition: "cache_hit_rate < 50"
+      duration: "10m"
+      severity: "info"
+      actions:
+        - "investigate_cache_performance"
+        - "consider_cache_warming"
+
+# ============================================================================
+# DISASTER RECOVERY AND FAILOVER
+# ============================================================================
+
+disaster_recovery:
+  # Failover configuration
+  failover:
+    enabled: true
+    trigger_conditions:
+      - "resource_exhaustion"
+      - "service_unavailable"
+      - "critical_latency"
+    
+    # Fallback strategies
+    fallback_strategies:
+      - name: "reduce_model_complexity"
+        priority: 1
+        conditions: ["memory_exhaustion", "high_latency"]
+        actions:
+          - "disable_quantization"
+          - "reduce_batch_size"
+          - "simplify_attention"
+      
+      - name: "model_degradation"
+        priority: 2
+        conditions: ["critical_resource_exhaustion"]
+        actions:
+          - "fallback_to_lstm"
+          - "reduce_ensemble_size"
+          - "disable_complex_features"
+      
+      - name: "emergency_scaling"
+        priority: 3
+        conditions: ["service_unavailable"]
+        actions:
+          - "emergency_instance_allocation"
+          - "activate_reserved_capacity"
+          - "cross_region_failover"
+
+  # Recovery procedures
+  recovery:
+    auto_recovery: true
+    recovery_threshold: 70.0  # percentage of normal capacity
+    gradual_recovery: true
+    recovery_steps:
+      1: "restore_basic_service"
+      2: "validate_model_health"
+      3: "restore_full_capacity"
+      4: "resume_normal_operations"
+    
+    # Health checks during recovery
+    health_checks:
+      - endpoint: "/health/ready"
+        interval: "30s"
+        timeout: "10s"
+        failure_threshold: 3
+      - endpoint: "/health/transformer"
+        interval: "60s"
+        timeout: "30s"
+        failure_threshold: 2
+
+# ============================================================================
+# TERRAFORM CONFIGURATION EXAMPLE
+# ============================================================================
+
+terraform_reference:
+  # Example Terraform configuration for implementing these policies
+  cloud_run_service:
+    metadata:
+      annotations:
+        - "autoscaling.knative.dev/minScale": "2"
+        - "autoscaling.knative.dev/maxScale": "100"
+        - "run.googleapis.com/memory": "8Gi"
+        - "run.googleapis.com/cpu": "6"
+    
+    template:
+      metadata:
+        annotations:
+          - "autoscaling.knative.dev/target": "80"
+          - "autoscaling.knative.dev/targetUtilizationPercentage": "70"
+      
+      spec:
+        container_concurrency: 15
+        timeout_seconds: 4200
+        
+  # HPA configuration
+  horizontal_pod_autoscaler:
+    min_replicas: 2
+    max_replicas: 100
+    target_cpu_utilization_percentage: 70
+    target_memory_utilization_percentage: 80
+    
+    custom_metrics:
+      - type: "Pods"
+        pods:
+          metric:
+            name: "inference_latency_p95"
+          target:
+            type: "AverageValue"
+            average_value: "1000m"

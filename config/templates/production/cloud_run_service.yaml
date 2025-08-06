@@ -1,0 +1,422 @@
+# ============================================================================
+# GCP Cloud Run Service Configuration Template - Production Environment
+# Transformer-Enabled RLTE Trading System
+# ============================================================================
+# 
+# This template configures Cloud Run service for production deployment of the
+# transformer-enabled RLTE system with optimal resource allocation, monitoring,
+# and auto-scaling capabilities.
+#
+# Based on actual implementation from:
+# - src/deploy/dynamic_resource_allocator.py
+# - tests/unit/deploy/test_deployment_config_validation.py  
+# - deploy/deploy-utils.sh
+#
+# Last Updated: 2025-08-06
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: shyvr-rlte-production
+  namespace: default
+  labels:
+    app: shyvr-rlte
+    environment: production
+    version: "1.0.0"
+    component: trading-system
+  annotations:
+    # Cloud Run specific annotations
+    run.googleapis.com/cpu-throttling: "false"
+    run.googleapis.com/execution-environment: gen2
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/description: "Transformer-enabled RLTE cryptocurrency trading system"
+    
+    # Custom annotations for monitoring and management
+    monitoring.shyvr.ai/enable-transformer-metrics: "true"
+    deployment.shyvr.ai/resource-profile: "transformer-production"
+    scaling.shyvr.ai/model-aware: "true"
+    
+spec:
+  template:
+    metadata:
+      name: shyvr-rlte-production-${REVISION_SUFFIX}
+      labels:
+        app: shyvr-rlte
+        environment: production
+        revision: "${REVISION_SUFFIX}"
+      annotations:
+        # Auto-scaling configuration - transformer optimized
+        autoscaling.knative.dev/minScale: "2"
+        autoscaling.knative.dev/maxScale: "100"
+        autoscaling.knative.dev/target: "80"
+        autoscaling.knative.dev/targetUtilizationPercentage: "70"
+        
+        # Resource allocation - based on dynamic resource allocator profiles
+        run.googleapis.com/memory: "8Gi"
+        run.googleapis.com/cpu: "6"
+        run.googleapis.com/startup-cpu-boost: "true"
+        
+        # Timeout configuration - extended for transformer model loading
+        run.googleapis.com/timeout: "4200s"
+        
+        # Concurrency control - optimized for transformer workloads  
+        autoscaling.knative.dev/maxScale: "15"
+        run.googleapis.com/cpu-throttling: "false"
+        
+        # Execution environment
+        run.googleapis.com/execution-environment: gen2
+        
+        # Health check configuration
+        run.googleapis.com/startup-probe: |
+          {
+            "periodSeconds": 10,
+            "timeoutSeconds": 30,
+            "failureThreshold": 12,
+            "httpGet": {
+              "path": "/health/startup",
+              "port": 8080,
+              "httpHeaders": [
+                {
+                  "name": "User-Agent",
+                  "value": "GoogleCloudRun-HealthCheck"
+                }
+              ]
+            }
+          }
+        
+        run.googleapis.com/liveness-probe: |
+          {
+            "periodSeconds": 30,
+            "timeoutSeconds": 10,
+            "failureThreshold": 3,
+            "httpGet": {
+              "path": "/health/live",
+              "port": 8080
+            }
+          }
+            
+    spec:
+      # Container configuration
+      serviceAccountName: shyvr-rlte-service-account
+      containerConcurrency: 15  # Reduced for transformer workloads
+      timeoutSeconds: 4200      # 70 minutes for transformer operations
+      
+      containers:
+      - name: shyvr-rlte-container
+        image: "${IMAGE_URL}"
+        
+        ports:
+        - name: http1
+          containerPort: 8080
+          protocol: TCP
+        
+        # Resource requests and limits
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "6"
+          limits:
+            memory: "8Gi" 
+            cpu: "6"
+        
+        # Environment variables for transformer optimization
+        env:
+        # Application Configuration
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: DEBUG
+          value: "false"
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
+        
+        # Transformer-Specific Configuration
+        - name: TORCH_COMPILE_MODE
+          value: "reduce-overhead"
+        - name: TORCH_COMPILE_BACKEND
+          value: "aot_eager"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512,garbage_collection_threshold:0.8"
+        - name: TRANSFORMERS_CACHE
+          value: "/app/models/cache/transformers"
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        - name: OMP_NUM_THREADS
+          value: "6"
+        - name: MKL_NUM_THREADS  
+          value: "6"
+        - name: OPENBLAS_NUM_THREADS
+          value: "6"
+        - name: TORCH_NUM_THREADS
+          value: "6"
+        
+        # Memory optimization
+        - name: PYTORCH_ENABLE_MPS_FALLBACK
+          value: "1"
+        - name: PYTORCH_MPS_HIGH_WATERMARK_RATIO
+          value: "0.8"
+        
+        # Model configuration
+        - name: MODEL_PRESERVATION_ENABLED
+          value: "true"
+        - name: TRANSFORMER_MODELS_ENABLED
+          value: "true"
+        - name: MODEL_CACHE_SIZE
+          value: "2048"
+        - name: MODEL_QUANTIZATION_ENABLED
+          value: "true"
+        
+        # Dynamic resource allocation settings
+        - name: DYNAMIC_RESOURCE_ALLOCATION_ENABLED
+          value: "true"
+        - name: AUTO_SCALING_ENABLED
+          value: "true"
+        - name: RESOURCE_MONITORING_ENABLED
+          value: "true"
+        
+        # Database configuration
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: host
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: database
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        - name: DB_POOL_SIZE
+          value: "20"
+        - name: DB_MAX_OVERFLOW
+          value: "30"
+        
+        # GCP Configuration
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: gcp-credentials
+              key: project_id
+        - name: GCS_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: gcp-credentials
+              key: model_bucket
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: "/app/secrets/gcp-service-account.json"
+        
+        # External API Keys
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: openai_key
+        - name: HELIUS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys  
+              key: helius_key
+        - name: BIRDEYE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: birdeye_key
+        - name: ETHERSCAN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: etherscan_key
+              
+        # Trading configuration
+        - name: LIVE_TRADING_ENABLED
+          value: "false"
+        - name: PAPER_TRADING_ENABLED  
+          value: "true"
+        - name: MAX_POSITION_SIZE_PCT
+          value: "2.0"
+        - name: MAX_DAILY_LOSS_PCT
+          value: "3.0"
+        - name: STOP_LOSS_PCT
+          value: "5.0"
+        
+        # Monitoring and alerting
+        - name: MONITORING_ENABLED
+          value: "true"
+        - name: PROMETHEUS_ENABLED
+          value: "true"
+        - name: GRAFANA_ENABLED
+          value: "true"
+        - name: ALERT_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-config
+              key: webhook_url
+        
+        # Volume mounts for secrets and persistent data
+        volumeMounts:
+        - name: gcp-service-account
+          mountPath: "/app/secrets"
+          readOnly: true
+        - name: model-cache
+          mountPath: "/app/models/cache"
+        - name: transformer-cache
+          mountPath: "/app/models/cache/transformers"
+        
+        # Startup probe for transformer model loading
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8080
+            httpHeaders:
+            - name: User-Agent
+              value: GoogleCloudRun-HealthCheck
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 30
+          failureThreshold: 12  # Allow 2 minutes for startup
+          successThreshold: 1
+        
+        # Liveness probe for container health
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 120  # After startup completes
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Readiness probe for traffic routing
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+      
+      # Volume definitions
+      volumes:
+      - name: gcp-service-account
+        secret:
+          secretName: gcp-service-account
+          defaultMode: 0400
+      - name: model-cache
+        emptyDir:
+          sizeLimit: "10Gi"
+      - name: transformer-cache
+        emptyDir:
+          sizeLimit: "5Gi"
+
+---
+
+# ============================================================================
+# Traffic Configuration for Blue-Green Deployment
+# ============================================================================
+
+apiVersion: serving.knative.dev/v1
+kind: Route
+metadata:
+  name: shyvr-rlte-production-route
+  namespace: default
+  labels:
+    app: shyvr-rlte
+    environment: production
+spec:
+  traffic:
+  # Primary production traffic
+  - configurationName: shyvr-rlte-production
+    percent: 100
+    tag: current
+  # Canary deployment (initially 0%)
+  - configurationName: shyvr-rlte-production-canary
+    percent: 0
+    tag: canary
+
+---
+
+# ============================================================================
+# Horizontal Pod Autoscaler for advanced scaling
+# ============================================================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: shyvr-rlte-production-hpa
+  namespace: default
+  labels:
+    app: shyvr-rlte
+    environment: production
+spec:
+  scaleTargetRef:
+    apiVersion: serving.knative.dev/v1
+    kind: Service
+    name: shyvr-rlte-production
+  minReplicas: 2
+  maxReplicas: 100
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom metrics for transformer-specific scaling
+  - type: Pods
+    pods:
+      metric:
+        name: inference_latency_p95
+      target:
+        type: AverageValue
+        averageValue: "1000m"  # 1 second
+  - type: Pods
+    pods:
+      metric:
+        name: transformer_cache_hit_rate
+      target:
+        type: AverageValue
+        averageValue: "50"  # 50% minimum
+        
+  # Scaling behavior configuration
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180  # 3 minutes stabilization
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes stabilization
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
