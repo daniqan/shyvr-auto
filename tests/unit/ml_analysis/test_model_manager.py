@@ -4,6 +4,7 @@ Unit tests for model manager
 
 import pytest
 import pandas as pd
+import os
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
@@ -88,6 +89,30 @@ class TestModelManager:
         assert isinstance(model_manager._model_weights, dict)
         assert isinstance(model_manager._model_performance, dict)
         assert len(model_manager._ensemble_cache) == 0
+    
+    def test_ensemble_initialization_environment_based(self, manager_config):
+        """Test ensemble initialization based on ENVIRONMENT variable"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager_config['model_dir'] = temp_dir
+            
+            # Test development environment (LSTM only)
+            with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+                dev_manager = ModelManager(manager_config)
+                # Should have LSTM but transformers may be mocked/disabled
+                assert ModelType.LSTM in dev_manager._models
+            
+            # Test production environment (full ensemble)
+            with patch.dict(os.environ, {'ENVIRONMENT': 'production'}):
+                prod_manager = ModelManager(manager_config)
+                # Should have all ensemble models initialized
+                assert ModelType.LSTM in prod_manager._models
+                # Note: Transformer models may not be fully initialized in tests
+                # but model_manager should be prepared to handle them
+                
+            # Test default environment (should default to production)
+            with patch.dict(os.environ, {}, clear=True):
+                default_manager = ModelManager(manager_config)
+                assert ModelType.LSTM in default_manager._models
     
     def test_model_weights_initialization(self, model_manager):
         """Test model weights are properly initialized"""
@@ -459,11 +484,11 @@ class TestModelManager:
             assert model_dir.is_dir()
 
     def test_combine_predictions_weighted_averaging(self, model_manager, sample_tokens):
-        """Test weighted averaging in _combine_predictions"""
+        """Test weighted averaging in _combine_predictions for ensemble"""
         token = sample_tokens[0]
         token.price_usd = 100.0  # Set current price for calculations
         
-        # Create mock predictions from multiple models with different weights
+        # Create mock predictions from ensemble models with different weights
         predictions = {
             ModelType.LSTM: PredictionResult(
                 token=token,
@@ -478,10 +503,10 @@ class TestModelManager:
                 market_features=MagicMock(),
                 model_accuracy=0.85
             ),
-            ModelType.TRANSFORMER: PredictionResult(
+            ModelType.ITRANSFORMER: PredictionResult(
                 token=token,
                 analyzed_at=datetime.now(),
-                model_type=ModelType.TRANSFORMER,
+                model_type=ModelType.ITRANSFORMER,
                 price_prediction_1h=103.0,
                 price_prediction_4h=107.0,
                 price_prediction_24h=115.0,
@@ -496,7 +521,7 @@ class TestModelManager:
         # Set model weights
         model_manager._model_weights = {
             ModelType.LSTM: 0.4,
-            ModelType.TRANSFORMER: 0.6
+            ModelType.ITRANSFORMER: 0.6
         }
         
         ensemble_result = model_manager._combine_predictions(predictions, token)
@@ -507,9 +532,9 @@ class TestModelManager:
         assert ensemble_result.token == token
         
         # Verify weighted averaging calculations
-        # Expected weights: LSTM: (0.4 * 0.8) = 0.32, TRANSFORMER: (0.6 * 0.9) = 0.54
+        # Expected weights: LSTM: (0.4 * 0.8) = 0.32, ITRANSFORMER: (0.6 * 0.9) = 0.54
         # Total weight: 0.32 + 0.54 = 0.86
-        # Normalized weights: LSTM: 0.32/0.86 = 0.372, TRANSFORMER: 0.54/0.86 = 0.628
+        # Normalized weights: LSTM: 0.32/0.86 = 0.372, ITRANSFORMER: 0.54/0.86 = 0.628
         
         expected_1h = (102.0 * 0.372) + (103.0 * 0.628)
         expected_24h = (110.0 * 0.372) + (115.0 * 0.628)

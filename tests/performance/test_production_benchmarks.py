@@ -384,6 +384,16 @@ class EnsembleBenchmark:
         """Test ensemble weight optimization performance."""
         # This will initially fail - weight optimization not implemented
         raise NotImplementedError("Ensemble weight optimization not implemented")
+    
+    async def test_development_mode_resources(self) -> BenchmarkResult:
+        """Test resource usage in development mode (LSTM only)."""
+        # This will initially fail - development mode resource testing not implemented
+        raise NotImplementedError("Development mode resource benchmark not implemented")
+    
+    async def test_production_mode_resources(self) -> BenchmarkResult:
+        """Test resource usage in production mode (full ensemble)."""
+        # This will initially fail - production mode resource testing not implemented
+        raise NotImplementedError("Production mode resource benchmark not implemented")
 
 
 class CloudRunScalingBenchmark:
@@ -590,8 +600,8 @@ class TestThroughputBenchmarks:
             print("✓ Test correctly fails initially (TDD)")
 
 
-class TestTransformerBenchmarks:
-    """Test transformer-specific performance benchmarks."""
+class TestEnsemblePerformanceBenchmarks:
+    """Test ensemble performance benchmarks as a unit."""
     
     @pytest.fixture
     def benchmark_config(self):
@@ -599,43 +609,95 @@ class TestTransformerBenchmarks:
         return ProductionBenchmarkConfig()
     
     @pytest.fixture
+    def ensemble_benchmark(self, benchmark_config):
+        """Provide ensemble benchmark."""
+        return EnsembleBenchmark(benchmark_config)
+    
+    @pytest.fixture
     def transformer_benchmark(self, benchmark_config):
-        """Provide transformer benchmark."""
+        """Provide transformer benchmark for legacy tests."""
         return TransformerBenchmark(benchmark_config)
     
     @pytest.mark.asyncio
-    async def test_all_transformer_models_performance(self, mock_environment_variables,
-                                                    transformer_benchmark, performance_tracker):
-        """Test performance of all 4 transformer models."""
+    async def test_ensemble_performance_as_unit(self, mock_environment_variables,
+                                              ensemble_benchmark, performance_tracker):
+        """Test ensemble performance as a complete unit (LSTM + 4 Transformers)."""
         with patch.dict('os.environ', mock_environment_variables):
-            print("\n=== TRANSFORMER MODELS BENCHMARK TEST ===")
-            performance_tracker.start_timing('transformer_models_test')
+            print("\n=== ENSEMBLE AS UNIT BENCHMARK TEST ===")
+            performance_tracker.start_timing('ensemble_unit_test')
             
-            # Test iTransformer
-            print("Testing iTransformer performance...")
+            # Test full ensemble performance
+            print("Testing complete ensemble performance...")
+            with pytest.raises(NotImplementedError, match="Ensemble performance benchmark not implemented"):
+                result = await ensemble_benchmark.test_ensemble_performance()
+            print("✓ Ensemble performance test correctly fails initially (TDD)")
+            
+            # Test ensemble weight optimization
+            print("Testing ensemble weight optimization...")
+            with pytest.raises(NotImplementedError, match="Ensemble weight optimization not implemented"):
+                result = await ensemble_benchmark.test_ensemble_weight_optimization()
+            print("✓ Ensemble weight optimization test correctly fails initially (TDD)")
+            
+            performance_tracker.end_timing('ensemble_unit_test')
+
+    @pytest.mark.asyncio
+    async def test_environment_based_resource_usage(self, mock_environment_variables,
+                                                   ensemble_benchmark, performance_tracker):
+        """Test resource usage differences between development and production modes."""
+        with patch.dict('os.environ', mock_environment_variables):
+            print("\n=== ENVIRONMENT-BASED RESOURCE USAGE TEST ===")
+            performance_tracker.start_timing('environment_resource_test')
+            
+            # Test development mode resource usage (LSTM only)
+            print("Testing development mode resource usage...")
+            with patch.dict('os.environ', {'ENVIRONMENT': 'development'}):
+                with pytest.raises(NotImplementedError, match="Development mode resource benchmark not implemented"):
+                    dev_result = await ensemble_benchmark.test_development_mode_resources()
+            print("✓ Development mode resource test correctly fails initially (TDD)")
+            
+            # Test production mode resource usage (full ensemble)
+            print("Testing production mode resource usage...")
+            with patch.dict('os.environ', {'ENVIRONMENT': 'production'}):
+                with pytest.raises(NotImplementedError, match="Production mode resource benchmark not implemented"):
+                    prod_result = await ensemble_benchmark.test_production_mode_resources()
+            print("✓ Production mode resource test correctly fails initially (TDD)")
+            
+            performance_tracker.end_timing('environment_resource_test')
+
+    @pytest.mark.asyncio
+    async def test_individual_transformer_components(self, mock_environment_variables,
+                                                   transformer_benchmark, performance_tracker):
+        """Test individual transformer components for debugging (not deployment)."""
+        with patch.dict('os.environ', mock_environment_variables):
+            print("\n=== INDIVIDUAL TRANSFORMER COMPONENTS TEST ===")
+            print("Note: These tests are for development/debugging only, not deployment")
+            performance_tracker.start_timing('transformer_components_test')
+            
+            # Test iTransformer component
+            print("Testing iTransformer component...")
             with pytest.raises(NotImplementedError, match="iTransformer performance test failed"):
                 result = await transformer_benchmark.test_itransformer_performance()
-            print("✓ iTransformer test correctly fails initially (TDD)")
+            print("✓ iTransformer component test correctly fails initially (TDD)")
             
-            # Test PatchTST
-            print("Testing PatchTST performance...")
+            # Test PatchTST component
+            print("Testing PatchTST component...")
             with pytest.raises(NotImplementedError, match="PatchTST performance test failed"):
                 result = await transformer_benchmark.test_patchtst_performance()
-            print("✓ PatchTST test correctly fails initially (TDD)")
+            print("✓ PatchTST component test correctly fails initially (TDD)")
             
-            # Test TimesMixer
-            print("Testing TimesMixer performance...")
+            # Test TimesMixer component
+            print("Testing TimesMixer component...")
             with pytest.raises(NotImplementedError, match="TimesMixer performance test failed"):
                 result = await transformer_benchmark.test_timesmixer_performance()
-            print("✓ TimesMixer test correctly fails initially (TDD)")
+            print("✓ TimesMixer component test correctly fails initially (TDD)")
             
-            # Test TimesFM
-            print("Testing TimesFM performance...")
+            # Test TimesFM component
+            print("Testing TimesFM component...")
             with pytest.raises(NotImplementedError, match="TimesFM performance test failed"):
                 result = await transformer_benchmark.test_timesfm_performance()
-            print("✓ TimesFM test correctly fails initially (TDD)")
+            print("✓ TimesFM component test correctly fails initially (TDD)")
             
-            performance_tracker.end_timing('transformer_models_test')
+            performance_tracker.end_timing('transformer_components_test')
 
 
 class TestEnsembleBenchmarks:
@@ -851,13 +913,14 @@ class TestComprehensiveProductionBenchmark:
             # Track all benchmark tests that will fail initially
             failing_tests = [
                 ("Uptime Validation", uptime_validator.test_uptime_under_load()),
-                ("Latency Benchmark", latency_benchmark.test_inference_latency("comprehensive")),
-                ("Memory Benchmark", memory_benchmark.test_memory_usage_under_load()),
-                ("Throughput Benchmark", throughput_benchmark.test_throughput_capacity()),
-                ("Ensemble Benchmark", ensemble_benchmark.test_ensemble_performance()),
-                ("Scaling Benchmark", scaling_benchmark.test_auto_scaling_behavior()),
-                ("Resource Benchmark", resource_benchmark.test_cpu_allocation_efficiency()),
-                ("Cost Benchmark", cost_benchmark.test_cost_per_prediction())
+                ("Ensemble Unit Latency", latency_benchmark.test_inference_latency("ensemble_unit")),
+                ("Ensemble Memory Usage", memory_benchmark.test_memory_usage_under_load()),
+                ("Ensemble Throughput", throughput_benchmark.test_throughput_capacity()),
+                ("Full Ensemble Performance", ensemble_benchmark.test_ensemble_performance()),
+                ("Environment-Based Resource Usage", ensemble_benchmark.test_development_mode_resources()),
+                ("Production Ensemble Scaling", scaling_benchmark.test_auto_scaling_behavior()),
+                ("Resource Allocation Efficiency", resource_benchmark.test_cpu_allocation_efficiency()),
+                ("Cost Per Ensemble Prediction", cost_benchmark.test_cost_per_prediction())
             ]
             
             print(f"\n🧪 Running {len(failing_tests)} benchmark tests...")

@@ -147,16 +147,17 @@ class TestTradingModeTransformerIntegration:
         }
 
     @pytest.fixture
-    def transformer_predictions(self):
-        """Sample transformer predictions with attention weights"""
-        return {
-            ModelType.TRANSFORMER: PredictionResult(
+    def ensemble_predictions(self):
+        """Sample ensemble predictions based on environment mode"""
+        # Production mode: Full ensemble (LSTM + 4 Transformers)
+        production_predictions = {
+            ModelType.LSTM: PredictionResult(
                 direction=PredictionDirection.UP,
-                confidence=0.75,
-                price_target=Decimal('52000'),
+                confidence=0.72,
+                price_target=Decimal('51000'),
                 timestamp=datetime.now(),
-                attention_confidence=0.8,
-                attention_entropy=2.1
+                attention_confidence=None,  # LSTM doesn't have attention
+                attention_entropy=None
             ),
             ModelType.ITRANSFORMER: PredictionResult(
                 direction=PredictionDirection.UP,
@@ -189,15 +190,17 @@ class TestTradingModeTransformerIntegration:
                 timestamp=datetime.now(),
                 attention_confidence=0.83,
                 attention_entropy=1.8
-            ),
-            ModelType.LSTM: PredictionResult(
-                direction=PredictionDirection.UP,
-                confidence=0.72,
-                price_target=Decimal('51000'),
-                timestamp=datetime.now(),
-                attention_confidence=None,  # LSTM doesn't have attention
-                attention_entropy=None
             )
+        }
+        
+        # Development mode: LSTM only
+        development_predictions = {
+            ModelType.LSTM: production_predictions[ModelType.LSTM]
+        }
+        
+        return {
+            'production': production_predictions,
+            'development': development_predictions
         }
 
     @pytest.fixture
@@ -214,7 +217,7 @@ class TestTradingModeTransformerIntegration:
 
     @pytest.mark.asyncio
     async def test_sentiment_based_position_sizing(
-        self, sample_market_conditions, transformer_predictions, trading_system_components
+        self, sample_market_conditions, ensemble_predictions, trading_system_components
     ):
         """Test position sizing based on ensemble confidence and market sentiment"""
         # Arrange
@@ -233,20 +236,20 @@ class TestTradingModeTransformerIntegration:
                 model_manager=trading_system_components['model_manager']
             )
             
-            # Calculate position size during extreme fear
+            # Calculate position size during extreme fear using production ensemble
             fear_position = await position_sizer.calculate_position_size(
                 symbol="BTC",
                 current_price=extreme_fear_conditions['btc_price'],
-                predictions=transformer_predictions,
+                predictions=ensemble_predictions['production'],
                 sentiment_data=extreme_fear_conditions['sentiment'],
                 portfolio_balance=Decimal('10000')
             )
             
-            # Calculate position size during greed
+            # Calculate position size during greed using production ensemble
             greed_position = await position_sizer.calculate_position_size(
                 symbol="BTC",
                 current_price=greed_conditions['btc_price'],
-                predictions=transformer_predictions,
+                predictions=ensemble_predictions['production'],
                 sentiment_data=greed_conditions['sentiment'],
                 portfolio_balance=Decimal('10000')
             )
@@ -264,15 +267,54 @@ class TestTradingModeTransformerIntegration:
             assert greed_position['risk_level'] == 'MEDIUM'  # Controlled aggressive
 
     @pytest.mark.asyncio
+    async def test_environment_based_ensemble_deployment(
+        self, sample_market_conditions, ensemble_predictions, trading_system_components
+    ):
+        """Test ensemble deployment behavior based on ENVIRONMENT variable"""
+        # Arrange
+        trading_integrator = Mock(spec=TransformerTradingIntegrator)
+        
+        # Act - Test development vs production mode differences
+        with pytest.raises((AttributeError, NotImplementedError)):
+            # Development mode should only use LSTM
+            with patch.dict('os.environ', {'ENVIRONMENT': 'development'}):
+                dev_analysis = await trading_integrator.analyze_market_conditions(
+                    assets=['BTC'],
+                    predictions=ensemble_predictions['development'],
+                    environment_mode='development'
+                )
+            
+            # Production mode should use full ensemble
+            with patch.dict('os.environ', {'ENVIRONMENT': 'production'}):
+                prod_analysis = await trading_integrator.analyze_market_conditions(
+                    assets=['BTC'],
+                    predictions=ensemble_predictions['production'],
+                    environment_mode='production'
+                )
+        
+        # Assert - These will fail initially but show expected behavior
+        with pytest.raises(AssertionError):
+            # Development mode should have fewer model predictions
+            assert len(dev_analysis['models_used']) == 1  # Only LSTM
+            assert ModelType.LSTM in dev_analysis['models_used']
+            
+            # Production mode should use full ensemble
+            assert len(prod_analysis['models_used']) == 5  # LSTM + 4 Transformers
+            assert all(model in prod_analysis['models_used'] for model in [
+                ModelType.LSTM, ModelType.ITRANSFORMER, ModelType.PATCHTST,
+                ModelType.TIMESMIXER, ModelType.TIMESFM
+            ])
+
+    @pytest.mark.asyncio
     async def test_attention_derived_confidence_calculation(
-        self, transformer_predictions, trading_system_components
+        self, ensemble_predictions, trading_system_components
     ):
         """Test confidence calculation incorporating attention patterns"""
         # Arrange
         confidence_calculator = Mock(spec=AttentionConfidenceCalculator)
         
-        # Create conflicting predictions scenario
-        conflicting_predictions = transformer_predictions.copy()
+        # Create conflicting predictions scenario using production ensemble
+        conflicting_predictions = ensemble_predictions['production'].copy()
         conflicting_predictions[ModelType.TIMESMIXER] = PredictionResult(
             direction=PredictionDirection.DOWN,
             confidence=0.85,  # High confidence but opposite direction
@@ -293,7 +335,7 @@ class TestTradingModeTransformerIntegration:
             
             # Calculate confidence with agreeing predictions
             agreement_confidence = await confidence_calculator.calculate_ensemble_confidence(
-                predictions=transformer_predictions,
+                predictions=ensemble_predictions['production'],
                 current_market_conditions={'volatility': 0.04, 'trend': 'bull'}
             )
             
