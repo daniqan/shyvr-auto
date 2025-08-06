@@ -181,8 +181,16 @@ class TestEnvironmentBasedModelInitialization:
     
     def test_default_environment_uses_production(self, mock_models):
         """Test default environment (no ENVIRONMENT var) uses production configuration"""
-        # Clear environment variable
-        with patch.dict(os.environ, {}, clear=True):
+        # Clear environment variable but keep required ones
+        required_env = {
+            'SECRET_KEY': 'test_secret_key_for_testing_purposes_16chars',
+            'DB_PASSWORD': 'test_password',
+            'TELEGRAM_TOKEN': 'test_telegram_token',
+            'LUNARCRUSH_API_KEY': 'test_lunarcrush_key',
+            'COINGECKO_API_KEY': 'test_coingecko_key'
+        }
+        
+        with patch.dict(os.environ, required_env, clear=True):
             config = {}
             
             with patch.object(ModelManager, '_initialize_models') as mock_init:
@@ -203,18 +211,31 @@ class TestEnvironmentBasedModelInitialization:
             manager._models = {ModelType.LSTM: mock_models['lstm'].return_value}
             manager._model_weights = {ModelType.LSTM: 1.0}
             
-            # Mock LSTM prediction result
+            # Mock LSTM prediction result with all required attributes
             mock_prediction_result = Mock()
             mock_prediction_result.confidence = 0.8
             mock_prediction_result.model_type = ModelType.LSTM
+            mock_prediction_result.price_prediction_1h = 1.1
+            mock_prediction_result.price_prediction_4h = 1.2
+            mock_prediction_result.price_prediction_24h = 1.3
+            mock_prediction_result.direction = Mock()
+            mock_prediction_result.probability_up = 0.7
+            mock_prediction_result.technical_indicators = {}
+            mock_prediction_result.market_features = {}
+            mock_prediction_result.model_accuracy = 0.75
             mock_models['lstm'].return_value.analyze_token.return_value = mock_prediction_result
             
-            # Call ensemble prediction
-            result = await manager._ensemble_prediction(sample_token, None)
-            
-            # Verify LSTM was called and result returned
-            mock_models['lstm'].return_value.analyze_token.assert_called_once()
-            assert result is not None
+            # Mock the _combine_predictions method since we're testing ModelManager not the combination logic
+            with patch.object(manager, '_combine_predictions') as mock_combine:
+                mock_ensemble_result = Mock()
+                mock_combine.return_value = mock_ensemble_result
+                
+                # Call ensemble prediction
+                result = await manager._ensemble_prediction(sample_token, None)
+                
+                # Verify LSTM was called and result returned
+                mock_models['lstm'].return_value.analyze_token.assert_called_once()
+                assert result == mock_ensemble_result
     
     @pytest.mark.asyncio
     async def test_production_mode_ensemble_prediction_uses_all_models(self, mock_models, sample_token):
