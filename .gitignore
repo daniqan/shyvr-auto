@@ -52,7 +52,6 @@ hist/
 htmlcov/
 reports/
 .pytest_cache/
-TODO_CHECKLIST.md
 
 # Model files
 *.pt
