@@ -733,12 +733,26 @@ class FallbackStrategyManager:
     
     def load_fallback_models_from_preservation(self) -> List['FallbackModel']:
         """Load fallback models from preservation system."""
-        # Simplified implementation for TDD
-        return [
-            FallbackModel(model_id="fallback_lstm", model_type="lstm"),
-            FallbackModel(model_id="fallback_rf", model_type="random_forest"),
-            FallbackModel(model_id="fallback_linear", model_type="linear")
-        ]
+        import os
+        
+        environment = os.getenv('ENVIRONMENT', 'production')
+        
+        if environment == 'development':
+            # Development mode: prioritize LSTM models for faster execution
+            return [
+                FallbackModel(model_id="fallback_lstm", model_type="lstm"),
+                FallbackModel(model_id="fallback_lstm_simple", model_type="lstm_simple"),
+                FallbackModel(model_id="fallback_linear", model_type="linear")
+            ]
+        else:
+            # Production mode: use diverse model types for robust ensemble fallback
+            return [
+                FallbackModel(model_id="fallback_lstm", model_type="lstm"),
+                FallbackModel(model_id="fallback_itransformer", model_type="itransformer"),
+                FallbackModel(model_id="fallback_patchtst", model_type="patchtst"),
+                FallbackModel(model_id="fallback_rf", model_type="random_forest"),
+                FallbackModel(model_id="fallback_linear", model_type="linear")
+            ]
     
     def _create_rule_based_strategy(self):
         """Create rule-based strategy."""
@@ -778,7 +792,17 @@ class EnsembleFallbackManager:
     
     def _initialize_available_models(self):
         """Initialize list of available models for ensemble."""
-        model_types = self.config.get('fallback_model_types', ['lstm', 'random_forest', 'linear'])
+        import os
+        
+        environment = os.getenv('ENVIRONMENT', 'production')
+        
+        if environment == 'development':
+            # Development: lighter, faster models
+            model_types = self.config.get('fallback_model_types', ['lstm', 'linear'])
+        else:
+            # Production: full diverse ensemble
+            model_types = self.config.get('fallback_model_types', 
+                                        ['lstm', 'itransformer', 'patchtst', 'random_forest', 'linear'])
         
         for i, model_type in enumerate(model_types):
             self.available_models.append(
