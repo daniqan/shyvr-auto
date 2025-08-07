@@ -440,45 +440,28 @@ class CoinGeckoClient(MarketDataClientBase):
     async def get_ohlcv_data(self, coin_id: str, days: int = 7, 
                             from_date: Optional[datetime] = None, 
                             to_date: Optional[datetime] = None) -> pd.DataFrame:
-        """Get OHLCV (Open, High, Low, Close, Volume) data for a coin"""
+        """Get OHLCV (Open, High, Low, Close, Volume) data for a coin
+        
+        Note: CoinGecko's /ohlc endpoint returns only OHLC data (5 values),
+        so we fetch volume separately from /market_chart and merge the data.
+        """
         cache_key = f"ohlcv_{coin_id}_{days}_{from_date}_{to_date}"
         cached = self._get_cached_data(cache_key)
         if cached is not None:
             return cached
         
         try:
-            # Prepare API parameters
-            params = {"vs_currency": "usd", "days": days}
+            # Fetch OHLC and volume data in parallel
+            ohlc_task = self._get_ohlc_data(coin_id, days, from_date, to_date)
+            volume_task = self._get_volume_data(coin_id, days, from_date, to_date)
             
-            # Add date range if specified
-            if from_date and to_date:
-                params["from"] = int(from_date.timestamp())
-                params["to"] = int(to_date.timestamp())
+            ohlc_df, volume_df = await asyncio.gather(ohlc_task, volume_task)
             
-            # Make API request
-            url = f"{self.BASE_URL}/coins/{coin_id}/ohlc"
-            data = await self._make_request(url, params=params, headers=self.headers)
-            
-            if not data:
+            if ohlc_df.empty:
                 return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             
-            # Convert to DataFrame
-            ohlcv_data = []
-            for entry in data:
-                if len(entry) != 6:  # timestamp, o, h, l, c, v
-                    raise MarketDataError(f"Invalid OHLCV data format: expected 6 values, got {len(entry)}")
-                
-                ohlcv_data.append({
-                    'timestamp': pd.to_datetime(entry[0], unit='ms'),
-                    'open': float(entry[1]),
-                    'high': float(entry[2]),
-                    'low': float(entry[3]),
-                    'close': float(entry[4]),
-                    'volume': float(entry[5])
-                })
-            
-            df = pd.DataFrame(ohlcv_data)
-            df = df.sort_values('timestamp').reset_index(drop=True)
+            # Merge OHLC with volume data
+            df = self._merge_ohlc_with_volume(ohlc_df, volume_df)
             
             # Cache the result
             self._cache_data(cache_key, df)
@@ -495,6 +478,148 @@ class CoinGeckoClient(MarketDataClientBase):
                             coin_id=coin_id, 
                             error=str(e))
             raise MarketDataError(f"Failed to get OHLCV data for {coin_id}: {str(e)}")
+    
+    async def _get_ohlc_data(self, coin_id: str, days: int = 7,
+                            from_date: Optional[datetime] = None,
+                            to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get OHLC data from CoinGecko /ohlc endpoint"""
+        try:
+            # Prepare API parameters
+            params = {"vs_currency": "usd", "days": days}
+            
+            # Add date range if specified
+            if from_date and to_date:
+                params["from"] = int(from_date.timestamp())
+                params["to"] = int(to_date.timestamp())
+            
+            # Make API request
+            url = f"{self.BASE_URL}/coins/{coin_id}/ohlc"
+            data = await self._make_request(url, params=params, headers=self.headers)
+            
+            if not data:
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close'])
+            
+            # Convert to DataFrame
+            ohlc_data = []
+            for entry in data:
+                if len(entry) < 5:  # timestamp, o, h, l, c (no volume)
+                    self.logger.warning(f"Unexpected OHLC data format: got {len(entry)} values")
+                    continue
+                
+                ohlc_data.append({
+                    'timestamp': pd.to_datetime(entry[0], unit='ms'),
+                    'open': float(entry[1]),
+                    'high': float(entry[2]),
+                    'low': float(entry[3]),
+                    'close': float(entry[4])
+                })
+            
+            df = pd.DataFrame(ohlc_data)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error("Failed to get OHLC data", coin_id=coin_id, error=str(e))
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close'])
+    
+    async def _get_volume_data(self, coin_id: str, days: int = 7,
+                              from_date: Optional[datetime] = None,
+                              to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get volume data from CoinGecko /market_chart endpoint"""
+        try:
+            # Prepare API parameters for market_chart
+            params = {"vs_currency": "usd", "days": days}
+            
+            # Add date range if specified
+            if from_date and to_date:
+                params["from"] = int(from_date.timestamp())
+                params["to"] = int(to_date.timestamp())
+            
+            # Make API request to market_chart endpoint
+            url = f"{self.BASE_URL}/coins/{coin_id}/market_chart"
+            data = await self._make_request(url, params=params, headers=self.headers)
+            
+            if not data or 'total_volumes' not in data:
+                return pd.DataFrame(columns=['timestamp', 'volume'])
+            
+            # Convert volume data to DataFrame
+            volume_data = []
+            for entry in data['total_volumes']:
+                if len(entry) >= 2:
+                    volume_data.append({
+                        'timestamp': pd.to_datetime(entry[0], unit='ms'),
+                        'volume': float(entry[1])
+                    })
+            
+            df = pd.DataFrame(volume_data)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error("Failed to get volume data", coin_id=coin_id, error=str(e))
+            return pd.DataFrame(columns=['timestamp', 'volume'])
+    
+    def _merge_ohlc_with_volume(self, ohlc_df: pd.DataFrame, volume_df: pd.DataFrame) -> pd.DataFrame:
+        """Merge OHLC data with volume data, handling granularity differences"""
+        if ohlc_df.empty:
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # If no volume data, use 0 as default
+        if volume_df.empty:
+            ohlc_df['volume'] = 0.0
+            return ohlc_df
+        
+        # Calculate the granularity of OHLC data (time between consecutive entries)
+        if len(ohlc_df) > 1:
+            ohlc_granularity = (ohlc_df['timestamp'].iloc[1] - ohlc_df['timestamp'].iloc[0]).total_seconds()
+        else:
+            ohlc_granularity = 3600  # Default to 1 hour
+        
+        # For each OHLC entry, find the matching volume
+        volumes = []
+        for idx, row in ohlc_df.iterrows():
+            ohlc_time = row['timestamp']
+            
+            # Find volume entries within the OHLC period
+            # Look for volume data between current OHLC timestamp and next one
+            if idx < len(ohlc_df) - 1:
+                next_time = ohlc_df.iloc[idx + 1]['timestamp']
+            else:
+                # For the last entry, use the granularity to estimate next period
+                next_time = ohlc_time + pd.Timedelta(seconds=ohlc_granularity)
+            
+            # Get volume entries in this time window
+            mask = (volume_df['timestamp'] >= ohlc_time) & (volume_df['timestamp'] < next_time)
+            period_volumes = volume_df[mask]['volume']
+            
+            if not period_volumes.empty:
+                # Use the average volume for this period
+                avg_volume = period_volumes.mean()
+            else:
+                # If no exact match, find nearest volume entry
+                time_diffs = abs(volume_df['timestamp'] - ohlc_time)
+                if not time_diffs.empty:
+                    nearest_idx = time_diffs.idxmin()
+                    # Only use if within reasonable time range (2x the granularity)
+                    if time_diffs[nearest_idx].total_seconds() <= ohlc_granularity * 2:
+                        avg_volume = volume_df.loc[nearest_idx, 'volume']
+                    else:
+                        avg_volume = 0.0
+                else:
+                    avg_volume = 0.0
+            
+            volumes.append(avg_volume)
+        
+        ohlc_df['volume'] = volumes
+        
+        # Log any significant mismatches
+        zero_volume_count = sum(1 for v in volumes if v == 0.0)
+        if zero_volume_count > 0:
+            self.logger.warning(f"Could not match volume for {zero_volume_count}/{len(ohlc_df)} OHLC entries")
+        
+        return ohlc_df
     
     async def search_coin_id(self, query: str) -> str:
         """Search for coin ID by name or symbol"""
