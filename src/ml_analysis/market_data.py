@@ -347,12 +347,24 @@ class DeFiLlamaClient(MarketDataClientBase):
 
 
 class CoinGeckoClient(MarketDataClientBase):
-    """Client for CoinGecko API for market data and correlations"""
+    """Client for CoinGecko API for market data and correlations
     
-    BASE_URL = "https://api.coingecko.com/api/v3"
+    Supports both free and Pro API endpoints:
+    - Free API: Basic OHLC (no volume), requires separate volume fetch
+    - Pro API: Full OHLCV data, direct contract address support
+    """
     
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    BASE_URL = "https://api.coingecko.com/api/v3"  # Default to free API
+    PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"  # Pro API URL
+    
+    def __init__(self, api_key: Optional[str] = None, use_pro_api: bool = False, **kwargs):
         super().__init__(api_key, **kwargs)
+        self.use_pro_api = use_pro_api and api_key is not None
+        
+        # Set base URL based on API type
+        if self.use_pro_api:
+            self.BASE_URL = self.PRO_BASE_URL
+        
         self.headers = {}
         if api_key:
             self.headers["X-CG-Pro-API-Key"] = api_key
@@ -659,51 +671,219 @@ class CoinGeckoClient(MarketDataClientBase):
             self.logger.error("Failed to search coin ID", query=query, error=str(e))
             raise MarketDataError(f"Failed to search coin ID for {query}: {str(e)}")
     
-    async def get_historical_data_for_token(self, token_address: str, days: int = 7,
+    async def get_historical_data_for_token(self, token_address: str, 
+                                          platform_id: str = "ethereum",
+                                          days: int = 7,
                                           from_date: Optional[datetime] = None,
                                           to_date: Optional[datetime] = None) -> pd.DataFrame:
-        """Get historical OHLCV data for a token by its contract address"""
+        """Get historical OHLCV data for a token by its contract address
+        
+        This method uses the CoinGecko Pro API endpoint that provides OHLCV data
+        directly by contract address. If Pro API is not available, falls back to
+        the free API with contract resolution.
+        
+        Args:
+            token_address: Contract address of the token
+            platform_id: Blockchain platform (ethereum, binance-smart-chain, polygon-pos, solana, etc.)
+            days: Number of days of historical data
+            from_date: Start date for data range
+            to_date: End date for data range
+            
+        Returns:
+            DataFrame with OHLCV data
+        """
+        
+        # Check if we have Pro API access
+        if self.use_pro_api and self.api_key:
+            # Use Pro API endpoint for direct contract address lookup
+            return await self._get_ohlcv_by_contract_pro(token_address, platform_id, days, from_date, to_date)
+        else:
+            # Fall back to free API with contract resolution
+            self.logger.info("Using free API fallback for contract address lookup", 
+                           token_address=token_address[:10] + "...")
+            
+            try:
+                # Try to resolve contract to coin ID
+                coin_id = await self._resolve_contract_to_coin_id(token_address, platform_id)
+                return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
+            except DataNotAvailableError:
+                # If resolution fails, return empty DataFrame
+                self.logger.warning("Could not resolve contract address", 
+                                  token_address=token_address[:10] + "...", 
+                                  platform=platform_id)
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    
+    async def _get_ohlcv_by_contract_pro(self, contract_address: str, 
+                                        platform_id: str,
+                                        days: int = 7,
+                                        from_date: Optional[datetime] = None,
+                                        to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get OHLCV data using CoinGecko Pro API contract endpoint
+        
+        Pro API endpoint: /coins/{platform_id}/contract/{contract_address}/ohlc
+        This endpoint returns proper 6-value OHLCV data including volume.
+        """
+        cache_key = f"ohlcv_contract_{platform_id}_{contract_address[:10]}_{days}_{from_date}_{to_date}"
+        cached = self._get_cached_data(cache_key)
+        if cached is not None:
+            return cached
+        
         try:
-            # First, try to find the coin by contract address
-            # Note: CoinGecko API doesn't directly support contract address lookup for OHLCV
-            # This would need to be enhanced with contract platform mapping
+            # Prepare API parameters
+            params = {"vs_currency": "usd", "days": days}
             
-            # For now, we'll assume the token_address maps to a known coin ID
-            # In production, you would need to:
-            # 1. Use CoinGecko's coins/{id}/contract/{contract_address} endpoint
-            # 2. Or maintain a mapping of contract addresses to coin IDs
+            # Add date range if specified
+            if from_date and to_date:
+                params["from"] = int(from_date.timestamp())
+                params["to"] = int(to_date.timestamp())
             
-            # Placeholder implementation - would need proper contract address resolution
-            coin_id = await self._resolve_contract_to_coin_id(token_address)
+            # Pro API endpoint for contract address OHLC
+            url = f"{self.BASE_URL}/coins/{platform_id}/contract/{contract_address.lower()}/ohlc"
             
-            return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
+            data = await self._make_request(url, params=params, headers=self.headers)
+            
+            if not data:
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Convert to DataFrame - Pro API returns 6 values including volume
+            ohlcv_data = []
+            for entry in data:
+                if len(entry) == 6:
+                    # Pro API returns: [timestamp, open, high, low, close, volume]
+                    ohlcv_data.append({
+                        'timestamp': pd.to_datetime(entry[0], unit='ms'),
+                        'open': float(entry[1]),
+                        'high': float(entry[2]),
+                        'low': float(entry[3]),
+                        'close': float(entry[4]),
+                        'volume': float(entry[5])
+                    })
+                elif len(entry) == 5:
+                    # Fallback if Pro API doesn't include volume for some reason
+                    self.logger.warning("Pro API returned OHLC without volume", 
+                                      contract=contract_address[:10] + "...")
+                    ohlcv_data.append({
+                        'timestamp': pd.to_datetime(entry[0], unit='ms'),
+                        'open': float(entry[1]),
+                        'high': float(entry[2]),
+                        'low': float(entry[3]),
+                        'close': float(entry[4]),
+                        'volume': 0.0  # No volume data
+                    })
+            
+            df = pd.DataFrame(ohlcv_data)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            # Cache the result
+            self._cache_data(cache_key, df)
+            
+            self.logger.info("Retrieved OHLCV data via Pro API", 
+                           platform=platform_id,
+                           contract=contract_address[:10] + "...",
+                           days=days, 
+                           records=len(df))
+            
+            return df
             
         except Exception as e:
-            self.logger.error("Failed to get historical data for token", 
-                            token_address=token_address, 
+            self.logger.error("Failed to get OHLCV data via Pro API", 
+                            platform=platform_id,
+                            contract=contract_address[:10] + "...",
                             error=str(e))
-            raise MarketDataError(f"Failed to get historical data for token {token_address}: {str(e)}")
+            
+            # Fall back to free API method
+            self.logger.info("Falling back to free API method")
+            coin_id = await self._resolve_contract_to_coin_id(contract_address, platform_id)
+            return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
     
-    async def _resolve_contract_to_coin_id(self, contract_address: str) -> str:
-        """Resolve contract address to CoinGecko coin ID"""
-        # This is a simplified implementation
-        # In production, you would use CoinGecko's contract address endpoints
-        # or maintain a mapping of known contract addresses
+    async def _resolve_contract_to_coin_id(self, contract_address: str, platform_id: str = "ethereum") -> str:
+        """Resolve contract address to CoinGecko coin ID using free API
         
-        # For common tokens, we can provide direct mappings
-        contract_mappings = {
-            "0xa0b86a33e6b58ee28de3a76f8a9e54e4da5e7f2f": "bitcoin",  # Example
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "ethereum", # WETH
-            # Add more mappings as needed
-        }
+        Uses the /coins/{platform_id}/contract/{contract_address} endpoint
+        to get coin information and extract the coin ID.
+        """
+        cache_key = f"contract_resolve_{platform_id}_{contract_address[:10]}"
+        cached = self._get_cached_data(cache_key)
+        if cached is not None:
+            return cached
         
-        address_lower = contract_address.lower()
-        if address_lower in contract_mappings:
-            return contract_mappings[address_lower]
-        
-        # If not in mapping, try to search by the address
-        # This would need enhancement with proper CoinGecko contract lookup
-        raise DataNotAvailableError(f"Cannot resolve contract address to coin ID: {contract_address}")
+        try:
+            # First check common mappings for efficiency
+            contract_mappings = {
+                # Ethereum mainnet tokens
+                "ethereum": {
+                    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "weth",  # WETH
+                    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "usd-coin",  # USDC
+                    "0xdac17f958d2ee523a2206206994597c13d831ec7": "tether",  # USDT
+                    "0x6b175474e89094c44da98b954eedeac495271d0f": "dai",  # DAI
+                    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "wrapped-bitcoin",  # WBTC
+                    "0x514910771af9ca656af840dff83e8264ecf986ca": "chainlink",  # LINK
+                    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": "aave",  # AAVE
+                    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": "uniswap",  # UNI
+                },
+                # Binance Smart Chain tokens
+                "binance-smart-chain": {
+                    "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c": "wbnb",  # WBNB
+                    "0xe9e7cea3dedca5984780bafc599bd69add087d56": "busd",  # BUSD
+                    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "usd-coin",  # USDC on BSC
+                    "0x55d398326f99059ff775485246999027b3197955": "tether",  # USDT on BSC
+                    "0x2170ed0880ac9a755fd29b2688956bd959f933f8": "ethereum",  # ETH on BSC
+                },
+                # Polygon tokens
+                "polygon-pos": {
+                    "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270": "wmatic",  # WMATIC
+                    "0x2791bca1f2de4661ed88a30c99a7a9449aa84174": "usd-coin",  # USDC on Polygon
+                    "0xc2132d05d31c914a87c6611c10748aeb04b58e8f": "tether",  # USDT on Polygon
+                    "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063": "dai",  # DAI on Polygon
+                },
+                # Solana tokens (using mint addresses)
+                "solana": {
+                    "So11111111111111111111111111111111111111112": "wrapped-solana",  # WSOL
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "usd-coin",  # USDC on Solana
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "tether",  # USDT on Solana
+                    "7kbnvuGBxxj8AG9qp8Scn56muWGaRaFqxg1FsRp3PaFT": "ux-protocol-token",  # UXD
+                },
+            }
+            
+            address_lower = contract_address.lower()
+            platform_mappings = contract_mappings.get(platform_id, {})
+            
+            if address_lower in platform_mappings:
+                coin_id = platform_mappings[address_lower]
+                self._cache_data(cache_key, coin_id)
+                return coin_id
+            
+            # If not in mapping, try CoinGecko's contract endpoint
+            url = f"{self.BASE_URL}/coins/{platform_id}/contract/{address_lower}"
+            
+            try:
+                coin_data = await self._make_request(url, headers=self.headers)
+                
+                if coin_data and 'id' in coin_data:
+                    coin_id = coin_data['id']
+                    self._cache_data(cache_key, coin_id)
+                    self.logger.info("Resolved contract to coin ID", 
+                                   platform=platform_id,
+                                   contract=contract_address[:10] + "...",
+                                   coin_id=coin_id)
+                    return coin_id
+            except Exception as e:
+                self.logger.debug("Could not resolve via API", error=str(e))
+            
+            # If all else fails, raise error
+            raise DataNotAvailableError(
+                f"Cannot resolve contract {contract_address} on {platform_id} to coin ID. "
+                f"Consider using CoinGecko Pro API for direct contract OHLCV data."
+            )
+            
+        except DataNotAvailableError:
+            raise
+        except Exception as e:
+            self.logger.error("Failed to resolve contract address", 
+                            platform=platform_id,
+                            contract=contract_address[:10] + "...",
+                            error=str(e))
+            raise MarketDataError(f"Failed to resolve contract address: {str(e)}")
 
 
 class OnChainAnalyticsClient(MarketDataClientBase):
