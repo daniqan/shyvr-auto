@@ -7,6 +7,13 @@ Create a comprehensive training data corpus system that distinguishes between:
 3. **Online Learning**: Incremental training on new data
 4. **Data Versioning**: Clear separation and tracking of data sources
 
+### Important Clarification on Data Sources
+- **ALL data is REAL market data** from APIs (CoinGecko, DeFiLlama, etc.)
+- **"Simulation data"** = Real market data collected during paper trading mode
+- **"Live data"** = Real market data collected during actual trading mode
+- **The `data_source` flag indicates the MODE when data was collected, not data authenticity**
+- **No synthetic or mock data is used in training**
+
 ## Phase 1: Database Infrastructure with Data Lifecycle Management (Day 1)
 
 ### 1.1 PostgreSQL Schema Design with Data Source Tracking
@@ -103,7 +110,30 @@ Create a comprehensive training data corpus system that distinguishes between:
   - IAM permissions established
   - Monitoring and alerting active
 
-## Phase 2: Data Collection Infrastructure with Source Management (Day 1-2)
+## Phase 2: Data Collection Infrastructure with TDD Approach (Day 1-2)
+
+### 2.0 Test-Driven Development Requirements
+- [ ] **IMPORTANT**: All scripts must be developed using TDD methodology
+- [ ] Write tests FIRST before implementation
+- [ ] Tests must use REAL API calls, not mocks:
+  - [ ] Real CoinGecko API calls for OHLCV data
+  - [ ] Real Alternative.me API for Fear & Greed
+  - [ ] Real DeFiLlama API for TVL data
+  - [ ] Real LunarCrush API for social sentiment
+  - [ ] Real Helius API for on-chain data
+- [ ] Create `tests/test_data_collection/` directory structure:
+  - [ ] `test_initial_corpus_collector.py` - Test initial collection
+  - [ ] `test_continuous_collector.py` - Test live/simulation collection
+  - [ ] `test_feature_pipeline.py` - Test feature engineering
+  - [ ] `test_storage_manager.py` - Test storage operations
+- [ ] Each test must verify:
+  - [ ] Data completeness (all 130+ features)
+  - [ ] Data quality (no NaN, proper ranges)
+  - [ ] API rate limiting compliance
+  - [ ] Error handling and retries
+  - [ ] Database storage integrity
+
+## Phase 2.1: Data Collection Infrastructure with Source Management
 
 ### 2.1 Initial Corpus Collector
 - [ ] Create `src/data_pipeline/initial_corpus_collector.py`
@@ -173,13 +203,14 @@ Create a comprehensive training data corpus system that distinguishes between:
   - [ ] Batch size: 24 hours of data (240 samples for 10 tokens)
   - [ ] Mark with `data_source='live'`
 
-### 4.2 Simulation Data Handler
+### 4.2 Simulation Mode Data Handler
 - [ ] Create `src/services/simulation_data_handler.py`
   - [ ] Class: `SimulationDataHandler`
-  - [ ] Method: `capture_simulation_data()` - From paper trading
-  - [ ] Method: `validate_simulation_quality()` - Quality checks
+  - [ ] Method: `capture_simulation_trades()` - Real market data during paper trading
+  - [ ] Method: `validate_data_quality()` - Quality checks on real data
   - [ ] Method: `prepare_for_training()` - Feature engineering
-  - [ ] Mark with `data_source='simulation'`
+  - [ ] Mark with `data_source='simulation'` (real data collected during simulation mode)
+  - [ ] Note: "Simulation data" = real market data collected while in simulation/paper trading mode
 
 ### 4.3 Incremental Training Manager
 - [ ] Create `src/ml_analysis/incremental_training_manager.py`
@@ -296,10 +327,10 @@ Create a comprehensive training data corpus system that distinguishes between:
 
 ### 8.3 Mode System Integration
 - [ ] Integrate with `src/modes/mode_manager.py`:
-  - [ ] Different data collection strategies per mode
-  - [ ] Simulation mode uses simulation data
-  - [ ] Production mode uses live data
-  - [ ] Safety mode restricts to initial corpus only
+  - [ ] Different data labeling per mode (all using real market data):
+    - [ ] Simulation mode: Real data labeled as `data_source='simulation'` (paper trading)
+    - [ ] Production mode: Real data labeled as `data_source='live'` (actual trading)
+    - [ ] Safety mode: Uses only initial corpus for predictions (no new collection)
 
 ### 8.4 Existing Database Integration
 - [ ] Align with existing schemas in `database/migrations/`:
