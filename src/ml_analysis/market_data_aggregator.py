@@ -95,16 +95,13 @@ class MarketDataAggregator:
         if self.config.coingecko_pro.enabled and self.config.coingecko_pro.api_key:
             self.coingecko_client = CoinGeckoClient(
                 api_key=self.config.coingecko_pro.api_key,
-                use_pro_api=True,  # Enable Pro API features
                 cache_ttl=self.config.coingecko_pro.cache_ttl,
                 rate_limit=self.config.coingecko_pro.rate_limit
             )
-            # BASE_URL is now set internally based on use_pro_api flag
             self.clients['coingecko'] = self.coingecko_client
         elif self.config.coingecko.enabled:
             self.coingecko_client = CoinGeckoClient(
                 api_key=self.config.coingecko.api_key,
-                use_pro_api=False,  # Use free API
                 cache_ttl=self.config.coingecko.cache_ttl,
                 rate_limit=self.config.coingecko.rate_limit
             )

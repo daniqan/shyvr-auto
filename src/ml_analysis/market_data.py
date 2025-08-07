@@ -357,14 +357,8 @@ class CoinGeckoClient(MarketDataClientBase):
     BASE_URL = "https://api.coingecko.com/api/v3"  # Default to free API
     PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3"  # Pro API URL
     
-    def __init__(self, api_key: Optional[str] = None, use_pro_api: bool = False, **kwargs):
+    def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(api_key, **kwargs)
-        self.use_pro_api = use_pro_api and api_key is not None
-        
-        # Set base URL based on API type
-        if self.use_pro_api:
-            self.BASE_URL = self.PRO_BASE_URL
-        
         self.headers = {}
         if api_key:
             self.headers["X-CG-Pro-API-Key"] = api_key
@@ -693,25 +687,29 @@ class CoinGeckoClient(MarketDataClientBase):
             DataFrame with OHLCV data
         """
         
-        # Check if we have Pro API access
-        if self.use_pro_api and self.api_key:
-            # Use Pro API endpoint for direct contract address lookup
-            return await self._get_ohlcv_by_contract_pro(token_address, platform_id, days, from_date, to_date)
-        else:
-            # Fall back to free API with contract resolution
-            self.logger.info("Using free API fallback for contract address lookup", 
-                           token_address=token_address[:10] + "...")
-            
+        # Try Pro API first if we have an API key
+        if self.api_key:
             try:
-                # Try to resolve contract to coin ID
-                coin_id = await self._resolve_contract_to_coin_id(token_address, platform_id)
-                return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
-            except DataNotAvailableError:
-                # If resolution fails, return empty DataFrame
-                self.logger.warning("Could not resolve contract address", 
-                                  token_address=token_address[:10] + "...", 
-                                  platform=platform_id)
-                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                # Attempt to use Pro API endpoint for direct contract address lookup
+                return await self._get_ohlcv_by_contract_pro(token_address, platform_id, days, from_date, to_date)
+            except Exception as e:
+                self.logger.info("Pro API not available or failed, using free API fallback", 
+                               error=str(e)[:100])
+        
+        # Fall back to free API with contract resolution
+        self.logger.info("Using free API for contract address lookup", 
+                       token_address=token_address[:10] + "...")
+        
+        try:
+            # Try to resolve contract to coin ID
+            coin_id = await self._resolve_contract_to_coin_id(token_address, platform_id)
+            return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
+        except DataNotAvailableError:
+            # If resolution fails, return empty DataFrame
+            self.logger.warning("Could not resolve contract address", 
+                              token_address=token_address[:10] + "...", 
+                              platform=platform_id)
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     
     async def _get_ohlcv_by_contract_pro(self, contract_address: str, 
                                         platform_id: str,
@@ -737,8 +735,8 @@ class CoinGeckoClient(MarketDataClientBase):
                 params["from"] = int(from_date.timestamp())
                 params["to"] = int(to_date.timestamp())
             
-            # Pro API endpoint for contract address OHLC
-            url = f"{self.BASE_URL}/coins/{platform_id}/contract/{contract_address.lower()}/ohlc"
+            # Pro API endpoint for contract address OHLC - always use PRO_BASE_URL
+            url = f"{self.PRO_BASE_URL}/coins/{platform_id}/contract/{contract_address.lower()}/ohlc"
             
             data = await self._make_request(url, params=params, headers=self.headers)
             
