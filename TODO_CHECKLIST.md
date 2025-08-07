@@ -1,468 +1,399 @@
-# RLTE System - Ensemble Deployment Simplification Plan
+# Training Data Corpus Implementation Plan - With Continuous Learning
 
-## Executive Summary
-This document outlines the comprehensive plan for simplifying the Shyvr RLTE deployment infrastructure to properly support the ensemble architecture (LSTM + 4 Transformers) and remove unnecessary single-transformer configuration complexity.
+## Overview
+Create a comprehensive training data corpus system that distinguishes between:
+1. **Initial Training Data**: Standardized corpus for model initialization
+2. **Live/Simulation Data**: Continuously collected data from production
+3. **Online Learning**: Incremental training on new data
+4. **Data Versioning**: Clear separation and tracking of data sources
 
-**Current Status**: The system uses an ensemble approach combining LSTM with iTransformer, PatchTST, TimesMixer, and TimesFM. The deployment infrastructure incorrectly assumes single-transformer deployment via TRANSFORMER_MODEL_TYPE variable.
+## Phase 1: Database Infrastructure with Data Lifecycle Management (Day 1)
 
-**Goal**: Align deployment with actual ML architecture, simplify configuration, and ensure seamless integration with all existing modules and modes.
+### 1.1 PostgreSQL Schema Design with Data Source Tracking
+- [ ] Create `database/schemas/training_data_schema.sql`
+  
+  #### Core Tables with Source Tracking
+  - [ ] Table: `crypto_ohlcv`
+    ```sql
+    - data_source ENUM('initial', 'simulation', 'live', 'backtest')
+    - collection_timestamp TIMESTAMPTZ
+    - training_status ENUM('untrained', 'in_training', 'trained', 'archived')
+    - model_version VARCHAR(50) -- Which model version used this data
+    -- Note: Removed is_initial_corpus as redundant with data_source='initial'
+    ```
+  
+  - [ ] Table: `crypto_features` - Technical indicators with source tracking
+  - [ ] Table: `market_sentiment` - Fear & Greed with collection metadata
+  - [ ] Table: `defi_metrics` - TVL data with source flags
+  - [ ] Table: `onchain_metrics` - Transaction data with source tracking
+  - [ ] Table: `social_sentiment` - LunarCrush data with metadata
+  - [ ] Table: `token_metadata` - Token characteristics with update history
+  
+  #### Data Management Tables
+  - [ ] Table: `training_corpus_versions`
+    ```sql
+    - version_id SERIAL PRIMARY KEY
+    - version_name VARCHAR(100) -- e.g., 'initial_v1.0', 'live_2024_01'
+    - created_at TIMESTAMPTZ
+    - data_source ENUM('initial', 'simulation', 'live')
+    - sample_count INTEGER
+    - feature_count INTEGER
+    - tokens TEXT[] -- Array of tokens included
+    - is_active BOOLEAN -- Currently used for training
+    ```
+  
+  - [ ] Table: `model_training_history`
+    ```sql
+    - training_id SERIAL PRIMARY KEY
+    - model_type VARCHAR(50) -- 'lstm', 'itransformer', etc.
+    - corpus_version_id INTEGER REFERENCES training_corpus_versions
+    - trained_at TIMESTAMPTZ
+    - training_mode ENUM('initial', 'incremental', 'fine_tune')
+    - performance_metrics JSONB
+    - model_checkpoint_path TEXT
+    ```
+  
+  - [ ] Table: `continuous_learning_queue`
+    ```sql
+    - queue_id SERIAL PRIMARY KEY
+    - data_batch_id VARCHAR(100)
+    - collected_from TIMESTAMPTZ
+    - collected_to TIMESTAMPTZ
+    - data_source ENUM('simulation', 'live')
+    - processing_status ENUM('pending', 'processing', 'completed', 'failed')
+    - samples_count INTEGER
+    ```
 
----
+### 1.2 Data Partitioning Strategy
+- [ ] Partition `crypto_ohlcv` by data_source and month
+- [ ] Create indexes on (data_source, training_status, timestamp)
+- [ ] Set up automated partition management
+- [ ] Configure retention policies per data source:
+  - Initial corpus: Permanent retention
+  - Simulation data: 6 months rolling
+  - Live data: 12 months rolling
+  - Archived training data: 24 months
 
-## Phase 1: Configuration Simplification
-**Timeline**: 5 minutes  
-**Priority**: CRITICAL
+### 1.3 GCS Bucket Organization (Use Existing Infrastructure)
+- [ ] Use existing `gs://shyvr-models-prod` bucket with new subdirectories:
+  ```
+  gs://shyvr-models-prod/
+    ├── models/                    # Existing model storage
+    ├── training-data/            # NEW: Training corpus data
+    │   ├── initial-corpus/
+    │   │   ├── v1.0/
+    │   │   │   ├── raw/
+    │   │   │   ├── processed/
+    │   │   │   └── metadata.json
+    │   │   └── v2.0/
+    │   ├── continuous-learning/
+    │   │   ├── simulation/
+    │   │   │   ├── 2024-01/
+    │   │   │   └── 2024-02/
+    │   │   └── live/
+    │   │       ├── 2024-01/
+    │   │       └── 2024-02/
+    │   └── archived/
+    │       └── trained-batches/
+    └── backups/                  # Existing backup infrastructure
+  ```
+- [ ] Leverage existing bucket configurations:
+  - Versioning already enabled
+  - Lifecycle policies configured
+  - IAM permissions established
+  - Monitoring and alerting active
 
-### 1.1 Update Transformer Models Configuration
-- [x] Update `deploy/configs/transformer_models.json`
-  - [x] Remove individual transformer configurations
-  - [x] Add single "ensemble" configuration with combined resource requirements
-  - [x] Resource allocation: 8Gi memory, 6 CPU, 4200s timeout
-  - [x] List all models: ["lstm", "iTransformer", "PatchTST", "TimesMixer", "TimesFM"]
-  - [x] **Integration Points**: Used by config loader, monitoring dashboard, resource allocation
+## Phase 2: Data Collection Infrastructure with Source Management (Day 1-2)
 
-### 1.2 Update Rollout Configuration
-- [x] Update `deploy/configs/transformer_rollout.yaml`
-  - [x] Remove model-specific rollout stages
-  - [x] Configure for ensemble deployment only
-  - [x] Maintain progressive rollout percentages (10% → 25% → 50% → 100%)
-  - [x] **Integration Points**: Blue-green deployment, canary mode, automated pipeline
+### 2.1 Initial Corpus Collector
+- [ ] Create `src/data_pipeline/initial_corpus_collector.py`
+  - [ ] Class: `InitialCorpusCollector`
+  - [ ] Method: `collect_standardized_corpus()` - One-time collection
+  - [ ] Method: `validate_corpus_completeness()` - Ensure all features
+  - [ ] Method: `mark_as_initial_corpus()` - Flag in database
+  - [ ] Method: `create_corpus_snapshot()` - Version control
 
-### 1.3 Create Environment Configuration
-- [x] Create `deploy/configs/environments.json`
-  - [x] Define "development" mode: LSTM only, 2Gi memory, 1 CPU
-  - [x] Define "production" mode: Full ensemble, 8Gi memory, 6 CPU
-  - [x] Define "staging" mode: Full ensemble, 4Gi memory, 3 CPU (optional)
-  - [x] **Integration Points**: All deployment scripts, monitoring, resource allocation
+### 2.2 Continuous Data Collector (Integrated with Existing Systems)
+- [ ] Create `src/data_pipeline/continuous_collector.py`
+  - [ ] Class: `ContinuousDataCollector`
+  - [ ] Method: `collect_live_data()` - Real-time collection
+  - [ ] Method: `collect_simulation_data()` - Simulation mode data
+  - [ ] Method: `queue_for_training()` - Add to learning queue
+  - [ ] Integration with existing drift detection:
+    - Import `src.monitoring.drift_detection.EnhancedDriftDetector`
+    - Import `src.modes.fallback_strategies.FallbackSystemIntegration`
+    - Check drift before adding data to corpus
+    - Trigger existing fallback mechanisms on significant drift
 
----
+### 2.3 Online Learning Pipeline
+- [ ] Create `src/data_pipeline/online_learning_pipeline.py`
+  - [ ] Class: `OnlineLearningPipeline`
+  - [ ] Method: `process_learning_queue()` - Process new data batches
+  - [ ] Method: `incremental_feature_update()` - Update features
+  - [ ] Method: `trigger_model_update()` - Initiate retraining
+  - [ ] Method: `archive_trained_batch()` - Move to archive
 
-## Phase 2: Deployment Script Updates
-**Timeline**: 10 minutes  
-**Priority**: CRITICAL
+### 2.4 Data Lifecycle Manager
+- [ ] Create `src/data_pipeline/lifecycle_manager.py`
+  - [ ] Class: `DataLifecycleManager`
+  - [ ] Method: `separate_data_sources()` - Maintain separation
+  - [ ] Method: `track_data_lineage()` - Track data flow
+  - [ ] Method: `manage_versions()` - Version control
+  - [ ] Method: `cleanup_old_data()` - Retention policies
 
-### 2.1 Simplify Config Loader Module
-- [x] Update `deploy/modules/transformer_config_loader.sh`
-  - [x] Remove TRANSFORMER_MODEL_TYPE logic
-  - [x] Add ENVIRONMENT variable support (default: production)
-  - [x] Load configuration from environments.json
-  - [x] Export appropriate resource variables based on environment
-  - [x] **Integration Points**: deploy.sh, automated_deployment_pipeline.sh
+## Phase 3: Initial Training Corpus Collection (Day 2)
 
-### 2.2 Update Main Deployment Script
-- [x] Update `deploy/deploy.sh`
-  - [x] Remove TRANSFORMER_MODEL_TYPE conditional (lines 24-48)
-  - [x] Always source transformer_config_loader.sh
-  - [x] Use ENVIRONMENT variable for configuration selection
-  - [x] **Integration Points**: All deployment workflows, CI/CD pipeline
+### 3.1 One-Time Initial Corpus Script
+- [ ] Create `scripts/collect_initial_corpus.py`
+  ```python
+  # Collects standardized training data for model initialization
+  # Marks all data with data_source='initial' and is_initial_corpus=True
+  ```
+  - [ ] Collect 6 months historical data for 10 tokens
+  - [ ] Calculate all 130+ features
+  - [ ] Mark with `data_source='initial'`
+  - [ ] Create immutable corpus version
+  - [ ] Export to `gs://shyvr-models-prod/training-data/initial-corpus/v1.0/`
 
-### 2.3 Update Validation Module
-- [x] Update `deploy/modules/transformer_validation.sh`
-  - [x] Remove per-model validation functions
-  - [x] Add ensemble validation function
-  - [x] Validate combined resource usage (8Gi total for production)
-  - [x] Check all models health as a group
-  - [x] **Integration Points**: automated_deployment_pipeline.sh Stage 2.5
+### 3.2 Initial Corpus Specifications
+- [ ] **Tokens**: BTC, ETH, BNB, SOL, ADA, MATIC, AVAX, DOT, LINK, UNI
+- [ ] **Time Range**: 6 months (4,320 hourly samples per token)
+- [ ] **Total Samples**: 43,200 (10 tokens × 4,320 samples)
+- [ ] **Features**: All 130+ standardized features
+- [ ] **Storage**: Immutable, versioned, never modified
 
-### 2.4 Update Blue-Green Deployment
-- [x] Update `deploy/blue_green_deployment.sh`
-  - [x] Remove TRANSFORMER_MODEL_TYPE references
-  - [x] Use ENVIRONMENT for canary mode configuration
-  - [x] Ensure traffic routing works for ensemble
-  - [x] **Integration Points**: Canary deployments, progressive rollouts
+## Phase 4: Continuous Learning Infrastructure (Day 3)
 
----
+### 4.1 Live Data Collection Service
+- [ ] Create `src/services/live_data_service.py`
+  - [ ] Class: `LiveDataService`
+  - [ ] Method: `start_collection()` - Begin live collection
+  - [ ] Method: `buffer_new_samples()` - Buffer before training
+  - [ ] Method: `batch_for_training()` - Create training batches
+  - [ ] Batch size: 24 hours of data (240 samples for 10 tokens)
+  - [ ] Mark with `data_source='live'`
 
-## Phase 3: ML System Integration
-**Timeline**: 10 minutes  
-**Priority**: HIGH
+### 4.2 Simulation Data Handler
+- [ ] Create `src/services/simulation_data_handler.py`
+  - [ ] Class: `SimulationDataHandler`
+  - [ ] Method: `capture_simulation_data()` - From paper trading
+  - [ ] Method: `validate_simulation_quality()` - Quality checks
+  - [ ] Method: `prepare_for_training()` - Feature engineering
+  - [ ] Mark with `data_source='simulation'`
 
-### 3.1 Update Model Manager
-- [x] ✅ Verify `src/ml_analysis/model_manager.py`
-  - [x] ✅ Ensure ensemble initialization based on ENVIRONMENT
-  - [x] ✅ Development: Initialize LSTM only (mock transformers)
-  - [x] ✅ Production: Initialize all models
-  - [x] ✅ **Integration Points**: Main.py, prediction endpoints, RL agent
+### 4.3 Incremental Training Manager
+- [ ] Create `src/ml_analysis/incremental_training_manager.py`
+  - [ ] Class: `IncrementalTrainingManager`
+  - [ ] Method: `load_base_model()` - Load from initial training
+  - [ ] Method: `prepare_incremental_batch()` - New data batch
+  - [ ] Method: `update_model_weights()` - Incremental learning
+  - [ ] Method: `validate_performance()` - Check for degradation
+  - [ ] Method: `rollback_if_degraded()` - Safety mechanism
+  - [ ] Method: `save_checkpoint()` - Version control
 
-### 3.2 Update Ensemble Weight Manager
-- [x] ✅ Verify `src/ml_analysis/ensemble_weight_manager.py`
-  - [x] ✅ Handle development mode (LSTM only, weight=1.0)
-  - [x] ✅ Handle production mode (distributed weights)
-  - [x] ✅ Ensure graceful handling when models unavailable
-  - [x] ✅ **Integration Points**: Model predictions, weight optimization
+### 4.4 Model Versioning System
+- [ ] Create `src/ml_analysis/model_versioning.py`
+  - [ ] Class: `ModelVersionManager`
+  - [ ] Track model lineage: initial → incremental updates
+  - [ ] Maintain performance history
+  - [ ] Support rollback to previous versions
+  - [ ] A/B testing between versions
 
-### 3.3 Update Feature Engineering
-- [x] ✅ Verify `src/ml_analysis/feature_engineering.py`
-  - [x] ✅ Ensure works with both single model and ensemble
-  - [x] ✅ Handle transformer-specific features conditionally
-  - [x] ✅ **Integration Points**: Data pipeline, model inputs
+## Phase 5: Training Data Manager with Source Awareness (Day 3)
 
----
+### 5.1 Enhanced Training Data Manager
+- [ ] Update `src/ml_analysis/training_data_manager.py`
+  - [ ] Class: `TrainingDataManager`
+  - [ ] Method: `load_initial_corpus()` - Load only initial data
+  - [ ] Method: `load_continuous_data()` - Load live/simulation data
+  - [ ] Method: `create_mixed_batches()` - Combine sources for training
+  - [ ] Method: `get_data_by_source()` - Filter by data source
+  - [ ] Method: `track_data_usage()` - Log which data was used
 
-## Phase 4: Monitoring System Updates ✅
-**Timeline**: 5 minutes  
-**Priority**: HIGH  
-**Status**: COMPLETED
+### 5.2 Data Source Configuration
+- [ ] Create `config/data_sources.yaml`
+  ```yaml
+  initial_corpus:
+    version: "v1.0"
+    path: "gs://shyvr-models-prod/training-data/initial-corpus/v1.0/"
+    immutable: true
+    
+  continuous_learning:
+    batch_size: 240  # samples
+    update_frequency: "daily"
+    sources:
+      - simulation
+      - live
+    
+  mixing_strategy:
+    initial_weight: 0.7  # 70% initial corpus
+    new_data_weight: 0.3  # 30% new data
+  ```
 
-### 4.1 Update Monitoring Dashboard ✅
-- [x] Update `src/monitoring/transformer_monitoring_dashboard.py`
-  - [x] Remove TRANSFORMER_MODEL_TYPE references (lines 176, 257, 318)
-  - [x] Monitor all models in ensemble simultaneously
-  - [x] Add ensemble-level health metrics
-  - [x] **Integration Points**: GCP monitoring, alerting, health checks
+## Phase 6: Model Training with Data Lifecycle (Day 4-5)
 
-### 4.2 Update Performance Validation ✅
-- [x] Update `src/testing/performance_validation.py`
-  - [x] Add ensemble performance benchmarks
-  - [x] Validate combined resource usage
-  - [x] **Integration Points**: Performance tests, SLA validation
+### 6.1 Initial Training Scripts
+- [ ] Create `scripts/training/initial_training.py`
+  - [ ] Use ONLY initial corpus data
+  - [ ] Train all models from scratch
+  - [ ] Save as base model versions
+  - [ ] Record in `model_training_history`
 
-### 4.3 Update Health Endpoints ✅
-- [x] Verify `src/main.py` health endpoint
-  - [x] Report ensemble health status
-  - [x] Include all model statuses in development/production
-  - [x] **Integration Points**: Health checks, monitoring
+### 6.2 Incremental Training Scripts
+- [ ] Create `scripts/training/incremental_training.py`
+  - [ ] Load base models
+  - [ ] Use new data from continuous learning queue
+  - [ ] Apply incremental learning techniques:
+    - Elastic Weight Consolidation (EWC)
+    - Learning rate scheduling
+    - Replay buffer from initial corpus
+  - [ ] Update model versions
 
-**Phase 4 Implementation Summary:**
-- ✅ Removed all TRANSFORMER_MODEL_TYPE references from monitoring dashboard
-- ✅ Updated all monitoring panels to use model_name instead of model_type
-- ✅ Added get_ensemble_health_status() method for aggregated health metrics  
-- ✅ Created EnsemblePerformanceValidator and EnsembleResourceUsageValidator
-- ✅ Updated performance validation suite to handle ensemble benchmarks
-- ✅ Enhanced health endpoint with environment-based model selection
-- ✅ Added ensemble vs development mode reporting in health status
-- ✅ Implemented comprehensive TDD tests covering all Phase 4 requirements
+### 6.3 Training Orchestrator
+- [ ] Create `scripts/training/training_orchestrator.py`
+  - [ ] Coordinate initial vs incremental training
+  - [ ] Manage training queue
+  - [ ] Monitor model performance
+  - [ ] Trigger retraining when needed
 
----
+## Phase 7: Monitoring & Data Quality (Day 5)
 
-## Phase 5: Mode Manager Integration
-**Timeline**: 5 minutes  
-**Priority**: HIGH
+### 7.1 Data Drift Detection (Integration with Existing System)
+- [ ] Extend existing `src/monitoring/drift_detection.py`:
+  - [ ] Add training data specific drift monitoring
+  - [ ] Use existing `EnhancedDriftDetector` class
+  - [ ] Integrate with `FeatureDriftMonitor` for real-time monitoring
+  - [ ] Connect to existing alerting via `src/monitoring/intelligent_alerting.py`
+  - [ ] Leverage transformer-specific drift from `transformer_drift_detection.py`
 
-### 5.1 Update Mode Manager ✅
-- [x] Verify `src/modes/mode_manager.py` - COMPLETED
-  - [x] Ensure modes work with ensemble architecture - COMPLETED
-  - [x] Handle model availability based on ENVIRONMENT - COMPLETED
-  - [x] **Integration Points**: Trading modes, safety systems - COMPLETED
+### 7.2 Training Performance Dashboard
+- [ ] Create `src/monitoring/training_dashboard.py`
+  - [ ] Track data source usage
+  - [ ] Monitor model performance by data source
+  - [ ] Visualize incremental learning progress
+  - [ ] Show data lifecycle status
 
-### 5.2 Update Fallback Strategies ✅
-- [x] Verify `src/modes/fallback_strategies.py` - COMPLETED
-  - [x] Fallback uses available models (dev: LSTM, prod: ensemble) - COMPLETED
-  - [x] Graceful degradation if transformers unavailable - COMPLETED
-  - [x] **Integration Points**: Error recovery, resilience - COMPLETED
+### 7.3 Audit Trail System
+- [ ] Create `src/monitoring/audit_trail.py`
+  - [ ] Log all data movements
+  - [ ] Track model-data associations
+  - [ ] Maintain compliance records
+  - [ ] Generate training reports
 
-### 5.3 Update Trading Modes ✅
-- [x] Verify all trading modes in `src/modes/` - COMPLETED
-  - [x] Work with ensemble predictions - COMPLETED
-  - [x] Handle development vs production model availability - COMPLETED
-  - [x] **Integration Points**: Trading decisions, risk management - COMPLETED
+## Phase 8: Integration with Existing RLTE Systems
 
----
+### 8.1 Safety System Integration
+- [ ] Connect with `src/safety/ml_rl_safety_bridge.py`:
+  - [ ] Register training data quality checks with safety monitors
+  - [ ] Enable emergency stops on data corruption
+  - [ ] Integrate with automated recovery systems
 
-## Phase 6: Safety System Integration
-**Timeline**: 5 minutes  
-**Priority**: HIGH
+### 8.2 Model Registry Integration
+- [ ] Update `src/ml_analysis/model_manager.py`:
+  - [ ] Track which training corpus version each model used
+  - [ ] Enable model rollback based on data issues
+  - [ ] Support A/B testing with different training data
 
-### 6.1 Update Safety Manager ✅
-- [x] Verify `src/safety/trading_safety_manager.py` - COMPLETED
-  - [x] Safety checks work with ensemble predictions - COMPLETED
-  - [x] Handle confidence from multiple models - COMPLETED
-  - [x] **Integration Points**: Trade validation, risk limits - COMPLETED
+### 8.3 Mode System Integration
+- [ ] Integrate with `src/modes/mode_manager.py`:
+  - [ ] Different data collection strategies per mode
+  - [ ] Simulation mode uses simulation data
+  - [ ] Production mode uses live data
+  - [ ] Safety mode restricts to initial corpus only
 
-### 6.2 Update Circuit Breakers ✅
-- [x] Verify `src/safety/trading_circuit_breaker.py` - COMPLETED
-  - [x] Circuit breakers consider ensemble performance - COMPLETED
-  - [x] Trigger on ensemble-level metrics - COMPLETED
-  - [x] **Integration Points**: Emergency stops, system protection - COMPLETED
+### 8.4 Existing Database Integration
+- [ ] Align with existing schemas in `database/migrations/`:
+  - [ ] Follow naming conventions from existing tables
+  - [ ] Use similar indexing strategies
+  - [ ] Maintain foreign key relationships
 
----
+## Phase 9: Archival & Cleanup (Day 5)
 
-## Phase 7: Testing Updates
-**Timeline**: 10 minutes  
-**Priority**: MEDIUM
+### 9.1 Data Archival Service
+- [ ] Create `src/services/archival_service.py`
+  - [ ] Move trained data to archive
+  - [ ] Maintain data lineage
+  - [ ] Compress old data
+  - [ ] Update indices
 
-### 7.1 Update Unit Tests ✅
-- [x] Update transformer model tests - COMPLETED
-  - [x] Test ensemble initialization - COMPLETED
-  - [x] Test environment-based configuration - COMPLETED
-  - [x] Remove single-transformer deployment tests - COMPLETED
-  - [x] **Coverage Target**: ≥95% - COMPLETED
+### 9.2 Cleanup Policies
+- [ ] Create `scripts/cleanup_old_data.py`
+  - [ ] Remove processed simulation data > 6 months
+  - [ ] Archive live data > 12 months
+  - [ ] Never delete initial corpus
+  - [ ] Clean up failed training batches
 
-### 7.2 Update Integration Tests ✅
-- [x] Update `tests/integration/test_trading_mode_transformer_integration.py` - COMPLETED
-  - [x] Test ensemble deployment scenarios - COMPLETED
-  - [x] Test development vs production modes - COMPLETED
-  - [x] Test fallback behaviors - COMPLETED
-  - [x] **Coverage Target**: ≥90% - COMPLETED
+## Data Flow Architecture
 
-### 7.3 Update Performance Tests ✅
-- [x] Update `tests/performance/test_production_benchmarks.py` - COMPLETED
-  - [x] Remove individual transformer benchmarks - COMPLETED
-  - [x] Test ensemble performance as a unit - COMPLETED
-  - [x] Validate resource usage for ensemble - COMPLETED
-  - [x] **Success Criteria**: <100ms latency, <8GB memory - COMPLETED
+```
+Initial Corpus (One-time)
+    ↓
+[Initial Training] → Base Models v1.0
+    ↓
+                    
+Live/Simulation Data (Continuous)
+    ↓
+[Buffer: 24 hours]
+    ↓
+[Continuous Learning Queue]
+    ↓
+[Incremental Training] → Updated Models v1.1, v1.2...
+    ↓
+[Archive Trained Data]
+    ↓
+[Cleanup Old Data]
+```
 
----
+## Storage Estimates with Lifecycle
 
-## Phase 8: Documentation Updates
-**Timeline**: 5 minutes  
-**Priority**: MEDIUM
+### Initial Corpus (Permanent)
+- **PostgreSQL**: 50GB (10 tokens, 6 months, all features)
+- **GCS**: 20GB compressed
+- **Status**: Never deleted, versioned
 
-### 8.1 Update Deployment Documentation ✅
-- [x] Update `docs/deployment/PRODUCTION_ROLLOUT_LOG.md` - COMPLETED
-  - [x] Remove TRANSFORMER_MODEL_TYPE references - COMPLETED
-  - [x] Document ENVIRONMENT variable usage - COMPLETED
-  - [x] Update deployment commands - COMPLETED
-  - [x] **Audience**: Operations, developers - COMPLETED
+### Continuous Learning (Rolling)
+- **Live Data Buffer**: 5GB/month
+- **Simulation Data**: 3GB/month  
+- **Archived Training Data**: 100GB/year
+- **Active Window**: 10GB (last 30 days)
 
-### 8.2 Update Architecture Documentation ✅
-- [x] Create `docs/architecture/SYSTEM_ARCHITECTURE.md` - COMPLETED
-  - [x] Clarify ensemble-only architecture - COMPLETED
-  - [x] Document environment modes - COMPLETED
-  - [x] Update component diagrams - COMPLETED
-  - [x] **Audience**: Developers, architects - COMPLETED
-
-### 8.3 Update README ✅
-- [x] Update main `README.md` - COMPLETED
-  - [x] Deployment uses ENVIRONMENT variable - COMPLETED
-  - [x] Remove single-transformer references - COMPLETED
-  - [x] **Audience**: All users - COMPLETED
-
----
-
-## Phase 9: Final Integration and Validation ✅
-**Timeline**: 10 minutes  
-**Priority**: CRITICAL  
-**Status**: COMPLETED
-
-### 9.1 End-to-End Testing ✅
-- [x] Test development deployment (LSTM only) ✅
-- [x] Test production deployment (full ensemble) ✅
-- [x] Test canary deployment with ensemble ✅
-- [x] Test rollback procedures ✅
-- [x] Test monitoring and alerting ✅
-
-### 9.2 Performance Validation ✅
-- [x] Validate ensemble memory usage (≤8GB) ✅
-- [x] Validate ensemble latency (<100ms) ✅
-- [x] Validate CPU utilization (≤80%) ✅
-- [x] Validate throughput (>500 RPS) ✅
-
-### 9.3 Safety Validation ✅
-- [x] Verify all safety systems work with ensemble ✅
-- [x] Test circuit breakers with ensemble ✅
-- [x] Validate risk management with ensemble predictions ✅
-- [x] Test emergency stop procedures ✅
-
-**Phase 9 Implementation Summary:**
-- ✅ Created comprehensive end-to-end validation suite (`src/testing/end_to_end_validation.py`)
-- ✅ Implemented ensemble performance validation framework (`src/testing/ensemble_performance_validation.py`)
-- ✅ Built safety validation system for ensemble deployments (`src/testing/ensemble_safety_validation.py`) 
-- ✅ Developed final validation report generator (`src/testing/phase_9_final_validation_report.py`)
-- ✅ Created Phase 9 validation runner script (`scripts/run_phase_9_validation.py`)
-- ✅ Validated all deployment scenarios: development (LSTM only), production (full ensemble), canary, rollback
-- ✅ Validated all performance requirements: memory ≤8GB, latency <100ms, CPU ≤80%, throughput >500 RPS
-- ✅ Validated all safety systems: ensemble integration, circuit breakers, risk management, emergency procedures
-- ✅ Generated comprehensive validation framework with automated reporting and status assessment
-
----
+### Total Storage
+- **Year 1**: ~200GB
+- **Year 2**: ~350GB (with archival)
+- **Cost**: ~$200/month
 
 ## Success Criteria
 
-### Technical Requirements
-- [x] ✅ All deployment scripts use ensemble configuration
-- [x] ✅ TRANSFORMER_MODEL_TYPE variable removed completely
-- [x] ✅ ENVIRONMENT variable controls model selection
-- [x] ✅ All tests pass with ≥90% coverage
-- [x] ✅ Performance targets met (<100ms, <8GB, >500 RPS)
+### Initial Training
+- [ ] Initial corpus collected and versioned
+- [ ] All models trained on standardized data
+- [ ] Base model checkpoints saved
+- [ ] Clear separation from continuous data
 
-### Integration Requirements
-- [x] ✅ Seamless integration with Mode Manager
-- [x] ✅ Seamless integration with Safety Systems
-- [x] ✅ Seamless integration with Monitoring
-- [x] ✅ Seamless integration with RL Agent
-- [x] ✅ Seamless integration with Feature Engineering
+### Continuous Learning
+- [ ] Live data collection running
+- [ ] Daily incremental training working
+- [ ] Model versions tracked
+- [ ] Performance monitored
 
-### Operational Requirements
-- [x] ✅ Zero downtime deployment
-- [x] ✅ Rollback procedures tested
-- [x] ✅ Monitoring dashboards updated
-- [x] ✅ Documentation complete
-- [x] ✅ Single commit with clear message
+### Data Lifecycle
+- [ ] Clear data source separation maintained
+- [ ] Training history tracked
+- [ ] Archival working
+- [ ] No data mixing between sources
 
----
+## Implementation Priority
+
+1. **Week 1**: Initial corpus collection and base training
+2. **Week 2**: Continuous data collection setup
+3. **Week 3**: Incremental training implementation
+4. **Week 4**: Monitoring and archival
+5. **Ongoing**: Daily incremental updates
 
 ## Risk Mitigation
 
-### Potential Issues and Solutions
-
-1. **Risk**: Breaking existing deployments**
-   - Mitigation: Test in development first
-   - Rollback: Git revert if issues
-
-2. **Risk**: Monitoring disruption**
-   - Mitigation: Update monitoring incrementally
-   - Rollback: Keep old metrics temporarily
-
-3. **Risk: Mode Manager incompatibility**
-   - Mitigation: Thorough testing of all modes
-   - Rollback: Feature flag for old behavior
-
-4. **Risk: Memory issues with full ensemble**
-   - Mitigation: Development mode for testing
-   - Rollback: Reduce model sizes if needed
-
-5. **Risk: Integration test failures**
-   - Mitigation: Run tests after each phase
-   - Rollback: Fix issues before proceeding
-
----
-
-## Implementation Notes
-
-### Order of Operations
-1. **First**: Update configurations (Phase 1)
-2. **Second**: Update deployment scripts (Phase 2)
-3. **Third**: Update ML system (Phase 3)
-4. **Fourth**: Update monitoring (Phase 4)
-5. **Fifth**: Update modes and safety (Phases 5-6)
-6. **Sixth**: Update tests (Phase 7)
-7. **Seventh**: Update documentation (Phase 8)
-8. **Finally**: Validate everything (Phase 9)
-
-### Critical Path
-Phases 1-3 are critical and must be done in order. Phases 4-6 can be done in parallel. Phases 7-8 can be done anytime. Phase 9 must be last.
-
-### Environment Variable Usage
-```bash
-# Development (LSTM only)
-ENVIRONMENT=development ./deploy/deploy.sh
-
-# Production (Full ensemble)
-ENVIRONMENT=production ./deploy/deploy.sh
-
-# Default is production if not specified
-./deploy/deploy.sh  # Uses production configuration
-```
-
-### Resource Allocation by Environment
-- **Development**: 2Gi RAM, 1 CPU (LSTM only)
-- **Staging**: 4Gi RAM, 3 CPU (optional, full ensemble)
-- **Production**: 8Gi RAM, 6 CPU (full ensemble)
-
-### Backward Compatibility
-- Remove TRANSFORMER_MODEL_TYPE completely
-- Scripts default to production if ENVIRONMENT not set
-- Monitoring continues to track all models
-
----
-
-## Commit Message
-```
-simplify deployment to ensemble-only architecture
-
-- Remove TRANSFORMER_MODEL_TYPE variable and single-model configuration
-- Add ENVIRONMENT variable for dev/prod mode selection
-- Update all deployment scripts to use ensemble configuration
-- Align deployment infrastructure with actual ML architecture
-- Simplify configuration from ~200 lines to ~50 lines
-```
-
----
-
-## 🎉 PHASES 7-8 COMPLETION SUMMARY
-
-### ✅ Successfully Completed Tasks
-
-#### Phase 7: Testing Updates - COMPLETED
-- **7.1**: Updated transformer model tests for ensemble initialization and environment-based configuration
-- **7.2**: Updated integration tests for ensemble deployment scenarios and fallback behaviors  
-- **7.3**: Updated performance benchmarks to test ensemble as a unit and validate resource usage
-
-#### Phase 8: Documentation Updates - COMPLETED
-- **8.1**: Updated `docs/deployment/PRODUCTION_ROLLOUT_LOG.md` to remove TRANSFORMER_MODEL_TYPE references
-- **8.2**: Created `docs/architecture/SYSTEM_ARCHITECTURE.md` for ensemble-only architecture
-- **8.3**: Updated main `README.md` with ENVIRONMENT variable usage and removed single-transformer references
-
-### 📊 Implementation Statistics
-- **Test Files Modified**: 3 test files updated with ensemble approach
-- **Documentation Files Updated**: 3 documentation files completed
-- **Git Commits Created**: 4 micro-commits with clear, focused changes
-- **Architecture Coverage**: Complete system architecture documentation created
-- **Environment Integration**: Full ENVIRONMENT variable documentation and examples
-
-### 🎯 Key Achievements
-1. **Testing Infrastructure**: All tests now properly support ensemble-only deployment with environment-based configuration
-2. **Documentation Alignment**: All documentation now accurately reflects the ensemble architecture and ENVIRONMENT variable usage
-3. **Deployment Simplification**: Clear documentation of simplified deployment using ENVIRONMENT instead of TRANSFORMER_MODEL_TYPE
-4. **Architecture Clarity**: Comprehensive system architecture document with environment-based deployment strategies
-
-### 📝 Files Updated
-- `tests/unit/ml_analysis/test_model_manager.py` - Ensemble initialization tests
-- `tests/integration/test_trading_mode_transformer_integration.py` - Environment-based deployment tests  
-- `tests/performance/test_production_benchmarks.py` - Ensemble performance benchmarks
-- `docs/deployment/PRODUCTION_ROLLOUT_LOG.md` - ENVIRONMENT variable deployment
-- `docs/architecture/SYSTEM_ARCHITECTURE.md` - Complete ensemble architecture documentation
-- `README.md` - Updated with environment configuration and ensemble details
-
-### 🚀 Ready for Production
-The system is now fully aligned with the ensemble-only architecture:
-- **Environment-Based Deployment**: `ENVIRONMENT` variable controls model selection and resource allocation
-- **Simplified Configuration**: No more complex single-transformer deployment logic
-- **Complete Documentation**: All aspects of the ensemble system are thoroughly documented
-- **Testing Coverage**: Tests validate environment-based behavior and ensemble performance
-
-**Status**: ✅ ALL PHASES COMPLETE - Ensemble Deployment Simplification Successfully Implemented
-
----
-
-## 🎉 COMPLETE ENSEMBLE DEPLOYMENT SIMPLIFICATION SUMMARY
-
-### ✅ Successfully Completed Tasks
-
-#### All Phases (1-9): COMPLETED
-- **Phase 1**: Configuration Simplification - COMPLETED
-- **Phase 2**: Deployment Script Updates - COMPLETED  
-- **Phase 3**: ML System Integration - COMPLETED
-- **Phase 4**: Monitoring System Updates - COMPLETED
-- **Phase 5**: Mode Manager Integration - COMPLETED
-- **Phase 6**: Safety System Integration - COMPLETED
-- **Phase 7**: Testing Updates - COMPLETED
-- **Phase 8**: Documentation Updates - COMPLETED
-- **Phase 9**: Final Integration and Validation - COMPLETED
-
-#### Phase 9: Final Integration and Validation - COMPLETED
-- **9.1**: Comprehensive end-to-end validation suite implemented (`src/testing/end_to_end_validation.py`)
-- **9.2**: Ensemble performance validation framework built (`src/testing/ensemble_performance_validation.py`)
-- **9.3**: Safety validation system for ensemble deployments created (`src/testing/ensemble_safety_validation.py`)
-- **Final Report**: Complete validation report generator implemented (`src/testing/phase_9_final_validation_report.py`)
-- **Validation Runner**: Automated Phase 9 validation execution script (`scripts/run_phase_9_validation.py`)
-
-### 📊 Implementation Statistics
-- **Configuration Files Simplified**: From ~200 lines to ~50 lines across deployment configs
-- **Environment Variable Deployment**: Single `ENVIRONMENT` variable replaces complex `TRANSFORMER_MODEL_TYPE` logic
-- **Validation Framework**: Complete end-to-end validation suite with performance and safety validation
-- **Architecture Coverage**: Full ensemble-only architecture documentation and validation
-- **Test Coverage**: Comprehensive test suite validating all deployment scenarios
-
-### 🎯 Key Achievements
-1. **Deployment Simplification**: Eliminated complex single-transformer configuration, simplified to ensemble-only with environment-based selection
-2. **Complete Validation Framework**: Built comprehensive Phase 9 validation covering end-to-end, performance, and safety testing
-3. **Environment-Based Architecture**: `ENVIRONMENT` variable (development/production) controls model selection and resource allocation
-4. **Performance Validation**: Automated validation of ensemble memory (≤8GB), latency (<100ms), CPU (≤80%), throughput (>500 RPS)
-5. **Safety Integration**: Validated all safety systems work with ensemble predictions, circuit breakers, risk management, and emergency procedures
-6. **Production Readiness**: Complete validation framework ready for production deployment assessment
-
-### 🚀 Production Ready
-The system is now fully validated and ready for production deployment:
-- **Environment-Based Deployment**: `ENVIRONMENT=development` (LSTM only) or `ENVIRONMENT=production` (full ensemble)
-- **Comprehensive Validation**: Complete Phase 9 validation suite ensures system readiness
-- **Performance Validated**: All performance requirements tested and validated
-- **Safety Assured**: All safety systems validated with ensemble architecture
-- **Documentation Complete**: All aspects of the ensemble system thoroughly documented
-
-**Status**: ✅ ENSEMBLE DEPLOYMENT SIMPLIFICATION COMPLETE - READY FOR PRODUCTION
-
----
-
-## Total Actual Time: 60+ minutes across all 9 phases
+- **Data Contamination**: Strict source separation
+- **Model Degradation**: Performance monitoring and rollback
+- **Storage Growth**: Automated archival and cleanup
+- **Training Failures**: Queue retry mechanism
+- **Data Loss**: Multi-region backups
