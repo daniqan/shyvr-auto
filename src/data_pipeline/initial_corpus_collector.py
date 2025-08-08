@@ -871,36 +871,109 @@ class InitialCorpusCollector:
             self.logger.error("Failed to mark corpus as initial", error=str(e))
             return False
     
-    async def create_corpus_snapshot(self, version_id: int, snapshot_path: str) -> Dict[str, Any]:
-        """Create a snapshot/backup of the corpus for version control"""
+    async def create_corpus_snapshot(self, version_id: int, snapshot_path: str, 
+                                   export_format: str = 'parquet',
+                                   project_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a comprehensive snapshot/backup of the corpus with GCS export"""
         try:
-            snapshot_info = {
-                'version_id': version_id,
-                'snapshot_path': snapshot_path,
-                'created_at': datetime.now().isoformat(),
-                'creator': 'InitialCorpusCollector'
-            }
-            
-            # In a real implementation, this would:
-            # 1. Export data to GCS
-            # 2. Create metadata files
-            # 3. Update storage_path in database
-            
+            # Get version name for snapshot
             async with get_database_connection() as conn:
-                await conn.execute("""
-                    UPDATE training_corpus_versions 
-                    SET storage_path = $1
-                    WHERE version_id = $2
-                """, snapshot_path, version_id)
+                version_row = await conn.fetchrow("""
+                    SELECT version_name, created_at FROM training_corpus_versions 
+                    WHERE version_id = $1
+                """, version_id)
             
-            self.logger.info("Corpus snapshot created", 
-                           version_id=version_id,
-                           path=snapshot_path)
+            if not version_row:
+                raise StorageError(f"Version {version_id} not found in database")
             
-            return {
-                'success': True,
-                'snapshot_info': snapshot_info
-            }
+            version_name = version_row['version_name']
+            
+            # Try to use GCS export if available
+            try:
+                from src.data_pipeline.gcs_corpus_exporter import GCSCorpusExporter
+                
+                # Determine project_id
+                if project_id is None:
+                    project_id = os.getenv('GOOGLE_CLOUD_PROJECT', 'shvyr-ai-bots')
+                
+                # Parse GCS path
+                if snapshot_path.startswith('gs://'):
+                    bucket_name = snapshot_path.replace('gs://', '').split('/')[0]
+                    corpus_path = '/'.join(snapshot_path.replace('gs://', '').split('/')[1:])
+                    if not corpus_path.endswith('/'):
+                        corpus_path += '/'
+                else:
+                    # Default to shyvr-models-prod bucket
+                    bucket_name = 'shyvr-models-prod'
+                    corpus_path = f"training-data/initial-corpus/{version_name}/"
+                
+                # Initialize GCS exporter
+                gcs_exporter = GCSCorpusExporter(
+                    project_id=project_id,
+                    bucket_name=bucket_name,
+                    base_path=""  # Use full corpus_path
+                )
+                
+                # Export to GCS
+                export_result = await gcs_exporter.export_corpus(
+                    version_id=version_id,
+                    version_name=version_name,
+                    corpus_path=corpus_path,
+                    export_format=export_format,
+                    include_metadata=True,
+                    compress=True
+                )
+                
+                if export_result['success']:
+                    self.logger.info("Corpus snapshot created with GCS export", 
+                                   version_id=version_id,
+                                   export_path=export_result['export_path'],
+                                   files_exported=export_result['export_stats']['files_exported'])
+                    
+                    return {
+                        'success': True,
+                        'snapshot_info': {
+                            'version_id': version_id,
+                            'version_name': version_name,
+                            'snapshot_path': export_result['export_path'],
+                            'created_at': datetime.now().isoformat(),
+                            'creator': 'InitialCorpusCollector',
+                            'export_method': 'GCS',
+                            'export_stats': export_result['export_stats']
+                        },
+                        'export_result': export_result
+                    }
+                else:
+                    raise StorageError(f"GCS export failed: {export_result.get('error')}")
+                    
+            except ImportError:
+                self.logger.warning("GCS export not available, falling back to basic snapshot")
+                
+                # Fallback: just update database with storage path
+                async with get_database_connection() as conn:
+                    await conn.execute("""
+                        UPDATE training_corpus_versions 
+                        SET storage_path = $1, updated_at = NOW()
+                        WHERE version_id = $2
+                    """, snapshot_path, version_id)
+                
+                snapshot_info = {
+                    'version_id': version_id,
+                    'version_name': version_name,
+                    'snapshot_path': snapshot_path,
+                    'created_at': datetime.now().isoformat(),
+                    'creator': 'InitialCorpusCollector',
+                    'export_method': 'database_reference'
+                }
+                
+                self.logger.info("Basic corpus snapshot created", 
+                               version_id=version_id,
+                               path=snapshot_path)
+                
+                return {
+                    'success': True,
+                    'snapshot_info': snapshot_info
+                }
             
         except Exception as e:
             self.logger.error("Failed to create corpus snapshot", error=str(e))
