@@ -557,9 +557,8 @@ class InitialCorpusCollector:
         records = []
         for _, row in price_data.iterrows():
             records.append((
-                token.upper(),  # token_symbol
-                token,          # token_address (using token ID as placeholder)
-                'ethereum',     # chain (default)
+                token.upper(),  # symbol
+                token,          # token_id
                 row['timestamp'],
                 float(row['open']),
                 float(row['high']),
@@ -570,7 +569,6 @@ class InitialCorpusCollector:
                 datetime.now(), # collection_timestamp
                 'untrained',    # training_status
                 None,          # model_version
-                'coingecko',   # exchange
                 None,          # market_cap
                 None,          # circulating_supply
             ))
@@ -578,12 +576,12 @@ class InitialCorpusCollector:
         # Batch insert
         query = """
             INSERT INTO crypto_ohlcv (
-                token_symbol, token_address, chain, timestamp,
+                symbol, token_id, timestamp,
                 open, high, low, close, volume,
                 data_source, collection_timestamp, training_status, model_version,
-                exchange, market_cap, circulating_supply
+                market_cap, circulating_supply
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
             )
         """
         
