@@ -5,6 +5,7 @@ Provides real-time market sentiment, DeFi metrics, and on-chain data
 
 import asyncio
 import aiohttp
+import ssl
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
@@ -148,11 +149,24 @@ class MarketDataClientBase(ABC):
         self._cache_timestamps: Dict[str, datetime] = {}
         self._rate_limiter = RateLimiter(max_requests=rate_limit, time_window=60.0)
     
+    def _create_unverified_ssl_context(self) -> ssl.SSLContext:
+        """Create SSL context with verification disabled for development/testing"""
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        return ssl_context
+
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session"""
+        """Get or create aiohttp session with SSL verification disabled"""
         if self.session is None:
             timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(timeout=timeout)
+            # Create SSL-disabled connector for development/testing
+            ssl_context = self._create_unverified_ssl_context()
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            self.session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector
+            )
         return self.session
     
     def _is_cache_valid(self, cache_key: str) -> bool:
