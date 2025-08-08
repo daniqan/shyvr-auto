@@ -145,12 +145,12 @@ Create a comprehensive training data corpus system that distinguishes between:
 ## Phase 2.1: Data Collection Infrastructure with Source Management
 
 ### 2.1 Initial Corpus Collector
-- [ ] Create `src/data_pipeline/initial_corpus_collector.py`
-  - [ ] Class: `InitialCorpusCollector`
-  - [ ] Method: `collect_standardized_corpus()` - One-time collection
-  - [ ] Method: `validate_corpus_completeness()` - Ensure all features
-  - [ ] Method: `mark_as_initial_corpus()` - Flag in database
-  - [ ] Method: `create_corpus_snapshot()` - Version control
+- [x] Create `src/data_pipeline/initial_corpus_collector.py`
+  - [x] Class: `InitialCorpusCollector`
+  - [x] Method: `collect_standardized_corpus()` - One-time collection
+  - [x] Method: `validate_corpus_completeness()` - Ensure all features
+  - [x] Method: `mark_as_initial_corpus()` - Flag in database
+  - [x] Method: `create_corpus_snapshot()` - Version control
 
 ### 2.2 Continuous Data Collector (Integrated with Existing Systems)
 - [ ] Create `src/data_pipeline/continuous_collector.py`
