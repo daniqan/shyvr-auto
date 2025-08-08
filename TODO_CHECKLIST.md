@@ -121,8 +121,17 @@ Create a comprehensive training data corpus system that distinguishes between:
   - [ ] Real DeFiLlama API for TVL data
   - [ ] Real LunarCrush API for social sentiment
   - [ ] Real Helius API for on-chain data
-- [ ] Create `tests/test_data_collection/` directory structure:
-  - [ ] `test_initial_corpus_collector.py` - Test initial collection
+- [x] Create `tests/integration/data_pipeline/` directory structure:
+  - [x] `test_initial_corpus_collector.py` - Test initial collection (COMPLETED - TDD tests created)
+    - [x] Real API integration tests (CoinGecko, Alternative.me, DeFiLlama, LunarCrush*, Helius*)
+    - [x] Data quality validation tests (130+ features, NaN checks, ranges)
+    - [x] Rate limiting compliance tests
+    - [x] Database storage with data_source='initial' flag tests
+    - [x] Error handling and retry mechanism tests
+    - [x] Feature completeness validation tests
+    - [x] Corpus versioning management tests
+    - Note: (*) Tests conditional on API key availability in environment
+    - Status: FAILING as expected in TDD - implementation needed
   - [ ] `test_continuous_collector.py` - Test live/simulation collection
   - [ ] `test_feature_pipeline.py` - Test feature engineering
   - [ ] `test_storage_manager.py` - Test storage operations
