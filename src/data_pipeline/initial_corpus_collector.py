@@ -707,7 +707,7 @@ class InitialCorpusCollector:
                                    end_date: datetime,
                                    storage_result: Dict[str, Any]) -> Dict[str, Any]:
         """Create corpus version record"""
-        version_name = f"initial_v1.0_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        version_name = f"initial_v1.0_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         
         query = """
             INSERT INTO training_corpus_versions (
