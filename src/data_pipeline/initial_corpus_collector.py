@@ -998,46 +998,113 @@ class InitialCorpusCollector:
                 
                 version_name = version_info['version_name']
                 
-                # Export OHLCV data
-                ohlcv_query = """
-                    SELECT * FROM crypto_ohlcv 
-                    WHERE data_source = 'initial'
-                    AND collection_timestamp >= $1
-                    ORDER BY token_id, timestamp
-                """
-                
-                ohlcv_data = await conn.fetch(
-                    ohlcv_query,
-                    version_info['created_at'] - timedelta(hours=1)
-                )
-                
-                # Export to CSV in memory
-                import io
-                csv_buffer = io.StringIO()
-                
-                if ohlcv_data:
-                    # Write CSV header
-                    fieldnames = list(ohlcv_data[0].keys())
+                # Helper function to export table data to CSV
+                async def export_table_to_csv(table_name: str, query: str, params: list = None) -> str:
+                    """Export a table to CSV and upload to GCS"""
+                    data = await conn.fetch(query, *params) if params else await conn.fetch(query)
+                    
+                    if not data:
+                        return None
+                    
+                    import io
+                    csv_buffer = io.StringIO()
+                    fieldnames = list(data[0].keys())
                     writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
                     writer.writeheader()
                     
-                    # Write data rows
-                    for row in ohlcv_data:
+                    for row in data:
                         writer.writerow(dict(row))
                     
                     # Upload to GCS
-                    blob_path = f"training-data/initial-corpus/{version_name}/ohlcv_data.csv"
+                    blob_path = f"training-data/initial-corpus/{version_name}/{table_name}.csv"
                     blob = bucket.blob(blob_path)
                     blob.upload_from_string(
                         csv_buffer.getvalue(),
                         content_type='text/csv'
                     )
                     
-                    self.logger.info("Uploaded OHLCV data to GCS",
+                    self.logger.info(f"Uploaded {table_name} to GCS",
                                    path=f"gs://{bucket_name}/{blob_path}",
-                                   records=len(ohlcv_data))
+                                   records=len(data))
+                    
+                    return blob_path
                 
-                # Export metadata
+                # Export all corpus data tables
+                gcs_paths = {}
+                
+                # 1. Export OHLCV data
+                ohlcv_query = """
+                    SELECT * FROM crypto_ohlcv 
+                    WHERE data_source = 'initial'
+                    AND collection_timestamp >= $1
+                    ORDER BY token_id, timestamp
+                """
+                ohlcv_path = await export_table_to_csv(
+                    'ohlcv_data', 
+                    ohlcv_query,
+                    [version_info['created_at'] - timedelta(hours=1)]
+                )
+                if ohlcv_path:
+                    gcs_paths['ohlcv'] = f"gs://{bucket_name}/{ohlcv_path}"
+                
+                # 2. Export market sentiment
+                sentiment_query = """
+                    SELECT * FROM market_sentiment 
+                    WHERE data_source = 'initial'
+                    ORDER BY timestamp
+                """
+                sentiment_path = await export_table_to_csv('market_sentiment', sentiment_query)
+                if sentiment_path:
+                    gcs_paths['market_sentiment'] = f"gs://{bucket_name}/{sentiment_path}"
+                
+                # 3. Export DeFi metrics
+                defi_query = """
+                    SELECT * FROM defi_metrics 
+                    WHERE data_source = 'initial'
+                    ORDER BY timestamp
+                """
+                defi_path = await export_table_to_csv('defi_metrics', defi_query)
+                if defi_path:
+                    gcs_paths['defi_metrics'] = f"gs://{bucket_name}/{defi_path}"
+                
+                # 4. Export social sentiment
+                social_query = """
+                    SELECT * FROM social_sentiment 
+                    WHERE data_source = 'initial'
+                    ORDER BY timestamp
+                """
+                social_path = await export_table_to_csv('social_sentiment', social_query)
+                if social_path:
+                    gcs_paths['social_sentiment'] = f"gs://{bucket_name}/{social_path}"
+                
+                # 5. Export on-chain metrics
+                onchain_query = """
+                    SELECT * FROM onchain_metrics 
+                    WHERE data_source = 'initial'
+                    ORDER BY timestamp
+                """
+                onchain_path = await export_table_to_csv('onchain_metrics', onchain_query)
+                if onchain_path:
+                    gcs_paths['onchain_metrics'] = f"gs://{bucket_name}/{onchain_path}"
+                
+                # Count total records
+                ohlcv_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM crypto_ohlcv WHERE data_source = 'initial'"
+                )
+                sentiment_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM market_sentiment WHERE data_source = 'initial'"
+                )
+                defi_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM defi_metrics WHERE data_source = 'initial'"
+                )
+                social_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM social_sentiment WHERE data_source = 'initial'"
+                )
+                onchain_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM onchain_metrics WHERE data_source = 'initial'"
+                )
+                
+                # Export metadata with all data counts
                 metadata = {
                     'version_id': version_id,
                     'version_name': version_name,
@@ -1049,7 +1116,15 @@ class InitialCorpusCollector:
                     'tokens': version_info['tokens'],
                     'data_source': version_info['data_source'],
                     'export_timestamp': datetime.now(timezone.utc).isoformat(),
-                    'ohlcv_records': len(ohlcv_data) if ohlcv_data else 0
+                    'record_counts': {
+                        'ohlcv': ohlcv_count,
+                        'market_sentiment': sentiment_count,
+                        'defi_metrics': defi_count,
+                        'social_sentiment': social_count,
+                        'onchain_metrics': onchain_count,
+                        'total': ohlcv_count + sentiment_count + defi_count + social_count + onchain_count
+                    },
+                    'gcs_paths': gcs_paths
                 }
                 
                 # Upload metadata as JSON
@@ -1059,24 +1134,30 @@ class InitialCorpusCollector:
                     json.dumps(metadata, indent=2),
                     content_type='application/json'
                 )
+                gcs_paths['metadata'] = f"gs://{bucket_name}/{metadata_path}"
                 
                 self.logger.info("Export to GCS completed",
                                version_id=version_id,
                                bucket=bucket_name,
-                               paths={
-                                   'ohlcv': f"gs://{bucket_name}/{blob_path}",
-                                   'metadata': f"gs://{bucket_name}/{metadata_path}"
-                               })
+                               ohlcv_records=ohlcv_count,
+                               sentiment_records=sentiment_count,
+                               defi_records=defi_count,
+                               social_records=social_count,
+                               onchain_records=onchain_count)
                 
                 return {
                     'success': True,
                     'version_id': version_id,
                     'version_name': version_name,
-                    'gcs_paths': {
-                        'ohlcv': f"gs://{bucket_name}/{blob_path}",
-                        'metadata': f"gs://{bucket_name}/{metadata_path}"
-                    },
-                    'records_exported': len(ohlcv_data) if ohlcv_data else 0
+                    'gcs_paths': gcs_paths,
+                    'records_exported': {
+                        'ohlcv': ohlcv_count,
+                        'market_sentiment': sentiment_count,
+                        'defi_metrics': defi_count,
+                        'social_sentiment': social_count,
+                        'onchain_metrics': onchain_count,
+                        'total': ohlcv_count + sentiment_count + defi_count + social_count + onchain_count
+                    }
                 }
                 
         except Exception as e:

@@ -129,9 +129,19 @@ async def run_collection(
             
             if export_result['success']:
                 print('✅ Export to GCS successful!')
-                print(f'   - OHLCV Data: {export_result["gcs_paths"]["ohlcv"]}')
-                print(f'   - Metadata: {export_result["gcs_paths"]["metadata"]}')
-                print(f'   - Records exported: {export_result["records_exported"]:,}')
+                print('   Exported files:')
+                for key, path in export_result["gcs_paths"].items():
+                    if path:
+                        print(f'     • {key}: {path}')
+                print('')
+                print('   Records exported:')
+                if isinstance(export_result["records_exported"], dict):
+                    for key, count in export_result["records_exported"].items():
+                        if key != 'total' and count > 0:
+                            print(f'     • {key}: {count:,}')
+                    print(f'   Total: {export_result["records_exported"]["total"]:,} records')
+                else:
+                    print(f'   Total: {export_result["records_exported"]:,} records')
             else:
                 print(f'⚠️  GCS export failed: {export_result.get("error", "Unknown error")}')
                 print('   Data remains in database and can be exported later')
