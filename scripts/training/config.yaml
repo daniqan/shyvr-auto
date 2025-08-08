@@ -1,0 +1,182 @@
+# Transformer Training Configuration
+# Environment-specific settings for model training
+
+# Global settings
+training_defaults:
+  data_source: 'initial'
+  use_gcs: true
+  train_val_test_split: [0.8, 0.1, 0.1]
+  save_checkpoints: true
+  enable_validation: true
+  early_stopping: true
+
+# Development environment - optimized for speed and low memory usage
+development:
+  models_to_train: ['lstm']  # Only LSTM for development
+  batch_size: 16
+  max_epochs: 10
+  learning_rate_scale: 1.0
+  memory_optimization: true
+  
+  model_configs:
+    lstm:
+      hidden_dim: 64
+      num_layers: 2
+      sequence_length: 60
+      dropout: 0.1
+      
+    transformer:
+      d_model: 256
+      n_heads: 4
+      n_layers: 3
+      max_seq_length: 256
+      
+    itransformer:
+      d_model: 256
+      n_heads: 4
+      n_layers: 3
+      n_variates: 8
+      
+    patchtst:
+      d_model: 256
+      n_heads: 4
+      n_layers: 3
+      patch_size: 8
+      
+    timesmixer:
+      d_model: 256
+      n_heads: 4
+      n_layers: 3
+
+# Production environment - full ensemble training
+production:
+  models_to_train: ['lstm', 'itransformer', 'patchtst', 'timesmixer']  # Full ensemble
+  batch_size: 32
+  max_epochs: 50
+  learning_rate_scale: 1.0
+  memory_optimization: false
+  enable_mixed_precision: true
+  
+  model_configs:
+    lstm:
+      hidden_dim: 128
+      num_layers: 3
+      sequence_length: 120
+      dropout: 0.1
+      
+    transformer:
+      d_model: 512
+      n_heads: 8
+      n_layers: 6
+      max_seq_length: 512
+      
+    itransformer:
+      d_model: 512
+      n_heads: 8
+      n_layers: 6
+      n_variates: 12
+      use_inverted_attention: true
+      cross_variate_attention: true
+      
+    patchtst:
+      d_model: 512
+      n_heads: 8
+      n_layers: 6
+      patch_size: 16
+      stride: 8
+      prediction_horizons: ['1h', '4h', '24h']
+      
+    timesmixer:
+      d_model: 512
+      n_heads: 8
+      n_layers: 6
+      mixing_factor: 0.5
+      decomposition_layers: 2
+      seasonal_periods: [24, 168]
+      
+    timesfm:
+      model_name: 'google/timesfm-1.0-200m'
+      prediction_length: 24
+      context_length: 512
+      use_zero_shot: true
+      gcp_optimized: true
+      frequency: 'H'
+      backend: 'gpu'
+
+# Training optimization settings
+optimization:
+  learning_rates:
+    lstm: 0.001
+    transformer: 0.0001
+    itransformer: 0.0001
+    patchtst: 0.0001
+    timesmixer: 0.0001
+    
+  schedulers:
+    warmup_steps: 1000
+    decay_steps: 5000
+    decay_rate: 0.95
+    
+  early_stopping:
+    patience: 5
+    min_delta: 0.001
+    monitor: 'validation_loss'
+    
+  checkpointing:
+    save_best: true
+    save_every_n_epochs: 10
+    keep_top_k: 3
+    monitor_metric: 'validation_accuracy'
+
+# GCS configuration
+gcs:
+  bucket_name: 'shyvr-models-prod'
+  model_path: 'models'
+  checkpoint_path: 'checkpoints'
+  metadata_path: 'metadata'
+  
+# Logging and monitoring
+logging:
+  level: 'INFO'
+  log_training_progress: true
+  log_every_n_steps: 100
+  save_training_logs: true
+  
+monitoring:
+  track_memory_usage: true
+  track_inference_time: true
+  track_gpu_utilization: true
+  save_metrics: true
+
+# Data preprocessing
+preprocessing:
+  sequence_lengths:
+    min_length: 30
+    max_length: 1000
+    default_length: 120
+    
+  normalization:
+    method: 'zscore'  # 'zscore', 'minmax', 'robust'
+    per_feature: true
+    
+  feature_selection:
+    use_technical_indicators: true
+    use_market_features: true
+    use_sentiment_features: true
+    min_features: 10
+    max_features: 50
+
+# Validation and testing
+validation:
+  cross_validation: false  # Set to true for k-fold CV
+  cv_folds: 5
+  
+  metrics:
+    - 'accuracy'
+    - 'mae'
+    - 'rmse'
+    - 'r2_score'
+    - 'directional_accuracy'
+    
+  test_on_holdout: true
+  holdout_period_months: 1

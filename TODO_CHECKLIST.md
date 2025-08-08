@@ -8,9 +8,19 @@
 - **Phase 2.1**: Initial corpus collector (fully implemented with TDD compliance)
 - **Phase 2.2**: Continuous data collector (implemented with drift detection and fallback integration)
 
-### 🚧 In Progress
+### 🚧 In Progress  
 - Phase 2.3-2.4: Online learning pipeline and data lifecycle manager
 - Phase 3: Initial corpus collection (ready to execute)
+
+### ✅ Recently Completed
+- **Transformer Training Script**: Complete implementation of `scripts/training/train_transformers.py`
+  - Builds upon existing ModelManager and InitialCorpusCollector infrastructure
+  - Supports environment-based training (development: LSTM only, production: full ensemble)
+  - Trains LSTM, iTransformer, PatchTST, TimesMixer models using real database data
+  - Saves model checkpoints to GCS bucket `gs://shyvr-models-prod/models/`
+  - Tracks training history in `model_training_history` table
+  - Includes progress tracking, evaluation metrics, and comprehensive reporting
+  - NO MOCKS - uses real CloudSQL data with `data_source='initial'`
 
 ### 📋 Pending
 - Phases 4-9: Complete implementation and integration
@@ -192,6 +202,61 @@ Create a comprehensive training data corpus system that distinguishes between:
     - [x] Asyncio for concurrent operations
     - [x] Rate limiting compliance and error handling
     - [x] Integration with existing feature engineering pipeline
+
+## Phase 2.5: Transformer Training Infrastructure - ✅ COMPLETED
+
+### 2.5.1 Training Script Implementation - ✅ COMPLETED
+- [x] Create `scripts/training/train_transformers.py` (COMPLETED)
+  - [x] Class: `TransformerTrainer` - Main training coordinator (COMPLETED)
+  - [x] Integration with existing ModelManager for ensemble coordination (COMPLETED)
+  - [x] Integration with InitialCorpusCollector for real data loading (COMPLETED)
+  - [x] Environment-based training configuration:
+    - [x] Development mode: LSTM only for fast iteration (COMPLETED)
+    - [x] Production mode: Full ensemble (LSTM, iTransformer, PatchTST, TimesMixer) (COMPLETED)
+  - [x] Data pipeline integration:
+    - [x] Load training data from database with `data_source='initial'` (COMPLETED)
+    - [x] 80/10/10 train/validation/test splits (COMPLETED)
+    - [x] NO MOCKS - real market data from CloudSQL (COMPLETED)
+  - [x] Model training features:
+    - [x] Progress tracking with epoch-by-epoch reporting (COMPLETED)
+    - [x] Validation metrics calculation (accuracy, MAE, RMSE, R²) (COMPLETED)
+    - [x] Model checkpoint saving with metadata (COMPLETED)
+    - [x] GCS integration for cloud storage `gs://shyvr-models-prod/` (COMPLETED)
+    - [x] Database tracking in `model_training_history` table (COMPLETED)
+  - [x] Error handling and resilience:
+    - [x] Per-model error isolation (COMPLETED)
+    - [x] Training progress persistence (COMPLETED)
+    - [x] Comprehensive logging integration (COMPLETED)
+
+### 2.5.2 Training Configuration - ✅ COMPLETED
+- [x] Create `scripts/training/config.yaml` (COMPLETED)
+  - [x] Environment-specific settings (development vs production) (COMPLETED)
+  - [x] Model architecture configurations (COMPLETED)
+  - [x] Training hyperparameters (learning rates, batch sizes, epochs) (COMPLETED)
+  - [x] GCS bucket and storage settings (COMPLETED)
+  - [x] Optimization and scheduling parameters (COMPLETED)
+
+### 2.5.3 Documentation - ✅ COMPLETED
+- [x] Create `scripts/training/README.md` (COMPLETED)
+  - [x] Comprehensive usage instructions (COMPLETED)
+  - [x] Model architecture descriptions (COMPLETED)
+  - [x] Environment configuration guide (COMPLETED)
+  - [x] Troubleshooting and optimization tips (COMPLETED)
+
+### 2.5.4 Training Script Usage Examples - ✅ COMPLETED
+```bash
+# Development environment (LSTM only, fast iteration)
+python scripts/training/train_transformers.py --environment development
+
+# Production environment (full ensemble)
+python scripts/training/train_transformers.py --environment production --data-source initial
+
+# Custom configuration
+python scripts/training/train_transformers.py \
+    --environment production \
+    --split-ratio 0.8 0.1 0.1 \
+    --no-gcs
+```
 
 ### 2.3 Online Learning Pipeline
 - [ ] Create `src/data_pipeline/online_learning_pipeline.py`
