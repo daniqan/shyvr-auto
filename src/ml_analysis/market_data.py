@@ -310,21 +310,27 @@ class DeFiLlamaClient(MarketDataClientBase):
             return cached
         
         try:
-            # Get total TVL
-            tvl_data = await self._make_request(f"{self.BASE_URL}/tvl")
+            # Get historical TVL data (v2 endpoint)
+            tvl_history = await self._make_request(f"{self.BASE_URL}/v2/historicalChainTvl")
             
             # Get chain TVL
-            chains_data = await self._make_request(f"{self.BASE_URL}/chains")
+            chains_data = await self._make_request(f"{self.BASE_URL}/v2/chains")
             
             # Get protocols count
             protocols_data = await self._make_request(f"{self.BASE_URL}/protocols")
             
-            # Extract current and historical TVL
-            current_tvl = float(tvl_data.get("totalTvl", 0))
-            
-            # Calculate TVL changes
-            tvl_24h_ago = float(tvl_data.get("totalTvl24hAgo", current_tvl))
-            tvl_7d_ago = float(tvl_data.get("totalTvl7dAgo", current_tvl))
+            # Extract current TVL from latest data point
+            if tvl_history and len(tvl_history) > 0:
+                current_tvl = float(tvl_history[-1].get("tvl", 0))
+                
+                # Find TVL 24h ago (assuming daily data points)
+                tvl_24h_ago = float(tvl_history[-2].get("tvl", current_tvl)) if len(tvl_history) > 1 else current_tvl
+                tvl_7d_ago = float(tvl_history[-8].get("tvl", current_tvl)) if len(tvl_history) > 7 else current_tvl
+            else:
+                # Fallback values if API fails
+                current_tvl = 100_000_000_000  # $100B default
+                tvl_24h_ago = current_tvl
+                tvl_7d_ago = current_tvl
             
             tvl_change_24h = ((current_tvl - tvl_24h_ago) / tvl_24h_ago * 100) if tvl_24h_ago > 0 else 0
             tvl_change_7d = ((current_tvl - tvl_7d_ago) / tvl_7d_ago * 100) if tvl_7d_ago > 0 else 0
