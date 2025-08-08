@@ -161,6 +161,56 @@ async def run_collection(
         return False
 
 
+async def clean_existing_corpus():
+    """Clean existing initial corpus data from database"""
+    from src.utils.database import get_database_connection
+    
+    print('🧹 Cleaning existing initial corpus data...')
+    print('')
+    
+    async with get_database_connection() as conn:
+        # Check existing data
+        counts = {}
+        counts['ohlcv'] = await conn.fetchval("SELECT COUNT(*) FROM crypto_ohlcv WHERE data_source='initial'")
+        counts['sentiment'] = await conn.fetchval("SELECT COUNT(*) FROM market_sentiment WHERE data_source='initial'")
+        counts['defi'] = await conn.fetchval("SELECT COUNT(*) FROM defi_metrics WHERE data_source='initial'")
+        counts['social'] = await conn.fetchval("SELECT COUNT(*) FROM social_sentiment WHERE data_source='initial'")
+        counts['onchain'] = await conn.fetchval("SELECT COUNT(*) FROM onchain_metrics WHERE data_source='initial'")
+        counts['versions'] = await conn.fetchval("SELECT COUNT(*) FROM training_corpus_versions WHERE data_source='initial'")
+        
+        total = sum(counts.values())
+        
+        if total == 0:
+            print('   No existing data found - database is clean')
+            return True
+        
+        print(f'   Found existing records:')
+        for table, count in counts.items():
+            if count > 0:
+                print(f'     • {table}: {count:,} records')
+        print(f'   Total: {total:,} records')
+        print('')
+        
+        # Confirm deletion
+        response = input('Delete all existing initial corpus data? (y/N): ')
+        if response.lower() != 'y':
+            print('   Cleanup cancelled')
+            return False
+        
+        # Delete all initial data
+        print('   Deleting data...')
+        await conn.execute("DELETE FROM crypto_ohlcv WHERE data_source='initial'")
+        await conn.execute("DELETE FROM market_sentiment WHERE data_source='initial'")
+        await conn.execute("DELETE FROM defi_metrics WHERE data_source='initial'")
+        await conn.execute("DELETE FROM social_sentiment WHERE data_source='initial'")
+        await conn.execute("DELETE FROM onchain_metrics WHERE data_source='initial'")
+        await conn.execute("DELETE FROM training_corpus_versions WHERE data_source='initial'")
+        
+        print('✅ Database cleaned successfully')
+        print('')
+        return True
+
+
 def main():
     """Main entry point with CLI argument parsing"""
     parser = argparse.ArgumentParser(
@@ -178,6 +228,11 @@ def main():
         '--production',
         action='store_true',
         help='Run full production collection (10 tokens, 180 days)'
+    )
+    group.add_argument(
+        '--clean',
+        action='store_true',
+        help='Clean existing initial corpus data from database'
     )
     
     # Custom configuration options
@@ -206,7 +261,23 @@ def main():
     
     args = parser.parse_args()
     
-    # Determine configuration
+    # Handle clean option first
+    if args.clean:
+        print('🧹 Database Cleanup Mode')
+        print('')
+        
+        # Check database connection
+        if not os.environ.get('DATABASE_URL'):
+            print('❌ DATABASE_URL environment variable not set')
+            print('Please run with the deployment script:')
+            print('   ./scripts/data_collection/collect_initial_corpus.sh clean')
+            sys.exit(1)
+        
+        # Run cleanup
+        success = asyncio.run(clean_existing_corpus())
+        sys.exit(0 if success else 1)
+    
+    # Determine configuration for collection
     if args.test:
         tokens = TEST_TOKENS
         days = 7
@@ -233,7 +304,7 @@ def main():
             print(f'   - {var}')
         print('')
         print('Please set these variables or run with the deployment script:')
-        print('   ./deploy/scripts/run_initial_corpus_collection.sh')
+        print('   ./scripts/data_collection/collect_initial_corpus.sh')
         sys.exit(1)
     
     # Run async collection

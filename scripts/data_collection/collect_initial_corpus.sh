@@ -4,9 +4,12 @@
 # Sets up environment and runs the corpus collection script
 #
 # Usage:
-#   ./scripts/data_collection/collect_initial_corpus.sh [test|production|custom]
+#   ./scripts/data_collection/collect_initial_corpus.sh [clean|test|production|custom]
 #
 # Examples:
+#   # Clean existing data
+#   ./scripts/data_collection/collect_initial_corpus.sh clean
+#   
 #   # Test run (2 tokens, 7 days)
 #   ./scripts/data_collection/collect_initial_corpus.sh test
 #   
@@ -94,6 +97,11 @@ echo ""
 
 # Determine Python command arguments based on mode
 case "$MODE" in
+    clean)
+        PYTHON_ARGS="--clean"
+        echo -e "${YELLOW}🧹 This will clean all existing initial corpus data${NC}"
+        echo ""
+        ;;
     test)
         PYTHON_ARGS="--test"
         ;;
@@ -114,7 +122,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}❌ Invalid mode: $MODE${NC}"
-        echo "Usage: $0 [test|production|custom] [additional args]"
+        echo "Usage: $0 [clean|test|production|custom] [additional args]"
         exit 1
         ;;
 esac
