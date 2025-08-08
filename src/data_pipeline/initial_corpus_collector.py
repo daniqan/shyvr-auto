@@ -96,6 +96,9 @@ class InitialCorpusCollector:
         self.retry_attempts = retry_attempts
         self.batch_size = batch_size
         
+        # Initialize logger first
+        self.logger = structlog.get_logger().bind(component="InitialCorpusCollector")
+        
         # Initialize API clients
         self._init_api_clients()
         
@@ -117,8 +120,6 @@ class InitialCorpusCollector:
             'api_calls_made': 0,
             'errors_encountered': 0
         }
-        
-        self.logger = structlog.get_logger().bind(component="InitialCorpusCollector")
     
     def _init_api_clients(self):
         """Initialize API clients with proper authentication"""
