@@ -11,7 +11,7 @@
 - **Phase 2.2**: Continuous data collector (implemented with drift detection and fallback integration)
 - **Phase 2.3**: Online learning pipeline (fully implemented with TDD compliance)
 - **Phase 2.4**: Data lifecycle manager (fully implemented with TDD compliance)
-- **Phase 3**: Initial corpus collection execution (production-ready implementation completed)
+- **Phase 3**: Initial corpus collection execution (scripts created, NOT YET EXECUTED)
 
 ### ✅ Recently Completed
 
@@ -363,9 +363,9 @@ python scripts/training/train_transformers.py \
   - [x] Storage optimization and compression (COMPLETED)
   - [x] Retention: Initial (permanent), Simulation (6mo), Live (12mo), Archive (24mo) (COMPLETED)
 
-## Phase 3: Initial Training Corpus Collection (Day 2) - ✅ COMPLETED
+## Phase 3: Initial Training Corpus Collection (Day 2) - 🚧 READY TO EXECUTE
 
-### 3.1 One-Time Initial Corpus Script - ✅ COMPLETED
+### 3.1 One-Time Initial Corpus Script - ✅ SCRIPT CREATED
 - [x] Create `scripts/collect_initial_corpus.py` (COMPLETED)
   ```python
   # Production-ready script with comprehensive GCP integration
@@ -373,20 +373,20 @@ python scripts/training/train_transformers.py \
   # Supports development/staging/production environments with appropriate data periods
   # Integrates with Secret Manager, CloudSQL, and GCS export
   ```
-  - [x] Execute: Collect 6 months historical data for 10 tokens (COMPLETED - configurable)
-  - [x] Execute: Calculate all 130+ features (COMPLETED - uses existing FeatureEngineer)
-  - [x] Execute: Mark with `data_source='initial'` (COMPLETED - database integration)
-  - [x] Execute: Create immutable corpus version (COMPLETED - version management)
-  - [x] Execute: Export to `gs://shyvr-models-prod/training-data/initial-corpus/v1.0/` (COMPLETED - GCS export)
+  - [ ] Execute: Collect 6 months historical data for 10 tokens (READY TO EXECUTE)
+  - [ ] Execute: Calculate all 130+ features (READY TO EXECUTE)
+  - [ ] Execute: Mark with `data_source='initial'` (READY TO EXECUTE)
+  - [ ] Execute: Create immutable corpus version (READY TO EXECUTE)
+  - [ ] Execute: Export to `gs://shyvr-models-prod/training-data/initial-corpus/v1.0/` (READY TO EXECUTE)
 
-### 3.2 Initial Corpus Specifications - ✅ COMPLETED
+### 3.2 Initial Corpus Specifications - 📋 CONFIGURED
 - [x] **Tokens**: BTC, ETH, BNB, SOL, ADA, MATIC, AVAX, DOT, LINK, UNI (configurable via script args)
 - [x] **Time Range**: 6 months (4,320 hourly samples per token) - environment configurable
 - [x] **Total Samples**: 43,200 (10 tokens × 4,320 samples) for production environment
 - [x] **Features**: All 130+ standardized features via existing FeatureEngineer integration
 - [x] **Storage**: Immutable, versioned, never modified - enforced by database schema
 
-### 3.3 Production Infrastructure Integration - ✅ COMPLETED
+### 3.3 Production Infrastructure Integration - ✅ SCRIPTS CREATED
 - [x] **Cloud Run Deployment**: `deploy/scripts/run_initial_corpus_collection.sh` 
 - [x] **Secret Manager**: Automatic API key loading from GCP Secret Manager
 - [x] **Monitoring**: Automated alerting and log-based monitoring setup
