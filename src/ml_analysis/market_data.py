@@ -362,6 +362,10 @@ class CoinGeckoClient(MarketDataClientBase):
         self.headers = {}
         if api_key:
             self.headers["X-CG-Pro-API-Key"] = api_key
+            # Use Pro API URL when API key is provided
+            self.base_url = self.PRO_BASE_URL
+        else:
+            self.base_url = self.BASE_URL
     
     async def get_market_data(self) -> CorrelationMetrics:
         """Get Bitcoin dominance and correlation metrics"""
@@ -373,13 +377,13 @@ class CoinGeckoClient(MarketDataClientBase):
         try:
             # Get global market data
             global_data = await self._make_request(
-                f"{self.BASE_URL}/global", 
+                f"{self.base_url}/global", 
                 headers=self.headers
             )
             
             # Get top cryptocurrencies for correlation analysis
             coins_data = await self._make_request(
-                f"{self.BASE_URL}/coins/markets",
+                f"{self.base_url}/coins/markets",
                 params={
                     "vs_currency": "usd",
                     "order": "market_cap_desc",
@@ -499,7 +503,7 @@ class CoinGeckoClient(MarketDataClientBase):
                 params["to"] = int(to_date.timestamp())
             
             # Make API request
-            url = f"{self.BASE_URL}/coins/{coin_id}/ohlc"
+            url = f"{self.base_url}/coins/{coin_id}/ohlc"
             data = await self._make_request(url, params=params, headers=self.headers)
             
             if not data:
@@ -543,7 +547,7 @@ class CoinGeckoClient(MarketDataClientBase):
                 params["to"] = int(to_date.timestamp())
             
             # Make API request to market_chart endpoint
-            url = f"{self.BASE_URL}/coins/{coin_id}/market_chart"
+            url = f"{self.base_url}/coins/{coin_id}/market_chart"
             data = await self._make_request(url, params=params, headers=self.headers)
             
             if not data or 'total_volumes' not in data:
