@@ -118,6 +118,24 @@ async def run_collection(
             
             print('')
             print('📊 Data successfully stored in production database!')
+            
+            # Export to GCS
+            print('')
+            print('☁️  Exporting to Google Cloud Storage...')
+            export_result = await collector.export_to_gcs(
+                version_id=result['corpus_version_id'],
+                bucket_name='shyvr-models-prod'
+            )
+            
+            if export_result['success']:
+                print('✅ Export to GCS successful!')
+                print(f'   - OHLCV Data: {export_result["gcs_paths"]["ohlcv"]}')
+                print(f'   - Metadata: {export_result["gcs_paths"]["metadata"]}')
+                print(f'   - Records exported: {export_result["records_exported"]:,}')
+            else:
+                print(f'⚠️  GCS export failed: {export_result.get("error", "Unknown error")}')
+                print('   Data remains in database and can be exported later')
+            
             print('')
             print('Next steps:')
             print('1. Verify data in database:')

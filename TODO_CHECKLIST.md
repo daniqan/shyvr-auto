@@ -377,7 +377,7 @@ python scripts/training/train_transformers.py \
   - [x] Execute: Calculate all 130+ features (COMPLETED - FeatureEngineer integrated)
   - [x] Execute: Mark with `data_source='initial'` (COMPLETED - All records marked)
   - [x] Execute: Create immutable corpus version (COMPLETED - Version tracking implemented)
-  - [x] Execute: Export to `gs://shyvr-models-prod/training-data/initial-corpus/v1.0/` (READY - GCS export available)
+  - [ ] Execute: Export to `gs://shyvr-models-prod/training-data/initial-corpus/v1.0/` (NOT EXECUTED - needs implementation)
 
 ### 3.2 Initial Corpus Specifications - 📋 CONFIGURED
 - [x] **Tokens**: BTC, ETH, BNB, SOL, ADA, MATIC, AVAX, DOT, LINK, UNI (configurable via script args)

@@ -962,6 +962,130 @@ class InitialCorpusCollector:
                 'error': str(e)
             }
     
+    async def export_to_gcs(self, version_id: int, bucket_name: str = 'shyvr-models-prod') -> Dict[str, Any]:
+        """
+        Export corpus data to Google Cloud Storage
+        
+        Args:
+            version_id: The corpus version ID to export
+            bucket_name: GCS bucket name
+            
+        Returns:
+            Export result with GCS paths
+        """
+        try:
+            from google.cloud import storage
+            import tempfile
+            import csv
+            
+            self.logger.info("Starting GCS export", 
+                           version_id=version_id, 
+                           bucket=bucket_name)
+            
+            # Initialize GCS client
+            storage_client = storage.Client(project='shvyr-ai-bots')
+            bucket = storage_client.bucket(bucket_name)
+            
+            # Get corpus metadata
+            async with get_database_connection() as conn:
+                version_info = await conn.fetchrow(
+                    "SELECT * FROM training_corpus_versions WHERE version_id = $1",
+                    version_id
+                )
+                
+                if not version_info:
+                    raise ValueError(f"Corpus version {version_id} not found")
+                
+                version_name = version_info['version_name']
+                
+                # Export OHLCV data
+                ohlcv_query = """
+                    SELECT * FROM crypto_ohlcv 
+                    WHERE data_source = 'initial'
+                    AND collection_timestamp >= $1
+                    ORDER BY token_id, timestamp
+                """
+                
+                ohlcv_data = await conn.fetch(
+                    ohlcv_query,
+                    version_info['created_at'] - timedelta(hours=1)
+                )
+                
+                # Export to CSV in memory
+                import io
+                csv_buffer = io.StringIO()
+                
+                if ohlcv_data:
+                    # Write CSV header
+                    fieldnames = list(ohlcv_data[0].keys())
+                    writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+                    writer.writeheader()
+                    
+                    # Write data rows
+                    for row in ohlcv_data:
+                        writer.writerow(dict(row))
+                    
+                    # Upload to GCS
+                    blob_path = f"training-data/initial-corpus/{version_name}/ohlcv_data.csv"
+                    blob = bucket.blob(blob_path)
+                    blob.upload_from_string(
+                        csv_buffer.getvalue(),
+                        content_type='text/csv'
+                    )
+                    
+                    self.logger.info("Uploaded OHLCV data to GCS",
+                                   path=f"gs://{bucket_name}/{blob_path}",
+                                   records=len(ohlcv_data))
+                
+                # Export metadata
+                metadata = {
+                    'version_id': version_id,
+                    'version_name': version_name,
+                    'created_at': version_info['created_at'].isoformat(),
+                    'start_date': version_info['start_date'].isoformat(),
+                    'end_date': version_info['end_date'].isoformat(),
+                    'sample_count': version_info['sample_count'],
+                    'feature_count': version_info['feature_count'],
+                    'tokens': version_info['tokens'],
+                    'data_source': version_info['data_source'],
+                    'export_timestamp': datetime.now(timezone.utc).isoformat(),
+                    'ohlcv_records': len(ohlcv_data) if ohlcv_data else 0
+                }
+                
+                # Upload metadata as JSON
+                metadata_path = f"training-data/initial-corpus/{version_name}/metadata.json"
+                metadata_blob = bucket.blob(metadata_path)
+                metadata_blob.upload_from_string(
+                    json.dumps(metadata, indent=2),
+                    content_type='application/json'
+                )
+                
+                self.logger.info("Export to GCS completed",
+                               version_id=version_id,
+                               bucket=bucket_name,
+                               paths={
+                                   'ohlcv': f"gs://{bucket_name}/{blob_path}",
+                                   'metadata': f"gs://{bucket_name}/{metadata_path}"
+                               })
+                
+                return {
+                    'success': True,
+                    'version_id': version_id,
+                    'version_name': version_name,
+                    'gcs_paths': {
+                        'ohlcv': f"gs://{bucket_name}/{blob_path}",
+                        'metadata': f"gs://{bucket_name}/{metadata_path}"
+                    },
+                    'records_exported': len(ohlcv_data) if ohlcv_data else 0
+                }
+                
+        except Exception as e:
+            self.logger.error("GCS export failed", error=str(e))
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     async def close(self):
         """Close all API clients and clean up resources"""
         try:
