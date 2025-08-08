@@ -34,6 +34,7 @@ from typing import List
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.data_pipeline.initial_corpus_collector import InitialCorpusCollector
+from src.data_pipeline.enhanced_corpus_collector import EnhancedCorpusCollector
 
 
 # Default token lists
@@ -48,7 +49,8 @@ async def run_collection(
     tokens: List[str],
     days: int,
     rate_limit_delay: float = 2.1,
-    retry_attempts: int = 3
+    retry_attempts: int = 3,
+    use_enhanced: bool = True
 ) -> bool:
     """
     Run initial corpus collection
@@ -78,12 +80,20 @@ async def run_collection(
     print('')
     
     try:
-        # Initialize collector
-        collector = InitialCorpusCollector(
-            collection_days=days,
-            rate_limit_delay=rate_limit_delay,
-            retry_attempts=retry_attempts
-        )
+        # Initialize collector (use enhanced version for better granularity)
+        if use_enhanced and days > 30:
+            print('   Using Enhanced Collector for better data granularity')
+            collector = EnhancedCorpusCollector(
+                collection_days=days,
+                rate_limit_delay=rate_limit_delay,
+                retry_attempts=retry_attempts
+            )
+        else:
+            collector = InitialCorpusCollector(
+                collection_days=days,
+                rate_limit_delay=rate_limit_delay,
+                retry_attempts=retry_attempts
+            )
         
         # Calculate date range
         end_date = datetime.now(timezone.utc)
@@ -268,6 +278,18 @@ def main():
         default=3,
         help='Number of retry attempts for failed requests (default: 3)'
     )
+    parser.add_argument(
+        '--enhanced',
+        action='store_true',
+        default=True,
+        help='Use enhanced collector for better granularity (default: True)'
+    )
+    parser.add_argument(
+        '--no-enhanced',
+        dest='enhanced',
+        action='store_false',
+        help='Disable enhanced collector'
+    )
     
     args = parser.parse_args()
     
@@ -322,7 +344,8 @@ def main():
         tokens=tokens,
         days=days,
         rate_limit_delay=args.rate_limit,
-        retry_attempts=args.retries
+        retry_attempts=args.retries,
+        use_enhanced=args.enhanced
     ))
     
     sys.exit(0 if success else 1)
