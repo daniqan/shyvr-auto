@@ -25,7 +25,7 @@ class DatabaseConfig(BaseModel):
 
     host: str = "localhost"
     port: int = 5432
-    database: str = "shyvr_rlte"
+    database: str = "shyvr_rlte_prod"
     username: str = "rlte_user"
     password: str
     pool_size: int = 10

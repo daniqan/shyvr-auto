@@ -46,7 +46,7 @@ class ProductionDatabaseManager:
         """Get production database connection string with Cloud SQL proxy"""
         try:
             # Get password from Secret Manager
-            db_password = self.get_secret('db-password-production')
+            db_password = self.get_secret('DB_PASSWORD')
             
             # Cloud SQL connection details
             connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME', 
