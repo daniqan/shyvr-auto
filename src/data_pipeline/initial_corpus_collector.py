@@ -203,7 +203,7 @@ class InitialCorpusCollector:
         if end_date is None:
             end_date = datetime.now()
         
-        self.collection_stats['start_time'] = datetime.now()
+        self.collection_stats['start_time'] = datetime.now(timezone.utc)
         
         self.logger.info("Starting initial corpus collection",
                         tokens_count=len(tokens),
@@ -230,7 +230,7 @@ class InitialCorpusCollector:
             # Step 6: Validate corpus completeness
             validation_result = await self.validate_corpus_completeness(version_result['version_id'])
             
-            self.collection_stats['end_time'] = datetime.now()
+            self.collection_stats['end_time'] = datetime.now(timezone.utc)
             duration = (self.collection_stats['end_time'] - self.collection_stats['start_time']).total_seconds()
             
             result = {
@@ -256,7 +256,7 @@ class InitialCorpusCollector:
             return result
             
         except Exception as e:
-            self.collection_stats['end_time'] = datetime.now()
+            self.collection_stats['end_time'] = datetime.now(timezone.utc)
             self.collection_stats['errors_encountered'] += 1
             
             self.logger.error("Initial corpus collection failed", error=str(e))

@@ -10,7 +10,9 @@ from typing import Optional, Any, Dict, List, Union
 from contextlib import asynccontextmanager
 import asyncpg
 import uuid
+import os
 from .config import get_config
+from .system_secrets import get_system_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,34 @@ async def get_database_pool() -> asyncpg.Pool:
     global _pool
     
     if _pool is None:
-        config = get_config()
-        db_config = config.database
+        # Try to use SystemSecrets first for production/Cloud SQL proxy
+        try:
+            system_secrets = get_system_secrets()
+            db_config_dict = system_secrets.get_database_config(use_local_proxy=None)
+            
+            # If we got valid config from SystemSecrets, use it
+            if db_config_dict and db_config_dict.get('host'):
+                host = db_config_dict['host']
+                port = int(db_config_dict['port'])
+                database = db_config_dict['database']
+                username = db_config_dict['username']
+                password = db_config_dict['password']
+                pool_size = 10  # Default pool size
+                
+                logger.info(f"Using SystemSecrets database config: {host}:{port}/{database}")
+            else:
+                raise ValueError("Invalid database config from SystemSecrets")
+        except Exception as e:
+            # Fall back to config file if SystemSecrets fails
+            logger.warning(f"Failed to get database config from SystemSecrets: {e}, falling back to config file")
+            config = get_config()
+            db_config = config.database
+            host = db_config.host
+            port = db_config.port
+            database = db_config.database
+            username = db_config.username
+            password = db_config.password
+            pool_size = db_config.pool_size
         
         max_retries = 3
         retry_delay = 1
@@ -47,20 +75,20 @@ async def get_database_pool() -> asyncpg.Pool:
         for attempt in range(max_retries):
             try:
                 _pool = await asyncpg.create_pool(
-                    host=db_config.host,
-                    port=db_config.port,
-                    database=db_config.database,
-                    user=db_config.username,
-                    password=db_config.password,
+                    host=host,
+                    port=port,
+                    database=database,
+                    user=username,
+                    password=password,
                     min_size=1,
-                    max_size=db_config.pool_size,
+                    max_size=pool_size,
                     command_timeout=60,
                     server_settings={
                         'application_name': 'rlte_activity_logger',
                     }
                 )
                 
-                logger.info(f"Database pool created: {db_config.host}:{db_config.port}/{db_config.database}")
+                logger.info(f"Database pool created: {host}:{port}/{database}")
                 break
                 
             except Exception as e:
