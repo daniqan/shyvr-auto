@@ -56,9 +56,10 @@ else
 fi
 
 # Set minimal environment variables
-# The SecretManager class will handle fetching all secrets from GCP
+# The SystemSecrets class will handle fetching most secrets from GCP
 export GOOGLE_CLOUD_PROJECT="shvyr-ai-bots"
 export ENVIRONMENT="development"  # Use development to allow localhost connection
+export SECRET_KEY="corpus_collection_secret_key_min_32_characters_long"  # Required for config validation
 
 echo -e "${GREEN}✅ Environment configured${NC}"
 echo ""
