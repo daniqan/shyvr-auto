@@ -342,7 +342,7 @@ class DeFiLlamaClient(MarketDataClientBase):
                     chains_tvl[chain["name"]] = float(chain["tvl"])
             
             # Count active protocols
-            protocols_count = len([p for p in protocols_data if p.get("tvl", 0) > 1000000])  # > $1M TVL
+            protocols_count = len([p for p in protocols_data if (p.get("tvl") or 0) > 1000000])  # > $1M TVL
             
             # Estimate DeFi dominance (rough calculation)
             # This would need total crypto market cap data for accuracy

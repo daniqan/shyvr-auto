@@ -719,115 +719,39 @@ class InitialCorpusCollector:
                 ohlcv_id = ohlcv_record['id']
                 timestamp = ohlcv_record['timestamp']
                 
-                # Since tech_data is a TechnicalIndicators object, not a DataFrame,
-                # we'll use the same values for all records (simplified approach)
-                # In a real implementation, we'd calculate indicators for each timestamp
-                if False:  # This condition will always be false, forcing the else branch
-                    # If no exact match, try to find closest timestamp
-                    # For now, insert with NULL values for technical indicators
-                    feature_records.append((
-                        ohlcv_id,
-                        token.upper(),
-                        self._ensure_timezone_aware(timestamp),
-                        None,  # rsi
-                        None,  # macd
-                        None,  # macd_signal
-                        None,  # macd_histogram
-                        None,  # bollinger_upper
-                        None,  # bollinger_lower
-                        None,  # bollinger_middle
-                        None,  # ema_12
-                        None,  # ema_26
-                        None,  # ema_50
-                        None,  # ema_200
-                        None,  # sma_20
-                        None,  # sma_50
-                        None,  # sma_200
-                        None,  # volume_sma
-                        None,  # volume_ema
-                        None,  # atr
-                        None,  # adx
-                        None,  # cci
-                        None,  # stoch_k
-                        None,  # stoch_d
-                        None,  # williams_r
-                        None,  # obv
-                        None,  # vwap
-                        None,  # price_change_1h
-                        None,  # price_change_4h
-                        None,  # price_change_24h
-                        None,  # price_change_7d
-                        None,  # volatility_1h
-                        None,  # volatility_24h
-                        None,  # high_low_ratio
-                        None,  # close_open_ratio
-                        'initial',  # data_source
-                        datetime.now(timezone.utc)  # collection_timestamp
-                    ))
-                else:
-                    # Extract values from the TechnicalIndicators object
-                    # Use getattr to safely get attributes, returning None if not found
-                    feature_records.append((
-                        ohlcv_id,
-                        token.upper(),
-                        self._ensure_timezone_aware(timestamp),
-                        getattr(tech_data, 'rsi', None),
-                        getattr(tech_data, 'macd', None),
-                        getattr(tech_data, 'macd_signal', None),
-                        getattr(tech_data, 'macd_histogram', None),
-                        getattr(tech_data, 'bollinger_upper', None),
-                        getattr(tech_data, 'bollinger_lower', None),
-                        getattr(tech_data, 'bollinger_middle', None) or getattr(tech_data, 'sma_20', None),  # bollinger_middle might be sma_20
-                        getattr(tech_data, 'ema_12', None),
-                        getattr(tech_data, 'ema_26', None),
-                        getattr(tech_data, 'ema_50', None),
-                        getattr(tech_data, 'ema_200', None),
-                        getattr(tech_data, 'sma_20', None),
-                        getattr(tech_data, 'sma_50', None),
-                        getattr(tech_data, 'sma_200', None),
-                        getattr(tech_data, 'volume_sma', None),
-                        getattr(tech_data, 'volume_ema', None),
-                        getattr(tech_data, 'atr', None),
-                        getattr(tech_data, 'adx', None),
-                        getattr(tech_data, 'cci', None),
-                        getattr(tech_data, 'stoch_k', None),
-                        getattr(tech_data, 'stoch_d', None),
-                        getattr(tech_data, 'williams_r', None),
-                        getattr(tech_data, 'obv', None),
-                        getattr(tech_data, 'vwap', None),
-                        None,  # price_change_1h - not in TechnicalIndicators
-                        None,  # price_change_4h - not in TechnicalIndicators
-                        None,  # price_change_24h - not in TechnicalIndicators
-                        None,  # price_change_7d - not in TechnicalIndicators
-                        None,  # volatility_1h - not in TechnicalIndicators
-                        None,  # volatility_24h - not in TechnicalIndicators
-                        None,  # high_low_ratio - not in TechnicalIndicators
-                        None,  # close_open_ratio - not in TechnicalIndicators
-                        'initial',  # data_source
-                        datetime.now(timezone.utc)  # collection_timestamp
-                    ))
+                # Extract values from the TechnicalIndicators object
+                # Map to the actual database columns
+                feature_records.append((
+                    ohlcv_id,                                     # $1: ohlcv_id
+                    token.upper(),                                # $2: token_id
+                    self._ensure_timezone_aware(timestamp),      # $3: timestamp
+                    getattr(tech_data, 'rsi', None),            # $4: rsi_14
+                    getattr(tech_data, 'macd', None),           # $5: macd
+                    getattr(tech_data, 'macd_signal', None),    # $6: macd_signal
+                    getattr(tech_data, 'bollinger_upper', None),# $7: bb_upper
+                    getattr(tech_data, 'sma_20', None),         # $8: bb_middle (typically SMA20)
+                    getattr(tech_data, 'bollinger_lower', None),# $9: bb_lower
+                    getattr(tech_data, 'volume_sma', None),     # $10: volume_sma_20
+                    None,  # $11: returns_1h - would need price data to calculate
+                    None,  # $12: returns_24h - would need price data to calculate
+                    None,  # $13: returns_7d - would need price data to calculate
+                    getattr(tech_data, 'volatility_score', None),  # $14: volatility_24h
+                    '1.0',  # $15: feature_version
+                    datetime.now(timezone.utc)  # $16: calculated_at
+                ))
             
             # Batch insert features
             if feature_records:
                 query = """
                     INSERT INTO crypto_features (
-                        ohlcv_id, token_symbol, timestamp,
-                        rsi, macd, macd_signal, macd_histogram,
-                        bollinger_upper, bollinger_lower, bollinger_middle,
-                        ema_12, ema_26, ema_50, ema_200,
-                        sma_20, sma_50, sma_200,
-                        volume_sma, volume_ema,
-                        atr, adx, cci, stoch_k, stoch_d, williams_r,
-                        obv, vwap,
-                        price_change_1h, price_change_4h, price_change_24h, price_change_7d,
-                        volatility_1h, volatility_24h, high_low_ratio, close_open_ratio,
-                        data_source, collection_timestamp
-                    ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                        $20, $21, $22, $23, $24, $25, $26, $27, $28,
-                        $29, $30, $31, $32, $33, $34, $35, $36, $37
-                    )
+                        ohlcv_id, token_id, timestamp,
+                        rsi_14, macd, macd_signal,
+                        bb_upper, bb_middle, bb_lower,
+                        volume_sma_20,
+                        returns_1h, returns_24h, returns_7d,
+                        volatility_24h,
+                        feature_version, calculated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 """
                 
                 await conn.executemany(query, feature_records)

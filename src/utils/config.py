@@ -27,10 +27,50 @@ class DatabaseConfig(BaseModel):
     port: int = 5432
     database: str = "shyvr_rlte_prod"
     username: str = "rlte_user"
-    password: str
+    password: str = ""  # Default empty, will be loaded from env or Secret Manager
     pool_size: int = 10
     max_overflow: int = 20
     echo: bool = False
+    
+    def __init__(self, **data):
+        """Initialize DatabaseConfig with password from environment or Secret Manager"""
+        # Try to get password from environment first
+        if not data.get('password'):
+            import os
+            # First try DATABASE_URL
+            database_url = os.environ.get('DATABASE_URL')
+            if database_url:
+                # Parse password from DATABASE_URL
+                # Format: postgresql://username:password@host:port/database
+                import re
+                match = re.search(r'://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
+                if match:
+                    data['username'] = match.group(1)
+                    data['password'] = match.group(2)
+                    data['host'] = match.group(3)
+                    data['port'] = int(match.group(4))
+                    data['database'] = match.group(5)
+            # Otherwise try DB_PASSWORD env var
+            elif os.environ.get('DB_PASSWORD'):
+                data['password'] = os.environ.get('DB_PASSWORD')
+            # Always try to get from Google Secret Manager if no password yet
+            else:
+                try:
+                    from google.cloud import secretmanager
+                    client = secretmanager.SecretManagerServiceClient()
+                    project = os.environ.get('GOOGLE_CLOUD_PROJECT', 'shvyr-ai-bots')
+                    secret_name = f"projects/{project}/secrets/DB_PASSWORD/versions/latest"
+                    response = client.access_secret_version(request={"name": secret_name})
+                    data['password'] = response.payload.data.decode('UTF-8')
+                except Exception as e:
+                    # In development, use default; in production, this should fail
+                    if os.environ.get('ENVIRONMENT') in ['production', 'staging']:
+                        raise ValueError(f"Failed to get DB_PASSWORD from Secret Manager: {e}")
+                    else:
+                        # Development default
+                        data['password'] = data.get('password', 'DeFi2024_Secure')
+                
+        super().__init__(**data)
 
     @property
     def url(self) -> str:
