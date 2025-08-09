@@ -1455,8 +1455,15 @@ class SocialSentimentClient(MarketDataClientBase):
         
         results = {}
         
-        for asset in assets:
+        # LunarCrush rate limits: 5 requests per second for basic tier
+        rate_limit_delay = 0.25  # 4 requests per second to be safe
+        
+        for i, asset in enumerate(assets):
             try:
+                # Add delay between requests to respect rate limit
+                if i > 0:
+                    await asyncio.sleep(rate_limit_delay)
+                
                 sentiment_data = await self.get_market_data(asset)
                 if sentiment_data:
                     results[asset] = sentiment_data
@@ -1487,32 +1494,28 @@ class SocialSentimentClient(MarketDataClientBase):
                 await conn.execute(
                     """
                     INSERT INTO social_sentiment (
-                        token_id, timestamp, social_score, mention_volume,
-                        sentiment_trend, influencer_sentiment, platform_data,
-                        keywords, data_source, created_at
+                        token_symbol, timestamp, sentiment_score, social_volume,
+                        social_engagement, sentiment_absolute, sentiment_relative,
+                        data_source, collection_timestamp, created_at
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                    ON CONFLICT (token_id, timestamp, data_source) DO UPDATE SET
-                        social_score = EXCLUDED.social_score,
-                        mention_volume = EXCLUDED.mention_volume,
-                        sentiment_trend = EXCLUDED.sentiment_trend,
-                        influencer_sentiment = EXCLUDED.influencer_sentiment,
-                        platform_data = EXCLUDED.platform_data,
-                        keywords = EXCLUDED.keywords,
-                        updated_at = NOW()
+                    ON CONFLICT (token_symbol, timestamp, data_source) DO UPDATE SET
+                        sentiment_score = EXCLUDED.sentiment_score,
+                        social_volume = EXCLUDED.social_volume,
+                        social_engagement = EXCLUDED.social_engagement,
+                        sentiment_absolute = EXCLUDED.sentiment_absolute,
+                        sentiment_relative = EXCLUDED.sentiment_relative,
+                        collection_timestamp = NOW()
                     """,
-                    asset.upper(),
-                    sentiment_data.timestamp,
-                    sentiment_data.social_score,
-                    sentiment_data.mention_volume,
-                    sentiment_data.sentiment_trend,
-                    sentiment_data.influencer_sentiment,
-                    json.dumps({
-                        "platforms": sentiment_data.platform_mentions,
-                        "sentiment_breakdown": sentiment_data.sentiment_breakdown
-                    }),
-                    sentiment_data.trending_keywords[:10],  # Store top 10 keywords
-                    "lunarcrush_current",  # Mark as current/real-time data
-                    datetime.now(timezone.utc)
+                    asset.upper(),  # token_symbol
+                    sentiment_data.timestamp,  # timestamp
+                    sentiment_data.social_score,  # sentiment_score
+                    sentiment_data.mention_volume,  # social_volume
+                    len(sentiment_data.platform_mentions) if sentiment_data.platform_mentions else 0,  # social_engagement (platforms count)
+                    sentiment_data.social_score,  # sentiment_absolute (same as score for now)
+                    sentiment_data.sentiment_trend,  # sentiment_relative (trend)
+                    "lunarcrush_current",  # data_source
+                    datetime.now(timezone.utc),  # collection_timestamp
+                    datetime.now(timezone.utc)  # created_at
                 )
                 
                 self.logger.debug(

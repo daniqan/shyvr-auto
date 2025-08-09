@@ -298,6 +298,10 @@ class InitialCorpusCollector:
         if hasattr(self, 'onchain_client') and self.onchain_client:
             tasks.append(self.onchain_client.close())
         
+        # Close FeatureEngineer (which closes its MarketDataAggregator)
+        if hasattr(self, 'feature_engineer') and self.feature_engineer:
+            tasks.append(self.feature_engineer.close())
+        
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             self.logger.info("Cleaned up HTTP client sessions", count=len(tasks))
