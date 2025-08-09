@@ -1,5 +1,5 @@
 """
-Secret Manager for handling all system secrets
+System Secrets handler for the RLTE application
 Provides a centralized interface for accessing Google Cloud Secret Manager
 """
 
@@ -11,7 +11,7 @@ from google.cloud import secretmanager
 from google.api_core import exceptions as gcp_exceptions
 
 
-class SecretManager:
+class SystemSecrets:
     """
     Centralized secret management using Google Cloud Secret Manager
     
@@ -27,7 +27,7 @@ class SecretManager:
             project_id: GCP project ID containing the secrets
         """
         self.project_id = project_id
-        self.logger = structlog.get_logger().bind(component="SecretManager")
+        self.logger = structlog.get_logger().bind(component="SystemSecrets")
         
         try:
             self.client = secretmanager.SecretManagerServiceClient()
@@ -249,20 +249,20 @@ class SecretManager:
 
 
 # Global instance for easy access
-_secret_manager: Optional[SecretManager] = None
+_system_secrets: Optional[SystemSecrets] = None
 
 
-def get_secret_manager(project_id: str = "shvyr-ai-bots") -> SecretManager:
+def get_system_secrets(project_id: str = "shvyr-ai-bots") -> SystemSecrets:
     """
-    Get or create the global SecretManager instance
+    Get or create the global SystemSecrets instance
     
     Args:
         project_id: GCP project ID
         
     Returns:
-        SecretManager instance
+        SystemSecrets instance
     """
-    global _secret_manager
-    if _secret_manager is None:
-        _secret_manager = SecretManager(project_id)
-    return _secret_manager
+    global _system_secrets
+    if _system_secrets is None:
+        _system_secrets = SystemSecrets(project_id)
+    return _system_secrets

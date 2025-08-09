@@ -36,10 +36,10 @@ class DatabaseConfig(BaseModel):
         """Initialize DatabaseConfig with password from Secret Manager"""
         # Only populate from Secret Manager if password not already provided
         if not data.get('password'):
-            from .secret_manager import get_secret_manager
+            from .system_secrets import get_system_secrets
             
-            secret_manager = get_secret_manager()
-            db_config = secret_manager.get_database_config()
+            system_secrets = get_system_secrets()
+            db_config = system_secrets.get_database_config()
             
             # Use values from Secret Manager if not already set
             if db_config.get('password'):
