@@ -60,6 +60,10 @@ fi
 export GOOGLE_CLOUD_PROJECT="shvyr-ai-bots"
 export ENVIRONMENT="development"  # Use development to allow localhost connection
 export SECRET_KEY="corpus_collection_secret_key_min_32_characters_long"  # Required for config validation
+export DB_PORT="5433"  # Use Cloud SQL proxy port
+export DB_HOST="localhost"  # Use localhost for proxy connection
+export DB_USER="rlte_prod_user"  # Production database user
+export DB_NAME="shyvr_rlte_prod"  # Production database name
 
 echo -e "${GREEN}✅ Environment configured${NC}"
 echo ""

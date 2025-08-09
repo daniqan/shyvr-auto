@@ -109,17 +109,34 @@ class MarketDataAggregator:
         else:
             self.coingecko_client = None
         
-        # On-chain analytics (placeholder)
-        self.onchain_client = OnChainAnalyticsClient(
-            cache_ttl=self.config.default_cache_ttl
-        )
-        self.clients['onchain'] = self.onchain_client
+        # Get API keys from SystemSecrets
+        from src.utils.system_secrets import get_system_secrets
+        system_secrets = get_system_secrets()
         
-        # Social sentiment (placeholder)
-        self.social_client = SocialSentimentClient(
-            cache_ttl=self.config.default_cache_ttl
-        )
-        self.clients['social'] = self.social_client
+        # On-chain analytics
+        helius_key = system_secrets.helius_api_key
+        if helius_key:
+            self.onchain_client = OnChainAnalyticsClient(
+                api_key=helius_key,
+                cache_ttl=self.config.default_cache_ttl
+            )
+            self.clients['onchain'] = self.onchain_client
+        else:
+            self.onchain_client = None
+            self.logger.warning("Helius API key not available, on-chain analytics disabled")
+        
+        # Social sentiment
+        lunarcrush_key = system_secrets.lunarcrush_api_key
+        
+        if lunarcrush_key:
+            self.social_client = SocialSentimentClient(
+                api_key=lunarcrush_key,
+                cache_ttl=self.config.default_cache_ttl
+            )
+            self.clients['social'] = self.social_client
+        else:
+            self.social_client = None
+            self.logger.warning("LunarCrush API key not available, social sentiment disabled")
         
         self.logger.info("Market data clients initialized", 
                         enabled_clients=list(self.clients.keys()))

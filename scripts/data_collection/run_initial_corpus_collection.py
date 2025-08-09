@@ -181,7 +181,7 @@ async def run_collection(
         return False
 
 
-async def clean_existing_corpus():
+async def clean_existing_corpus(force=False):
     """Clean existing initial corpus data from database"""
     from src.utils.database import get_database_connection
     
@@ -212,10 +212,13 @@ async def clean_existing_corpus():
         print('')
         
         # Confirm deletion
-        response = input('Delete all existing initial corpus data? (y/N): ')
-        if response.lower() != 'y':
-            print('   Cleanup cancelled')
-            return False
+        if not force:
+            response = input('Delete all existing initial corpus data? (y/N): ')
+            if response.lower() != 'y':
+                print('   Cleanup cancelled')
+                return False
+        else:
+            print('   Force flag set - skipping confirmation')
         
         # Delete all initial data
         print('   Deleting data...')
@@ -253,6 +256,12 @@ def main():
         '--clean',
         action='store_true',
         help='Clean existing initial corpus data from database'
+    )
+    
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force clean without confirmation prompt (use with --clean)'
     )
     
     # Custom configuration options
@@ -298,16 +307,32 @@ def main():
         print('🧹 Database Cleanup Mode')
         print('')
         
-        # Check database connection
-        if not os.environ.get('DATABASE_URL'):
-            print('❌ DATABASE_URL environment variable not set')
-            print('Please run with the deployment script:')
-            print('   ./scripts/data_collection/collect_initial_corpus.sh clean')
+        # Set up database connection using SystemSecrets with local proxy
+        from src.utils.system_secrets import get_system_secrets
+        system_secrets = get_system_secrets()
+        # Force use of local proxy for corpus collection script
+        db_config = system_secrets.get_database_config(use_local_proxy=True)
+        
+        if db_config.get('url'):
+            os.environ['DATABASE_URL'] = db_config['url']
+            print(f'   Database: {db_config.get("host")}:{db_config.get("port")}/{db_config.get("database")}')
+        else:
+            print('❌ Could not get database configuration from Secret Manager')
+            print('Please ensure you are authenticated with gcloud')
             sys.exit(1)
         
         # Run cleanup
-        success = asyncio.run(clean_existing_corpus())
+        success = asyncio.run(clean_existing_corpus(force=args.force))
         sys.exit(0 if success else 1)
+    
+    # Set up database connection using SystemSecrets for collection mode too
+    from src.utils.system_secrets import get_system_secrets
+    system_secrets = get_system_secrets()
+    # Force use of local proxy for corpus collection script
+    db_config = system_secrets.get_database_config(use_local_proxy=True)
+    
+    if db_config.get('url'):
+        os.environ['DATABASE_URL'] = db_config['url']
     
     # Determine configuration for collection
     if args.test:
@@ -326,18 +351,8 @@ def main():
     
     print('')
     
-    # Check required environment variables
-    required_vars = ['DATABASE_URL', 'COINGECKO_API_KEY']
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
-    
-    if missing_vars:
-        print('❌ Missing required environment variables:')
-        for var in missing_vars:
-            print(f'   - {var}')
-        print('')
-        print('Please set these variables or run with the deployment script:')
-        print('   ./scripts/data_collection/collect_initial_corpus.sh')
-        sys.exit(1)
+    # SystemSecrets will handle fetching API keys from Secret Manager
+    # No need to check environment variables
     
     # Run async collection
     success = asyncio.run(run_collection(

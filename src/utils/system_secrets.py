@@ -192,40 +192,62 @@ class SystemSecrets:
             "moralis": self.moralis_api_key,
         }
     
-    def get_database_config(self) -> Dict[str, Optional[str]]:
+    def get_database_config(self, use_local_proxy: bool = None) -> Dict[str, Optional[str]]:
         """
         Get database configuration as a dictionary
+        
+        Args:
+            use_local_proxy: If True, use localhost:5433 for Cloud SQL proxy connection.
+                           If None, auto-detect based on environment.
         
         Returns:
             Dictionary with database configuration
         """
-        # Try to get from DATABASE_URL first
-        database_url = self.database_url
-        if database_url:
-            # Parse DATABASE_URL
-            import re
-            match = re.search(r'://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
-            if match:
-                return {
-                    "username": match.group(1),
-                    "password": match.group(2),
-                    "host": match.group(3),
-                    "port": match.group(4),
-                    "database": match.group(5),
-                    "url": database_url
-                }
+        import os
         
-        # Otherwise build from individual secrets
+        # Auto-detect if we should use local proxy
+        if use_local_proxy is None:
+            # Use local proxy if we're in development environment or if proxy is running
+            use_local_proxy = (
+                os.environ.get('ENVIRONMENT') == 'development' or
+                os.path.exists('/tmp/.cloud-sql-proxy.lock') or
+                os.system('lsof -i:5433 >/dev/null 2>&1') == 0  # Check if port 5433 is in use
+            )
+        
+        # Get password from Secret Manager
         password = self.db_password
-        host = self.db_host or "localhost"
+        if not password:
+            return {"error": "No database password available"}
+        
+        # Determine host and port based on connection method
+        if use_local_proxy:
+            # Use localhost with Cloud SQL proxy
+            host = "localhost"
+            port = "5433"
+        else:
+            # Use direct connection (for production Cloud Run)
+            database_url = self.database_url
+            if database_url:
+                # Parse production DATABASE_URL
+                import re
+                match = re.search(r'://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
+                if match:
+                    host = match.group(3)
+                    port = match.group(4)
+                else:
+                    host = self.db_host or "34.60.72.85"
+                    port = "5432"
+            else:
+                host = self.db_host or "34.60.72.85"
+                port = "5432"
         
         return {
             "username": "rlte_prod_user",
             "password": password,
             "host": host,
-            "port": "5433" if host == "localhost" else "5432",
+            "port": port,
             "database": "shyvr_rlte_prod",
-            "url": f"postgresql://rlte_prod_user:{password}@{host}:{'5433' if host == 'localhost' else '5432'}/shyvr_rlte_prod" if password else None
+            "url": f"postgresql://rlte_prod_user:{password}@{host}:{port}/shyvr_rlte_prod"
         }
     
     def is_available(self) -> bool:
