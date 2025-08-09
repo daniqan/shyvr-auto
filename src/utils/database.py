@@ -82,10 +82,7 @@ async def get_database_pool() -> asyncpg.Pool:
                     password=password,
                     min_size=1,
                     max_size=pool_size,
-                    command_timeout=60,
-                    server_settings={
-                        'application_name': 'rlte_activity_logger',
-                    }
+                    command_timeout=60
                 )
                 
                 logger.info(f"Database pool created: {host}:{port}/{database}")

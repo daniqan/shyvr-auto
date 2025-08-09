@@ -11,12 +11,12 @@ import ssl
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 import asyncpg
-from google.cloud import secretmanager
 from sqlalchemy import create_engine, pool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .config import get_config
+from .system_secrets import get_system_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -24,41 +24,48 @@ logger = logging.getLogger(__name__)
 class ProductionDatabaseManager:
     """Production database connection manager with Cloud SQL integration"""
     
-    def __init__(self):
+    def __init__(self, use_local_proxy: Optional[bool] = None):
+        """Initialize production database manager
+        
+        Args:
+            use_local_proxy: Whether to use local Cloud SQL proxy. If None, auto-detects.
+        """
         self.config = get_config()
-        self.secret_client = secretmanager.SecretManagerServiceClient()
+        self.system_secrets = get_system_secrets()
         self.project_id = os.getenv('GOOGLE_CLOUD_PROJECT', 'shvyr-ai-bots')
+        self.use_local_proxy = use_local_proxy
         self._connection_pool = None
         self._async_engine = None
         self._session_factory = None
         
-    def get_secret(self, secret_name: str) -> str:
-        """Retrieve secret from Google Secret Manager"""
-        try:
-            name = f"projects/{self.project_id}/secrets/{secret_name}/versions/latest"
-            response = self.secret_client.access_secret_version(request={"name": name})
-            return response.payload.data.decode("UTF-8")
-        except Exception as e:
-            logger.error(f"Failed to retrieve secret {secret_name}: {e}")
-            raise
+    def get_database_config(self) -> Dict[str, Any]:
+        """Get database configuration from SystemSecrets"""
+        return self.system_secrets.get_database_config(use_local_proxy=self.use_local_proxy)
     
     def get_production_connection_string(self) -> str:
         """Get production database connection string with Cloud SQL proxy"""
         try:
-            # Get password from Secret Manager
-            db_password = self.get_secret('DB_PASSWORD')
+            # Get database config from SystemSecrets
+            db_config = self.get_database_config()
             
-            # Cloud SQL connection details
-            connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME', 
-                                      'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+            # Check if we're using local proxy or Cloud SQL socket
+            if db_config['host'] in ['localhost', '127.0.0.1']:
+                # Local proxy connection
+                connection_string = (
+                    f"postgresql+asyncpg://{db_config['username']}:{db_config['password']}"
+                    f"@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+                )
+                logger.info(f"Using local proxy connection: {db_config['host']}:{db_config['port']}")
+            else:
+                # Cloud SQL socket connection
+                connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME', 
+                                          'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+                connection_string = (
+                    f"postgresql+asyncpg://{db_config['username']}:{db_config['password']}"
+                    f"@/{db_config['database']}?host=/cloudsql/{connection_name}"
+                )
+                logger.info(f"Using Cloud SQL socket connection: {connection_name}")
             
-            # Build connection string for Cloud SQL
-            connection_string = (
-                f"postgresql+asyncpg://{self.config.database.username}:{db_password}"
-                f"@/{self.config.database.database}?host=/cloudsql/{connection_name}"
-            )
-            
-            logger.info("Production database connection string configured")
             return connection_string
             
         except Exception as e:
@@ -68,14 +75,26 @@ class ProductionDatabaseManager:
     def get_sync_connection_string(self) -> str:
         """Get synchronous connection string for migrations"""
         try:
-            db_password = self.get_secret('db-password-production')
-            connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME',
-                                      'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+            # Get database config from SystemSecrets
+            db_config = self.get_database_config()
             
-            return (
-                f"postgresql://{self.config.database.username}:{db_password}"
-                f"@/{self.config.database.database}?host=/cloudsql/{connection_name}"
-            )
+            # Check if we're using local proxy or Cloud SQL socket
+            if db_config['host'] in ['localhost', '127.0.0.1']:
+                # Local proxy connection
+                connection_string = (
+                    f"postgresql://{db_config['username']}:{db_config['password']}"
+                    f"@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+                )
+            else:
+                # Cloud SQL socket connection
+                connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME',
+                                          'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+                connection_string = (
+                    f"postgresql://{db_config['username']}:{db_config['password']}"
+                    f"@/{db_config['database']}?host=/cloudsql/{connection_name}"
+                )
+            
+            return connection_string
         except Exception as e:
             logger.error(f"Failed to build sync connection string: {e}")
             raise
@@ -83,24 +102,35 @@ class ProductionDatabaseManager:
     async def create_connection_pool(self) -> asyncpg.Pool:
         """Create asyncpg connection pool for production"""
         try:
-            db_password = self.get_secret('db-password-production')
-            connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME',
-                                      'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+            # Get database config from SystemSecrets
+            db_config = self.get_database_config()
             
-            # Cloud SQL Unix socket connection
+            # Determine connection parameters based on environment
+            if db_config['host'] in ['localhost', '127.0.0.1']:
+                # Local proxy connection
+                host = db_config['host']
+                port = int(db_config['port'])
+                logger.info(f"Creating pool for local proxy: {host}:{port}")
+            else:
+                # Cloud SQL Unix socket connection
+                connection_name = os.getenv('CLOUDSQL_CONNECTION_NAME',
+                                          'shvyr-ai-bots:us-central1:shyvr-rlte-db-prod')
+                host = f"/cloudsql/{connection_name}"
+                port = 5432
+                logger.info(f"Creating pool for Cloud SQL socket: {host}")
+            
+            # Create the connection pool
             pool = await asyncpg.create_pool(
-                host=f"/cloudsql/{connection_name}",
-                port=5432,
-                database=self.config.database.database,
-                user=self.config.database.username,
-                password=db_password,
+                host=host,
+                port=port,
+                database=db_config['database'],
+                user=db_config['username'],
+                password=db_config['password'],
                 min_size=self.config.database.pool_size,
                 max_size=self.config.database.pool_size + self.config.database.max_overflow,
                 command_timeout=60,
-                server_settings={
-                    'jit': 'off',  # Disable JIT for consistent performance
-                    'log_statement': 'none',  # Reduce logging overhead
-                }
+                # Note: Server settings removed as they require superuser privileges
+                # Consider setting these at the database level if needed
             )
             
             logger.info(f"Created production connection pool with {self.config.database.pool_size} connections")
@@ -126,12 +156,7 @@ class ProductionDatabaseManager:
                 pool_pre_ping=True,  # Validate connections before use
                 echo=False,  # Disable SQL logging in production
                 future=True,
-                connect_args={
-                    "server_settings": {
-                        "jit": "off",
-                        "log_statement": "none",
-                    }
-                }
+                # Note: connect_args removed as server_settings require superuser privileges
             )
             
             self._async_engine = engine
