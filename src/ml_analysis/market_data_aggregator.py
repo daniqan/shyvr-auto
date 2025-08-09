@@ -296,7 +296,7 @@ class MarketDataAggregator:
             self.logger.info("Market data aggregated successfully", 
                            available_sources=available_sources,
                            total_sources=5,
-                           cache_ttl=self.cache_ttl)
+                           cache_ttl=self.config.default_cache_ttl)
             
             return market_features
             

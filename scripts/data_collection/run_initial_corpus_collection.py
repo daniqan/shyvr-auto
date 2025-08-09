@@ -245,7 +245,7 @@ def main():
     group.add_argument(
         '--test',
         action='store_true',
-        help='Run test collection (2 tokens, 7 days)'
+        help='Run test collection (2 tokens, 30 days)'
     )
     group.add_argument(
         '--production',
@@ -337,7 +337,7 @@ def main():
     # Determine configuration for collection
     if args.test:
         tokens = TEST_TOKENS
-        days = 7
+        days = 30  # Increased from 7 to get enough data for technical indicators
         print('🧪 Running TEST collection...')
     elif args.production:
         tokens = PRODUCTION_TOKENS

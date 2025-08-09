@@ -148,8 +148,14 @@ class InitialCorpusCollector:
             # LunarCrush client (optional)
             lunarcrush_key = system_secrets.lunarcrush_api_key
             if lunarcrush_key:
-                self.social_client = SocialSentimentClient(api_key=lunarcrush_key)
+                # Check for tier configuration from environment
+                lunarcrush_tier = os.environ.get('LUNARCRUSH_TIER', 'basic')
+                self.social_client = SocialSentimentClient(
+                    api_key=lunarcrush_key,
+                    tier=lunarcrush_tier
+                )
                 self.has_social_data = True
+                self.logger.info("LunarCrush client initialized", tier=lunarcrush_tier)
             else:
                 self.social_client = None
                 self.has_social_data = False
@@ -389,10 +395,21 @@ class InitialCorpusCollector:
             raise MarketDataError(f"Failed to collect data for {token} after {self.retry_attempts} attempts")
     
     async def _collect_market_data(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Collect market-wide data (sentiment, DeFi metrics, on-chain data)"""
+        """Collect market-wide data (sentiment, DeFi metrics, on-chain data)
+        
+        For historical data (>48 hours old), uses historical endpoints when available.
+        For recent data, uses current endpoints.
+        """
         market_data = {}
         
-        self.logger.info("Starting market data collection")
+        # Determine if we're collecting historical or current data
+        time_diff = datetime.now(timezone.utc) - end_date
+        is_historical = time_diff.total_seconds() > 48 * 3600  # More than 48 hours old
+        
+        self.logger.info("Starting market data collection", 
+                        mode="historical" if is_historical else "current",
+                        start_date=start_date.isoformat(),
+                        end_date=end_date.isoformat())
         
         try:
             # Fear & Greed Index
@@ -426,17 +443,39 @@ class InitialCorpusCollector:
         if self.has_social_data:
             try:
                 await asyncio.sleep(self.rate_limit_delay)
-                # Get social data for Bitcoin as market proxy
-                social_data = await self.social_client.get_market_data('bitcoin')
-                market_data['social'] = social_data
-                self.collection_stats['api_calls_made'] += 1
                 
-                self.logger.info("Social sentiment data collected",
-                               score=social_data.social_score)
+                if is_historical:
+                    # For historical data, check if we have Pro tier
+                    if hasattr(self.social_client, 'tier') and self.social_client.tier == 'pro':
+                        # Use midpoint of date range for historical sentiment
+                        target_timestamp = start_date + (end_date - start_date) / 2
+                        social_data = await self.social_client.get_historical_sentiment('bitcoin', target_timestamp)
+                        if social_data:
+                            market_data['social'] = social_data
+                            self.logger.info("Historical social sentiment collected",
+                                           score=social_data.social_score,
+                                           timestamp=target_timestamp.isoformat())
+                    else:
+                        self.logger.debug("Skipping historical social sentiment (requires Pro tier)")
+                        # Store None to indicate data not available
+                        market_data['social'] = None
+                else:
+                    # For current data, collect sentiment for all tracked tokens
+                    sentiment_results = await self.social_client.get_current_sentiment()
+                    if sentiment_results:
+                        # Use Bitcoin as primary market proxy
+                        market_data['social'] = sentiment_results.get('bitcoin')
+                        # Store all results for comprehensive tracking
+                        market_data['social_all'] = sentiment_results
+                        self.logger.info("Current social sentiment collected",
+                                       tokens_count=len(sentiment_results))
+                
+                self.collection_stats['api_calls_made'] += 1
                 
             except Exception as e:
                 self.logger.error("Failed to collect social data", error=str(e))
                 self.collection_stats['errors_encountered'] += 1
+                market_data['social'] = None
         
         # On-chain data (optional)
         if self.has_onchain_data:
