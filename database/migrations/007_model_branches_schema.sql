@@ -23,15 +23,19 @@ CREATE TABLE IF NOT EXISTS model_branches (
     CONSTRAINT branch_name_format CHECK (
         branch_name ~ '^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$' AND
         LENGTH(branch_name) <= 63
-    ),
-    CONSTRAINT source_branch_exists CHECK (
-        source_branch IS NULL OR source_branch IN (SELECT branch_name FROM model_branches)
     )
 );
 
 -- Create index for fast lookups
 CREATE INDEX idx_model_branches_name ON model_branches(branch_name);
 CREATE INDEX idx_model_branches_active ON model_branches(is_active);
+
+-- Add self-referential foreign key for source_branch
+ALTER TABLE model_branches 
+ADD CONSTRAINT fk_source_branch 
+FOREIGN KEY (source_branch) 
+REFERENCES model_branches(branch_name)
+DEFERRABLE INITIALLY DEFERRED;
 
 -- Insert default main branch
 INSERT INTO model_branches (branch_name, description, created_by)
@@ -59,19 +63,19 @@ ALTER TABLE model_preservation_metadata
 ADD CONSTRAINT unique_model_version_mode_branch 
 UNIQUE (model_type, version, mode, branch);
 
--- Add branch to model_versions table
-ALTER TABLE model_versions
+-- Add branch to model_version_history table
+ALTER TABLE model_version_history
 ADD COLUMN IF NOT EXISTS branch VARCHAR(63) DEFAULT 'main' NOT NULL;
 
 -- Add foreign key constraint
-ALTER TABLE model_versions
+ALTER TABLE model_version_history
 ADD CONSTRAINT fk_version_branch
 FOREIGN KEY (branch) REFERENCES model_branches(branch_name);
 
 -- Update indexes to include branch
-DROP INDEX IF EXISTS idx_model_versions_lookup;
-CREATE INDEX idx_model_versions_lookup 
-ON model_versions(model_type, branch, created_at DESC);
+DROP INDEX IF EXISTS idx_model_version_history_lookup;
+CREATE INDEX idx_model_version_history_lookup 
+ON model_version_history(model_type, branch, changed_at DESC);
 
 -- Add branch to model_tags table
 ALTER TABLE model_tags
@@ -191,7 +195,7 @@ RETURNS TABLE (
     version VARCHAR,
     created_at TIMESTAMP WITH TIME ZONE,
     model_id UUID,
-    state model_state_enum
+    state model_state
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -251,17 +255,16 @@ EXECUTE FUNCTION update_branch_model_count();
 -- ============================================================================
 
 -- Grant permissions to application role (adjust role name as needed)
-GRANT SELECT, INSERT, UPDATE ON model_branches TO rlte_app;
-GRANT EXECUTE ON FUNCTION branch_exists TO rlte_app;
-GRANT EXECUTE ON FUNCTION get_branch_model_count TO rlte_app;
-GRANT EXECUTE ON FUNCTION create_branch TO rlte_app;
-GRANT EXECUTE ON FUNCTION delete_branch TO rlte_app;
-GRANT EXECUTE ON FUNCTION get_model_versions TO rlte_app;
+-- Note: Uncomment these lines if rlte_app role exists
+-- GRANT SELECT, INSERT, UPDATE ON model_branches TO rlte_app;
+-- GRANT EXECUTE ON FUNCTION branch_exists TO rlte_app;
+-- GRANT EXECUTE ON FUNCTION get_branch_model_count TO rlte_app;
+-- GRANT EXECUTE ON FUNCTION create_branch TO rlte_app;
+-- GRANT EXECUTE ON FUNCTION delete_branch TO rlte_app;
+-- GRANT EXECUTE ON FUNCTION get_model_versions TO rlte_app;
 
 -- ============================================================================
 -- MIGRATION METADATA
 -- ============================================================================
 
--- Record migration
-INSERT INTO schema_migrations (version, description, applied_at)
-VALUES (8, 'Add branch support for model preservation', CURRENT_TIMESTAMP);
+-- Migration tracking is handled by the migration runner

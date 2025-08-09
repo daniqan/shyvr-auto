@@ -1494,19 +1494,23 @@ class SocialSentimentClient(MarketDataClientBase):
                 await conn.execute(
                     """
                     INSERT INTO social_sentiment (
-                        token_symbol, timestamp, sentiment_score, social_volume,
-                        social_engagement, sentiment_absolute, sentiment_relative,
+                        token_id, timestamp, sentiment_score, 
+                        twitter_mentions, reddit_posts, 
+                        social_volume_24h, social_engagement_24h,
+                        bullish_percentage, bearish_percentage,
                         data_source, collection_timestamp
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     """,
-                    asset.upper(),  # token_symbol
+                    asset.upper(),  # token_id
                     sentiment_data.timestamp,  # timestamp
                     sentiment_data.social_score,  # sentiment_score
-                    sentiment_data.mention_volume,  # social_volume
-                    len(sentiment_data.platform_mentions) if sentiment_data.platform_mentions else 0,  # social_engagement (platforms count)
-                    sentiment_data.social_score,  # sentiment_absolute (same as score for now)
-                    sentiment_data.sentiment_trend,  # sentiment_relative (trend)
-                    "lunarcrush_current",  # data_source
+                    sentiment_data.platform_mentions.get('twitter', 0) if sentiment_data.platform_mentions else 0,  # twitter_mentions
+                    sentiment_data.platform_mentions.get('reddit', 0) if sentiment_data.platform_mentions else 0,  # reddit_posts
+                    sentiment_data.mention_volume,  # social_volume_24h
+                    len(sentiment_data.platform_mentions) if sentiment_data.platform_mentions else 0,  # social_engagement_24h
+                    sentiment_data.social_score * 100,  # bullish_percentage (convert 0-1 to percentage)
+                    (1 - sentiment_data.social_score) * 100,  # bearish_percentage
+                    "live",  # data_source (must match enum)
                     datetime.now(timezone.utc)  # collection_timestamp
                 )
                 

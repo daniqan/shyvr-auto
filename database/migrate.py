@@ -10,21 +10,40 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import List, Tuple
-from dotenv import load_dotenv
+from typing import List, Tuple, Optional
+from datetime import datetime
 
-# Add src to path for config imports
-sys.path.append(str(Path(__file__).parent.parent / "src"))
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
-from src.utils.config import get_config
+from src.utils.system_secrets import get_system_secrets
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class MigrationRunner:
-    def __init__(self, database_url: str):
-        self.database_url = database_url
+    def __init__(self, database_url: Optional[str] = None, use_local_proxy: Optional[bool] = None):
+        """Initialize migration runner
+        
+        Args:
+            database_url: Optional database URL. If not provided, uses SystemSecrets
+            use_local_proxy: Whether to use local Cloud SQL proxy. If None, auto-detects
+        """
+        if database_url:
+            self.database_url = database_url
+        else:
+            # Use SystemSecrets to get database configuration
+            system_secrets = get_system_secrets()
+            db_config = system_secrets.get_database_config(use_local_proxy=use_local_proxy)
+            
+            if not db_config.get('url'):
+                raise ValueError("Could not get database configuration from SystemSecrets")
+            
+            self.database_url = db_config['url']
+            logger.info(f"Using database: {db_config.get('host')}:{db_config.get('port')}/{db_config.get('database')}")
+        
         self.migrations_dir = Path(__file__).parent / "migrations"
         
     async def create_migrations_table(self, conn):
@@ -120,35 +139,57 @@ class MigrationRunner:
 
 async def main():
     """Main migration runner"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Run database migrations')
+    parser.add_argument('--drop-all', action='store_true', help='Drop all tables before running migrations')
+    parser.add_argument('--use-local-proxy', action='store_true', help='Force use of local Cloud SQL proxy')
+    parser.add_argument('--database-url', help='Override database URL')
+    args = parser.parse_args()
+    
     try:
-        # Get database URL from config or environment
-        database_url = os.getenv('DATABASE_URL')
-        
-        if not database_url:
-            try:
-                config = get_config()
-                database_url = config.database.url
-            except Exception as e:
-                logger.error(f"Failed to load database configuration: {e}")
-                
-        # Try loading from .env file if still not found
-        if not database_url:
-            env_path = Path(__file__).parent.parent / ".env"
-            if env_path.exists():
-                load_dotenv(env_path)
-                database_url = os.getenv('DATABASE_URL')
-                if database_url:
-                    logger.info("Loaded DATABASE_URL from .env file")
-                
-        if not database_url:
-            logger.error("DATABASE_URL not found in environment, config, or .env file")
-            sys.exit(1)
-            
         logger.info("🚀 Starting database migrations...")
-        logger.info(f"Database: {database_url.split('@')[1] if '@' in database_url else 'localhost'}")
+        
+        # Initialize runner with SystemSecrets or provided URL
+        runner = MigrationRunner(
+            database_url=args.database_url,
+            use_local_proxy=args.use_local_proxy if args.use_local_proxy else None
+        )
+        
+        # Optionally drop all tables first
+        if args.drop_all:
+            logger.warning("⚠️  Dropping all tables...")
+            conn = await asyncpg.connect(runner.database_url)
+            
+            # Get all table names (including schema_migrations when dropping all)
+            tables = await conn.fetch("""
+                SELECT tablename FROM pg_tables 
+                WHERE schemaname = 'public'
+                ORDER BY tablename
+            """)
+            
+            # Drop each table
+            for table in tables:
+                tablename = table['tablename']
+                logger.info(f"  Dropping table: {tablename}")
+                await conn.execute(f'DROP TABLE IF EXISTS {tablename} CASCADE')
+            
+            # Also drop custom types
+            types = await conn.fetch("""
+                SELECT typname FROM pg_type 
+                WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+                AND typtype = 'e'
+            """)
+            
+            for typ in types:
+                typename = typ['typname']
+                logger.info(f"  Dropping type: {typename}")
+                await conn.execute(f'DROP TYPE IF EXISTS {typename} CASCADE')
+            
+            await conn.close()
+            logger.info("✅ All tables dropped")
         
         # Run migrations
-        runner = MigrationRunner(database_url)
         success = await runner.run_migrations()
         
         if success:

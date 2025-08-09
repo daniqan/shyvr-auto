@@ -16,7 +16,8 @@ CREATE TYPE processing_status_type AS ENUM ('pending', 'processing', 'completed'
 -- 1. OHLCV Data with Source Tracking (Partitioned by data_source and month)
 CREATE TABLE crypto_ohlcv (
     id BIGSERIAL,
-    token_symbol VARCHAR(20) NOT NULL,
+    token_id VARCHAR(50) NOT NULL,        -- e.g., 'bitcoin', 'ethereum' (from API)
+    symbol VARCHAR(20) NOT NULL,          -- e.g., 'BTC', 'ETH' (ticker symbol)
     token_address VARCHAR(255),
     chain VARCHAR(50),
     timestamp TIMESTAMPTZ NOT NULL,
@@ -62,17 +63,20 @@ CREATE TABLE crypto_ohlcv_backtest PARTITION OF crypto_ohlcv
 CREATE TABLE crypto_features (
     id BIGSERIAL PRIMARY KEY,
     ohlcv_id BIGINT NOT NULL,
-    token_symbol VARCHAR(20) NOT NULL,
+    token_id VARCHAR(50) NOT NULL,        -- Matches crypto_ohlcv.token_id
     timestamp TIMESTAMPTZ NOT NULL,
     
-    -- Technical indicators (130+ features)
-    rsi NUMERIC(8, 4),
+    -- Technical indicators (matching code expectations)
+    rsi_14 NUMERIC(8, 4),                    -- RSI with 14 period
     macd NUMERIC(24, 8),
     macd_signal NUMERIC(24, 8),
     macd_histogram NUMERIC(24, 8),
-    bollinger_upper NUMERIC(24, 8),
-    bollinger_lower NUMERIC(24, 8),
-    bollinger_middle NUMERIC(24, 8),
+    bb_upper NUMERIC(24, 8),                 -- Bollinger bands
+    bb_middle NUMERIC(24, 8),
+    bb_lower NUMERIC(24, 8),
+    volume_sma_20 NUMERIC(32, 8),            -- Volume SMA with 20 period
+    
+    -- Additional technical indicators
     ema_12 NUMERIC(24, 8),
     ema_26 NUMERIC(24, 8),
     ema_50 NUMERIC(24, 8),
@@ -80,7 +84,6 @@ CREATE TABLE crypto_features (
     sma_20 NUMERIC(24, 8),
     sma_50 NUMERIC(24, 8),
     sma_200 NUMERIC(24, 8),
-    volume_sma NUMERIC(32, 8),
     volume_ema NUMERIC(32, 8),
     atr NUMERIC(24, 8),
     adx NUMERIC(8, 4),
@@ -92,14 +95,21 @@ CREATE TABLE crypto_features (
     vwap NUMERIC(24, 8),
     
     -- Price action features
+    returns_1h NUMERIC(12, 6),               -- Hourly returns
+    returns_24h NUMERIC(12, 6),              -- Daily returns
+    returns_7d NUMERIC(12, 6),               -- Weekly returns
+    volatility_24h NUMERIC(12, 6),           -- Daily volatility
     price_change_1h NUMERIC(12, 6),
     price_change_4h NUMERIC(12, 6),
     price_change_24h NUMERIC(12, 6),
     price_change_7d NUMERIC(12, 6),
     volatility_1h NUMERIC(12, 6),
-    volatility_24h NUMERIC(12, 6),
     high_low_ratio NUMERIC(12, 6),
     close_open_ratio NUMERIC(12, 6),
+    
+    -- Metadata
+    feature_version VARCHAR(10) NOT NULL DEFAULT '1.0',
+    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     -- Data source tracking
     data_source data_source_type NOT NULL,
@@ -201,17 +211,24 @@ CREATE TABLE onchain_metrics (
 -- 6. Social Sentiment Table (LunarCrush data)
 CREATE TABLE social_sentiment (
     id BIGSERIAL PRIMARY KEY,
-    token_symbol VARCHAR(20) NOT NULL,
+    token_id VARCHAR(50) NOT NULL,        -- e.g., 'bitcoin', 'ethereum' (from API)
+    symbol VARCHAR(20),                   -- e.g., 'BTC', 'ETH' (ticker symbol)
     timestamp TIMESTAMPTZ NOT NULL,
     
-    -- Social metrics
+    -- Social metrics (matching code expectations)
+    sentiment_score NUMERIC(8, 4),
+    twitter_mentions INTEGER,
+    reddit_posts INTEGER,
+    social_volume_24h INTEGER,
+    social_engagement_24h INTEGER,
+    bullish_percentage NUMERIC(8, 4),
+    bearish_percentage NUMERIC(8, 4),
+    
+    -- Additional social metrics
     social_volume INTEGER,
     social_engagement INTEGER,
     social_contributors INTEGER,
     social_dominance NUMERIC(8, 4),
-    
-    -- Sentiment scores
-    sentiment_score NUMERIC(8, 4),
     sentiment_absolute NUMERIC(8, 4),
     sentiment_relative NUMERIC(8, 4),
     
@@ -237,7 +254,8 @@ CREATE TABLE social_sentiment (
 -- 7. Token Metadata Table
 CREATE TABLE token_metadata (
     id BIGSERIAL PRIMARY KEY,
-    token_symbol VARCHAR(20) NOT NULL,
+    token_id VARCHAR(50) NOT NULL,        -- e.g., 'bitcoin', 'ethereum' (from API)
+    symbol VARCHAR(20) NOT NULL,          -- e.g., 'BTC', 'ETH' (ticker symbol)
     token_address VARCHAR(255),
     chain VARCHAR(50),
     
@@ -376,7 +394,9 @@ CREATE TABLE continuous_learning_queue (
 CREATE INDEX idx_crypto_ohlcv_source_status_timestamp 
     ON crypto_ohlcv (data_source, training_status, timestamp DESC);
 CREATE INDEX idx_crypto_ohlcv_token_timestamp 
-    ON crypto_ohlcv (token_symbol, timestamp DESC);
+    ON crypto_ohlcv (token_id, timestamp DESC);
+CREATE INDEX idx_crypto_ohlcv_symbol_timestamp 
+    ON crypto_ohlcv (symbol, timestamp DESC);
 CREATE INDEX idx_crypto_ohlcv_training_status 
     ON crypto_ohlcv (training_status);
 CREATE INDEX idx_crypto_ohlcv_model_version 
@@ -385,7 +405,7 @@ CREATE INDEX idx_crypto_ohlcv_model_version
 -- Features indexes
 CREATE INDEX idx_crypto_features_ohlcv_id ON crypto_features (ohlcv_id);
 CREATE INDEX idx_crypto_features_token_timestamp 
-    ON crypto_features (token_symbol, timestamp DESC);
+    ON crypto_features (token_id, timestamp DESC);
 CREATE INDEX idx_crypto_features_data_source 
     ON crypto_features (data_source);
 
@@ -407,7 +427,9 @@ CREATE INDEX idx_onchain_metrics_whale_activity
 
 -- Social sentiment indexes
 CREATE INDEX idx_social_sentiment_token_timestamp 
-    ON social_sentiment (token_symbol, timestamp DESC);
+    ON social_sentiment (token_id, timestamp DESC);
+CREATE INDEX idx_social_sentiment_symbol_timestamp 
+    ON social_sentiment (symbol, timestamp DESC) WHERE symbol IS NOT NULL;
 CREATE INDEX idx_social_sentiment_data_source ON social_sentiment (data_source);
 CREATE INDEX idx_social_sentiment_galaxy_score 
     ON social_sentiment (galaxy_score DESC) WHERE galaxy_score IS NOT NULL;
@@ -487,8 +509,9 @@ INSERT INTO training_corpus_versions (
 -- ==========================================
 
 -- Grant appropriate permissions (adjust based on your user setup)
-GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO rlte_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rlte_app;
+-- Note: Uncomment these lines if rlte_app role exists
+-- GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO rlte_app;
+-- GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rlte_app;
 
 -- ==========================================
 -- Comments for Documentation
