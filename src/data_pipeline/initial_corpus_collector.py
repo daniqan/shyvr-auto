@@ -264,6 +264,37 @@ class InitialCorpusCollector:
                 'failed_tokens': self.failed_tokens,
                 'statistics': self.collection_stats
             }
+        finally:
+            # Clean up all client sessions
+            await self._cleanup_sessions()
+    
+    async def _cleanup_sessions(self):
+        """Clean up all HTTP client sessions"""
+        tasks = []
+        
+        # Close CoinGecko client
+        if hasattr(self, 'coingecko_client') and self.coingecko_client:
+            tasks.append(self.coingecko_client.close())
+        
+        # Close Fear & Greed client
+        if hasattr(self, 'fear_greed_client') and self.fear_greed_client:
+            tasks.append(self.fear_greed_client.close())
+        
+        # Close DeFiLlama client
+        if hasattr(self, 'defillama_client') and self.defillama_client:
+            tasks.append(self.defillama_client.close())
+        
+        # Close Social client
+        if hasattr(self, 'social_client') and self.social_client:
+            tasks.append(self.social_client.close())
+        
+        # Close On-chain client
+        if hasattr(self, 'onchain_client') and self.onchain_client:
+            tasks.append(self.onchain_client.close())
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self.logger.info("Cleaned up HTTP client sessions", count=len(tasks))
     
     async def _collect_ohlcv_data(self, tokens: List[str], start_date: datetime, end_date: datetime) -> Dict[str, pd.DataFrame]:
         """Collect OHLCV data for all tokens with rate limiting and error handling"""
@@ -825,22 +856,28 @@ class InitialCorpusCollector:
         try:
             async with get_database_connection() as conn:
                 # Check OHLCV data completeness
+                # Note: data_source column doesn't exist, check by recent timestamps
+                recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
                 ohlcv_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM crypto_ohlcv WHERE data_source = 'initial'"
+                    "SELECT COUNT(*) FROM crypto_ohlcv WHERE created_at > $1",
+                    recent_cutoff
                 )
                 
                 # Check feature data completeness
                 feature_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM crypto_features WHERE data_source = 'initial'"
+                    "SELECT COUNT(*) FROM crypto_features WHERE timestamp > $1",
+                    recent_cutoff
                 )
                 
                 # Check market data completeness
                 sentiment_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM market_sentiment WHERE data_source = 'initial'"
+                    "SELECT COUNT(*) FROM market_sentiment WHERE created_at > $1",
+                    recent_cutoff
                 )
                 
                 defi_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM defi_metrics WHERE data_source = 'initial'"
+                    "SELECT COUNT(*) FROM defi_metrics WHERE created_at > $1",
+                    recent_cutoff
                 )
                 
                 # Calculate feature count (approximation for initial corpus)

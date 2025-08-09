@@ -418,14 +418,20 @@ class MarketDataAggregator:
     
     async def close(self):
         """Close all HTTP sessions"""
-        await asyncio.gather(
-            self.fear_greed_client.close(),
-            self.defi_client.close(),
-            self.coingecko_client.close(),
-            self.onchain_client.close(),
-            self.social_client.close(),
-            return_exceptions=True
-        )
+        tasks = []
+        if self.fear_greed_client:
+            tasks.append(self.fear_greed_client.close())
+        if self.defi_client:
+            tasks.append(self.defi_client.close())
+        if self.coingecko_client:
+            tasks.append(self.coingecko_client.close())
+        if self.onchain_client:
+            tasks.append(self.onchain_client.close())
+        if self.social_client:
+            tasks.append(self.social_client.close())
+        
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
     
     async def __aenter__(self):
         return self
