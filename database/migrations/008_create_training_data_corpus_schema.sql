@@ -126,7 +126,7 @@ CREATE TABLE market_sentiment (
     
     -- Fear & Greed data
     fear_greed_index INTEGER CHECK (fear_greed_index >= 0 AND fear_greed_index <= 100),
-    sentiment_classification VARCHAR(20), -- 'extreme_fear', 'fear', 'neutral', 'greed', 'extreme_greed'
+    fear_greed_classification VARCHAR(20), -- 'extreme_fear', 'fear', 'neutral', 'greed', 'extreme_greed'
     
     -- Additional sentiment metrics
     btc_dominance NUMERIC(6, 2),
@@ -145,16 +145,17 @@ CREATE TABLE market_sentiment (
 -- 4. DeFi Metrics Table (TVL and DeFi data)
 CREATE TABLE defi_metrics (
     id BIGSERIAL PRIMARY KEY,
-    token_address VARCHAR(255) NOT NULL,
-    chain VARCHAR(50) NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
+    protocol_name VARCHAR(100) NOT NULL,     -- Name of protocol or 'DeFi Market Wide'
+    chain VARCHAR(50) NOT NULL,              -- Chain or 'multi_chain'
     
     -- TVL metrics
-    tvl NUMERIC(32, 2),
+    total_value_locked NUMERIC(32, 2),       -- Renamed from 'tvl' to match code
     tvl_change_24h NUMERIC(12, 6),
     tvl_change_7d NUMERIC(12, 6),
     
-    -- Protocol metrics
+    -- Optional protocol-specific fields
+    token_address VARCHAR(255),              -- Made optional
     protocol_count INTEGER,
     largest_protocol VARCHAR(100),
     protocol_distribution JSONB,
@@ -175,14 +176,16 @@ CREATE TABLE defi_metrics (
 -- 5. On-chain Metrics Table
 CREATE TABLE onchain_metrics (
     id BIGSERIAL PRIMARY KEY,
-    token_address VARCHAR(255) NOT NULL,
-    chain VARCHAR(50) NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
+    chain VARCHAR(50) NOT NULL,
     
-    -- Transaction metrics
-    transaction_count INTEGER,
-    unique_addresses INTEGER,
+    -- Transaction metrics (matching code expectations)
+    transaction_count_24h INTEGER,         -- Renamed from transaction_count
     active_addresses_24h INTEGER,
+    
+    -- Optional fields
+    token_address VARCHAR(255),            -- Made optional
+    unique_addresses INTEGER,
     new_addresses_24h INTEGER,
     
     -- Whale activity
@@ -414,13 +417,17 @@ CREATE INDEX idx_market_sentiment_timestamp ON market_sentiment (timestamp DESC)
 CREATE INDEX idx_market_sentiment_data_source ON market_sentiment (data_source);
 
 -- DeFi metrics indexes
+CREATE INDEX idx_defi_metrics_protocol_timestamp 
+    ON defi_metrics (protocol_name, timestamp DESC);
 CREATE INDEX idx_defi_metrics_token_timestamp 
-    ON defi_metrics (token_address, timestamp DESC);
+    ON defi_metrics (token_address, timestamp DESC) WHERE token_address IS NOT NULL;
 CREATE INDEX idx_defi_metrics_data_source ON defi_metrics (data_source);
 
 -- On-chain indexes
+CREATE INDEX idx_onchain_metrics_chain_timestamp 
+    ON onchain_metrics (chain, timestamp DESC);
 CREATE INDEX idx_onchain_metrics_token_timestamp 
-    ON onchain_metrics (token_address, timestamp DESC);
+    ON onchain_metrics (token_address, timestamp DESC) WHERE token_address IS NOT NULL;
 CREATE INDEX idx_onchain_metrics_data_source ON onchain_metrics (data_source);
 CREATE INDEX idx_onchain_metrics_whale_activity 
     ON onchain_metrics (whale_activity DESC) WHERE whale_activity > 0;
