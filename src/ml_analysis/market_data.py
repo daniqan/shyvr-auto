@@ -1496,15 +1496,8 @@ class SocialSentimentClient(MarketDataClientBase):
                     INSERT INTO social_sentiment (
                         token_symbol, timestamp, sentiment_score, social_volume,
                         social_engagement, sentiment_absolute, sentiment_relative,
-                        data_source, collection_timestamp, created_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                    ON CONFLICT (token_symbol, timestamp, data_source) DO UPDATE SET
-                        sentiment_score = EXCLUDED.sentiment_score,
-                        social_volume = EXCLUDED.social_volume,
-                        social_engagement = EXCLUDED.social_engagement,
-                        sentiment_absolute = EXCLUDED.sentiment_absolute,
-                        sentiment_relative = EXCLUDED.sentiment_relative,
-                        collection_timestamp = NOW()
+                        data_source, collection_timestamp
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     """,
                     asset.upper(),  # token_symbol
                     sentiment_data.timestamp,  # timestamp
@@ -1514,8 +1507,7 @@ class SocialSentimentClient(MarketDataClientBase):
                     sentiment_data.social_score,  # sentiment_absolute (same as score for now)
                     sentiment_data.sentiment_trend,  # sentiment_relative (trend)
                     "lunarcrush_current",  # data_source
-                    datetime.now(timezone.utc),  # collection_timestamp
-                    datetime.now(timezone.utc)  # created_at
+                    datetime.now(timezone.utc)  # collection_timestamp
                 )
                 
                 self.logger.debug(
