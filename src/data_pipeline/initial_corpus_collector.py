@@ -103,9 +103,12 @@ class InitialCorpusCollector:
         self._init_api_clients()
         
         # Initialize feature engineer
+        from src.utils.secret_manager import get_secret_manager
+        secret_manager = get_secret_manager()
+        
         self.feature_engineer = FeatureEngineer(
             cache_ttl_minutes=60,  # 1 hour cache for corpus collection
-            coingecko_api_key=os.getenv('COINGECKO_API_KEY'),
+            coingecko_api_key=secret_manager.coingecko_api_key,
             enable_live_data=True
         )
         
@@ -123,9 +126,13 @@ class InitialCorpusCollector:
     
     def _init_api_clients(self):
         """Initialize API clients with proper authentication"""
+        from src.utils.secret_manager import get_secret_manager
+        
         try:
+            secret_manager = get_secret_manager()
+            
             # CoinGecko client (required)
-            coingecko_key = os.getenv('COINGECKO_API_KEY')
+            coingecko_key = secret_manager.coingecko_api_key
             self.coingecko_client = CoinGeckoClient(
                 api_key=coingecko_key,
                 rate_limit=30,  # Conservative rate limit
@@ -139,7 +146,7 @@ class InitialCorpusCollector:
             self.defillama_client = DeFiLlamaClient(rate_limit=20)
             
             # LunarCrush client (optional)
-            lunarcrush_key = os.getenv('LUNARCRUSH_API_KEY')
+            lunarcrush_key = secret_manager.lunarcrush_api_key
             if lunarcrush_key:
                 self.social_client = SocialSentimentClient(api_key=lunarcrush_key)
                 self.has_social_data = True
@@ -149,7 +156,7 @@ class InitialCorpusCollector:
                 self.logger.warning("LunarCrush API key not available, skipping social sentiment data")
             
             # Helius client for on-chain data (optional)
-            helius_key = os.getenv('HELIUS_API_KEY')
+            helius_key = secret_manager.helius_api_key
             if helius_key:
                 self.onchain_client = OnChainAnalyticsClient(api_key=helius_key)
                 self.has_onchain_data = True

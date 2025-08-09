@@ -55,37 +55,10 @@ else
     echo -e "${GREEN}✅ Cloud SQL Proxy already running${NC}"
 fi
 
-# Get production database password from Secret Manager
-echo -e "${YELLOW}🔑 Fetching secrets from GCP...${NC}"
-DB_PASS=$(gcloud secrets versions access latest --secret="DB_PASSWORD" --project=shvyr-ai-bots 2>/dev/null || echo "")
-
-if [ -z "$DB_PASS" ]; then
-    echo -e "${RED}❌ Failed to fetch database password from Secret Manager${NC}"
-    echo "Please ensure you're authenticated with gcloud and have access to the project"
-    exit 1
-fi
-
-# Set up environment variables
-export DATABASE_URL="postgresql://rlte_prod_user:${DB_PASS}@localhost:5433/shyvr_rlte_prod"
-export DB_HOST="localhost"
-export DB_PORT="5433"
-export DB_USER="rlte_prod_user"
-export DB_PASSWORD="${DB_PASS}"
-export DB_NAME="shyvr_rlte_prod"
-
-# Use development environment to allow localhost connection
-export ENVIRONMENT="development"
-export SECRET_KEY="production_secret_key_for_corpus_collection_32ch"
-
-# Fetch API keys from Secret Manager
-export COINGECKO_API_KEY=$(gcloud secrets versions access latest --secret="COINGECKO_API_KEY" --project=shvyr-ai-bots 2>/dev/null)
-export LUNARCRUSH_API_KEY=$(gcloud secrets versions access latest --secret="LUNARCRUSH_API_KEY" --project=shvyr-ai-bots 2>/dev/null)
-export HELIUS_API_KEY=$(gcloud secrets versions access latest --secret="HELIUS_API_KEY" --project=shvyr-ai-bots 2>/dev/null)
-
-# Set dummy values for unused but required keys
-export TELEGRAM_TOKEN="dummy_telegram_token"
-export ETHERSCAN_API_KEY="dummy_etherscan_key"
-export BIRDEYE_API_KEY="dummy_birdeye_key"
+# Set minimal environment variables
+# The SecretManager class will handle fetching all secrets from GCP
+export GOOGLE_CLOUD_PROJECT="shvyr-ai-bots"
+export ENVIRONMENT="development"  # Use development to allow localhost connection
 
 echo -e "${GREEN}✅ Environment configured${NC}"
 echo ""

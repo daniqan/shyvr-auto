@@ -33,42 +33,34 @@ class DatabaseConfig(BaseModel):
     echo: bool = False
     
     def __init__(self, **data):
-        """Initialize DatabaseConfig with password from environment or Secret Manager"""
-        # Try to get password from environment first
+        """Initialize DatabaseConfig with password from Secret Manager"""
+        # Only populate from Secret Manager if password not already provided
         if not data.get('password'):
-            import os
-            # First try DATABASE_URL
-            database_url = os.environ.get('DATABASE_URL')
-            if database_url:
-                # Parse password from DATABASE_URL
-                # Format: postgresql://username:password@host:port/database
-                import re
-                match = re.search(r'://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', database_url)
-                if match:
-                    data['username'] = match.group(1)
-                    data['password'] = match.group(2)
-                    data['host'] = match.group(3)
-                    data['port'] = int(match.group(4))
-                    data['database'] = match.group(5)
-            # Otherwise try DB_PASSWORD env var
-            elif os.environ.get('DB_PASSWORD'):
-                data['password'] = os.environ.get('DB_PASSWORD')
-            # Always try to get from Google Secret Manager if no password yet
-            else:
-                try:
-                    from google.cloud import secretmanager
-                    client = secretmanager.SecretManagerServiceClient()
-                    project = os.environ.get('GOOGLE_CLOUD_PROJECT', 'shvyr-ai-bots')
-                    secret_name = f"projects/{project}/secrets/DB_PASSWORD/versions/latest"
-                    response = client.access_secret_version(request={"name": secret_name})
-                    data['password'] = response.payload.data.decode('UTF-8')
-                except Exception as e:
-                    # In development, use default; in production, this should fail
-                    if os.environ.get('ENVIRONMENT') in ['production', 'staging']:
-                        raise ValueError(f"Failed to get DB_PASSWORD from Secret Manager: {e}")
-                    else:
-                        # Development default
-                        data['password'] = data.get('password', 'DeFi2024_Secure')
+            from .secret_manager import get_secret_manager
+            
+            secret_manager = get_secret_manager()
+            db_config = secret_manager.get_database_config()
+            
+            # Use values from Secret Manager if not already set
+            if db_config.get('password'):
+                data['password'] = db_config['password']
+            if not data.get('host') and db_config.get('host'):
+                data['host'] = db_config['host']
+            if not data.get('port') and db_config.get('port'):
+                data['port'] = int(db_config['port'])
+            if not data.get('username') and db_config.get('username'):
+                data['username'] = db_config['username']
+            if not data.get('database') and db_config.get('database'):
+                data['database'] = db_config['database']
+            
+            # If still no password, check environment for development
+            if not data.get('password'):
+                import os
+                if os.environ.get('ENVIRONMENT') in ['production', 'staging']:
+                    raise ValueError("Database password is required in production/staging")
+                else:
+                    # Development default
+                    data['password'] = 'DeFi2024_Secure'
                 
         super().__init__(**data)
 
