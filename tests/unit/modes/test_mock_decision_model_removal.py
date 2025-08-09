@@ -21,7 +21,6 @@ from typing import Optional, Dict, Any
 
 # Set up test environment variables before importing modules
 os.environ.setdefault('SECRET_KEY', 'test_secret_key_for_unit_testing_123456789')
-os.environ.setdefault('JWT_SECRET', 'test_jwt_secret_for_unit_testing_123456789')
 os.environ.setdefault('DATABASE_URL', 'sqlite:///:memory:')
 os.environ.setdefault('GRAFANA_PASSWORD', 'test_grafana_password')
 os.environ.setdefault('TEST_MODE', 'true')

@@ -255,9 +255,8 @@ GCS_BUCKET: "your-model-storage-bucket"
 CLOUD_SQL_CONNECTION_NAME: "your-project:region:instance"
 
 # Security (use strong, unique values)
-SECRET_KEY: "generate-strong-32-char-secret"
+SECRET_KEY: "generate-strong-32-char-secret-for-jwt-and-security"
 DB_PASSWORD: "generate-strong-database-password"
-JWT_SECRET: "generate-strong-jwt-secret"
 
 # API Keys (obtain from respective services)
 OPENAI_API_KEY: "your-actual-openai-key"

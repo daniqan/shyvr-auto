@@ -15,7 +15,6 @@ def setup_test_environment():
     # Set environment variables for testing
     os.environ.update({
         "SECRET_KEY": "test_secret_key_for_security_testing_at_least_16_chars",
-        "JWT_SECRET": "test_jwt_secret_key_for_security_testing_minimum_16_chars", 
         "DATABASE_URL": "sqlite:///:memory:",
         "ENVIRONMENT": "test"
     })

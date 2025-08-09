@@ -197,7 +197,6 @@ class TestHardcodedCredentials:
         # Required environment variables for production
         required_secrets = [
             'SECRET_KEY',
-            'JWT_SECRET', 
             'GRAFANA_PASSWORD',
             'POSTGRES_PASSWORD',
             'DATABASE_URL',

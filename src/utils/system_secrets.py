@@ -135,13 +135,8 @@ class SystemSecrets:
     # Security secrets
     @property
     def secret_key(self) -> Optional[str]:
-        """Get application secret key"""
+        """Get application secret key (used for JWT signing and other security operations)"""
         return self._get_secret("SECRET_KEY")
-    
-    @property
-    def jwt_secret(self) -> Optional[str]:
-        """Get JWT secret"""
-        return self._get_secret("JWT_SECRET")
     
     # Cloud SQL connection
     @property

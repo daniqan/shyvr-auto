@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 # Set required environment variables for tests
 os.environ['SECRET_KEY'] = 'test-secret-key-for-operational-analytics-tests'
-os.environ['JWT_SECRET_KEY'] = 'test-jwt-secret-key-for-operational-analytics'
 
 # Test the operational analytics system
 class TestOperationalAnalyticsCore:

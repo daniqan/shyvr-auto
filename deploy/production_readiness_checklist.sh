@@ -96,7 +96,7 @@ run_check "Model preservation migration" "test -f database/migrations/005_model_
 log_header "3. Security and Secrets Validation"
 
 # Required secrets for basic operation
-REQUIRED_SECRETS=("TELEGRAM_TOKEN" "WEBHOOK_SECRET" "DB_PASSWORD" "DATABASE_URL" "SECRET_KEY" "JWT_SECRET")
+REQUIRED_SECRETS=("TELEGRAM_TOKEN" "WEBHOOK_SECRET" "DB_PASSWORD" "DATABASE_URL" "SECRET_KEY")
 
 for secret in "${REQUIRED_SECRETS[@]}"; do
     run_check "Required secret: $secret" "gcloud secrets describe $secret --project=$PROJECT_ID"

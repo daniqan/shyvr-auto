@@ -266,7 +266,7 @@ deploy_new_revision() {
         --session-affinity \
         --set-env-vars="$env_vars" \
         --add-cloudsql-instances="$PROJECT_ID:us-central1:shyvr-rlte-db" \
-        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,SECRET_KEY=SECRET_KEY:latest,JWT_SECRET=JWT_SECRET:latest" \
+        --set-secrets="TELEGRAM_TOKEN=TELEGRAM_TOKEN:latest,WEBHOOK_SECRET=WEBHOOK_SECRET:latest,DB_PASSWORD=DB_PASSWORD:latest,DATABASE_URL=DATABASE_URL:latest,SECRET_KEY=SECRET_KEY:latest" \
         --no-traffic \
         --tag="$ENVIRONMENT-$DEPLOYMENT_ID" \
         --quiet; then
