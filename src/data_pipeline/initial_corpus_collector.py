@@ -416,18 +416,45 @@ class InitialCorpusCollector:
                         end_date=end_date.isoformat())
         
         try:
-            # Fear & Greed Index
+            # Fear & Greed Index - try to get historical data
             await asyncio.sleep(self.rate_limit_delay)
-            sentiment_data = await self.fear_greed_client.get_market_data()
-            market_data['sentiment'] = sentiment_data
-            self.collection_stats['api_calls_made'] += 1
             
-            self.logger.info("Fear & Greed data collected", 
-                           index=sentiment_data.fear_greed_index)
+            # Check if historical data is available
+            if hasattr(self.fear_greed_client, 'get_historical_data'):
+                try:
+                    # Get historical data for the date range
+                    historical_sentiment = await self.fear_greed_client.get_historical_data(
+                        start_date, end_date
+                    )
+                    
+                    if historical_sentiment:
+                        market_data['sentiment'] = historical_sentiment
+                        self.logger.info(f"Historical Fear & Greed data collected", 
+                                       count=len(historical_sentiment),
+                                       first_value=historical_sentiment[0].fear_greed_index if historical_sentiment else None)
+                    else:
+                        # Fallback to current if historical fails
+                        sentiment_data = await self.fear_greed_client.get_market_data()
+                        market_data['sentiment'] = [sentiment_data]
+                        self.logger.info("Current Fear & Greed data collected (historical unavailable)", 
+                                       index=sentiment_data.fear_greed_index)
+                except Exception as e:
+                    self.logger.warning(f"Failed to get historical sentiment, falling back to current: {e}")
+                    sentiment_data = await self.fear_greed_client.get_market_data()
+                    market_data['sentiment'] = [sentiment_data]
+            else:
+                # No historical method, use current
+                sentiment_data = await self.fear_greed_client.get_market_data()
+                market_data['sentiment'] = [sentiment_data]
+                self.logger.info("Fear & Greed data collected (current only)", 
+                               index=sentiment_data.fear_greed_index)
+            
+            self.collection_stats['api_calls_made'] += 1
             
         except Exception as e:
             self.logger.error("Failed to collect sentiment data", error=str(e))
             self.collection_stats['errors_encountered'] += 1
+            market_data['sentiment'] = []
         
         try:
             # DeFi metrics
@@ -590,8 +617,9 @@ class InitialCorpusCollector:
                 
                 # Store market sentiment data
                 if 'sentiment' in market_data:
-                    await self._store_market_sentiment(conn, market_data['sentiment'])
-                    total_records += 1
+                    sentiment_count = await self._store_market_sentiment(conn, market_data['sentiment'])
+                    total_records += sentiment_count
+                    self.logger.info(f"Stored {sentiment_count} market sentiment records")
                 
                 # Store DeFi metrics
                 if 'defi' in market_data:
@@ -687,23 +715,44 @@ class InitialCorpusCollector:
         
         return dt
     
-    async def _store_market_sentiment(self, conn, sentiment_data) -> None:
-        """Store market sentiment data"""
+    async def _store_market_sentiment(self, conn, sentiment_data) -> int:
+        """Store market sentiment data (single or multiple records)"""
         query = """
             INSERT INTO market_sentiment (
                 timestamp, fear_greed_index, fear_greed_classification,
                 data_source, collection_timestamp
             ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (timestamp, data_source) DO UPDATE SET
+                fear_greed_index = EXCLUDED.fear_greed_index,
+                fear_greed_classification = EXCLUDED.fear_greed_classification,
+                collection_timestamp = EXCLUDED.collection_timestamp
         """
         
-        await conn.execute(
-            query,
-            self._ensure_timezone_aware(sentiment_data.timestamp),
-            int(sentiment_data.fear_greed_index),
-            sentiment_data.fear_greed_classification.lower().replace(' ', '_'),
-            'initial',
-            datetime.now(timezone.utc)
-        )
+        # Handle both single and list of sentiment data
+        if isinstance(sentiment_data, list):
+            count = 0
+            for sentiment in sentiment_data:
+                await conn.execute(
+                    query,
+                    self._ensure_timezone_aware(sentiment.timestamp),
+                    int(sentiment.fear_greed_index),
+                    sentiment.fear_greed_classification.lower().replace(' ', '_'),
+                    'initial',
+                    datetime.now(timezone.utc)
+                )
+                count += 1
+            return count
+        else:
+            # Single record (backward compatibility)
+            await conn.execute(
+                query,
+                self._ensure_timezone_aware(sentiment_data.timestamp),
+                int(sentiment_data.fear_greed_index),
+                sentiment_data.fear_greed_classification.lower().replace(' ', '_'),
+                'initial',
+                datetime.now(timezone.utc)
+            )
+            return 1
     
     async def _store_defi_metrics(self, conn, defi_data) -> None:
         """Store DeFi metrics data"""

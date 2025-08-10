@@ -17,7 +17,13 @@ import numpy as np
 import time
 import os
 
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 from src.utils.base import Chain
+from src.utils.system_secrets import get_system_secrets
 
 
 logger = structlog.get_logger()
@@ -230,10 +236,156 @@ class MarketDataClientBase(ABC):
         await self.close()
 
 
+class GrokMarketClient:
+    """
+    Specialized Grok client for extracting historical market data from X/Twitter.
+    Uses Grok's x_keyword_search capability to find real historical data.
+    """
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize Grok Market Client"""
+        if OpenAI is None:
+            raise ImportError("openai package required for Grok client. Install with: pip install openai")
+        
+        # Get API key from SystemSecrets if not provided
+        if not api_key:
+            try:
+                system_secrets = get_system_secrets()
+                api_key = system_secrets.get_secret('XAI_API_KEY')
+            except Exception as e:
+                logger.warning(f"Could not get XAI_API_KEY from SystemSecrets: {e}")
+                api_key = None
+        
+        if not api_key:
+            raise APIAuthenticationError("XAI_API_KEY not found. Please set it in Google Secret Manager.")
+        
+        self.api_key = api_key
+        self.base_url = 'https://api.x.ai/v1'
+        self.model = "grok-2-1212"
+        self.logger = structlog.get_logger().bind(client=self.__class__.__name__)
+        
+        # Initialize OpenAI client with xAI configuration
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=60
+        )
+        
+        self.logger.info("GrokMarketClient initialized successfully")
+    
+    async def get_historical_fear_greed(self, days_back: int = 30) -> List[Dict[str, Any]]:
+        """Extract historical Fear & Greed Index values from @BitcoinFear tweets"""
+        self.logger.info(f"Requesting {days_back} days of historical Fear & Greed data")
+        
+        prompt = f"""Extract the Bitcoin Fear & Greed Index values from @BitcoinFear for the last {days_back} days.
+    
+Use internal x_keyword_search for "Bitcoin Fear and Greed Index is [int]" to locate values.
+
+Return ONLY a Python dictionary with the following format, no other text:
+{{
+    "data": [
+        {{"date": "YYYY-MM-DD", "value": XX, "classification": "fear/neutral/greed/extreme_fear/extreme_greed"}},
+        ...
+    ]
+}}
+
+Important:
+- Include values for the last {days_back} days
+- Use the actual numerical values (0-100) from @BitcoinFear posts
+- Use the correct classification based on the value:
+  - 0-24: extreme_fear
+  - 25-44: fear
+  - 45-55: neutral
+  - 56-75: greed
+  - 76-100: extreme_greed
+- Order by date ascending (oldest first)
+- Return ONLY the Python dictionary, no explanations or other text"""
+        
+        try:
+            response = await self._call_grok_api(prompt)
+            data = self._parse_json_response(response)
+            
+            if data and 'data' in data:
+                historical_data = data['data']
+                self.logger.info(f"Successfully retrieved {len(historical_data)} days of Fear & Greed data")
+                return historical_data
+            else:
+                self.logger.warning("No data found in Grok response")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get historical Fear & Greed data: {e}")
+            return []  # Return empty list instead of raising to allow fallback
+    
+    async def _call_grok_api(self, prompt: str) -> str:
+        """Make an API call to Grok"""
+        try:
+            # Use asyncio.to_thread for the synchronous OpenAI client
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a data extraction assistant. Return only the requested data format."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=4000,
+                temperature=0.1
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            self.logger.error(f"Grok API call failed: {e}")
+            raise MarketDataError(f"Grok API error: {str(e)}")
+    
+    def _parse_json_response(self, response: str) -> Optional[Dict]:
+        """Parse JSON dictionary from Grok's response"""
+        if not response:
+            return None
+        
+        response = response.strip()
+        
+        # Try to find dictionary in response
+        start_idx = response.find('{')
+        end_idx = response.rfind('}') + 1
+        
+        if start_idx != -1 and end_idx > start_idx:
+            dict_str = response[start_idx:end_idx]
+            
+            try:
+                return json.loads(dict_str)
+            except json.JSONDecodeError:
+                # Try Python eval as fallback (safely)
+                try:
+                    if dict_str.strip().startswith('{') and dict_str.strip().endswith('}'):
+                        import ast
+                        return ast.literal_eval(dict_str)
+                except:
+                    self.logger.warning("Could not parse response as JSON or Python dict")
+                    return None
+        
+        return None
+
+
 class FearGreedIndexClient(MarketDataClientBase):
-    """Client for Crypto Fear & Greed Index API"""
+    """Enhanced client for Crypto Fear & Greed Index with historical data support"""
     
     BASE_URL = "https://api.alternative.me/fng/"
+    
+    def __init__(self, api_key: Optional[str] = None, rate_limit: int = 60, cache_ttl: int = 300):
+        """Initialize with optional Grok client for historical data"""
+        super().__init__(api_key, rate_limit, cache_ttl)
+        
+        # Try to initialize Grok client for historical data
+        self.grok_client = None
+        self.historical_enabled = False
+        
+        try:
+            self.grok_client = GrokMarketClient()
+            self.historical_enabled = True
+            self.logger.info("Historical Fear & Greed data enabled via Grok")
+        except Exception as e:
+            self.logger.warning(f"Grok client not available, historical data disabled: {e}")
     
     async def get_market_data(self, days: int = 1) -> MarketSentimentData:
         """Get Fear & Greed Index data"""
@@ -295,6 +447,170 @@ class FearGreedIndexClient(MarketDataClientBase):
         except Exception as e:
             self.logger.error("Failed to get Fear & Greed Index", error=str(e))
             raise MarketDataError(f"Failed to get Fear & Greed Index: {str(e)}")
+    
+    async def get_historical_data(self, 
+                                 start_date: datetime, 
+                                 end_date: datetime) -> List[MarketSentimentData]:
+        """
+        Get historical Fear & Greed data.
+        
+        Args:
+            start_date: Start date for historical data
+            end_date: End date for historical data
+            
+        Returns:
+            List of MarketSentimentData objects for each day
+        """
+        historical_data = []
+        
+        # Calculate days needed
+        days_back = (end_date - start_date).days + 1
+        
+        # Try Grok first if available
+        if self.historical_enabled and self.grok_client:
+            try:
+                self.logger.info(f"Fetching {days_back} days of historical Fear & Greed data via Grok")
+                
+                # Get historical data from Grok
+                raw_data = await self.grok_client.get_historical_fear_greed(days_back)
+                
+                if raw_data:
+                    # Convert to MarketSentimentData objects
+                    for entry in raw_data:
+                        # Parse date
+                        try:
+                            entry_date = datetime.strptime(entry['date'], '%Y-%m-%d')
+                            
+                            # Skip if outside requested range
+                            if entry_date.date() < start_date.date() or entry_date.date() > end_date.date():
+                                continue
+                            
+                            value = float(entry['value'])
+                            
+                            # Determine classification if not provided
+                            if 'classification' in entry:
+                                classification = entry['classification'].replace('_', ' ').title()
+                            else:
+                                if value <= 25:
+                                    classification = "Extreme Fear"
+                                elif value <= 45:
+                                    classification = "Fear"
+                                elif value <= 55:
+                                    classification = "Neutral"
+                                elif value <= 75:
+                                    classification = "Greed"
+                                else:
+                                    classification = "Extreme Greed"
+                            
+                            # Determine market trend
+                            if value <= 30:
+                                trend = "bear"
+                            elif value >= 70:
+                                trend = "bull"
+                            else:
+                                trend = "sideways"
+                            
+                            # Determine volatility
+                            if value <= 20 or value >= 80:
+                                volatility = "high"
+                            elif value <= 40 or value >= 60:
+                                volatility = "medium"
+                            else:
+                                volatility = "low"
+                            
+                            sentiment_data = MarketSentimentData(
+                                fear_greed_index=value,
+                                fear_greed_classification=classification,
+                                market_trend=trend,
+                                volatility_regime=volatility,
+                                timestamp=entry_date.replace(tzinfo=timezone.utc)
+                            )
+                            
+                            historical_data.append(sentiment_data)
+                            
+                        except Exception as e:
+                            self.logger.warning(f"Failed to parse historical entry: {entry}, error: {e}")
+                            continue
+                    
+                    if historical_data:
+                        self.logger.info(f"Retrieved {len(historical_data)} days of historical Fear & Greed data")
+                        return sorted(historical_data, key=lambda x: x.timestamp)
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to get historical data from Grok: {e}")
+        
+        # Fallback: Try alternative.me historical endpoint (limited to 30 days)
+        if not historical_data and days_back <= 30:
+            try:
+                self.logger.info("Falling back to alternative.me for historical data")
+                params = {"limit": min(days_back, 30), "format": "json"}
+                data = await self._make_request(self.BASE_URL, params=params)
+                
+                if data and data.get("data"):
+                    for entry in data["data"]:
+                        entry_date = datetime.fromtimestamp(int(entry["timestamp"]))
+                        
+                        # Skip if outside requested range
+                        if entry_date.date() < start_date.date() or entry_date.date() > end_date.date():
+                            continue
+                        
+                        value = int(entry["value"])
+                        
+                        # Classify
+                        if value <= 25:
+                            classification = "Extreme Fear"
+                        elif value <= 45:
+                            classification = "Fear"
+                        elif value <= 55:
+                            classification = "Neutral"
+                        elif value <= 75:
+                            classification = "Greed"
+                        else:
+                            classification = "Extreme Greed"
+                        
+                        # Determine market trend
+                        if value <= 30:
+                            trend = "bear"
+                        elif value >= 70:
+                            trend = "bull"
+                        else:
+                            trend = "sideways"
+                        
+                        # Determine volatility
+                        if value <= 20 or value >= 80:
+                            volatility = "high"
+                        elif value <= 40 or value >= 60:
+                            volatility = "medium"
+                        else:
+                            volatility = "low"
+                        
+                        sentiment_data = MarketSentimentData(
+                            fear_greed_index=float(value),
+                            fear_greed_classification=classification,
+                            market_trend=trend,
+                            volatility_regime=volatility,
+                            timestamp=entry_date
+                        )
+                        
+                        historical_data.append(sentiment_data)
+                    
+                    if historical_data:
+                        self.logger.info(f"Retrieved {len(historical_data)} days from alternative.me")
+                        return sorted(historical_data, key=lambda x: x.timestamp)
+                        
+            except Exception as e:
+                self.logger.warning(f"Failed to get historical data from alternative.me: {e}")
+        
+        # If no historical data available, return current snapshot
+        if not historical_data:
+            self.logger.warning("No historical data available, returning current snapshot")
+            try:
+                current = await self.get_market_data()
+                return [current]
+            except:
+                return []
+        
+        return historical_data
 
 
 class DeFiLlamaClient(MarketDataClientBase):
