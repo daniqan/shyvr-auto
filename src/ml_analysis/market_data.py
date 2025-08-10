@@ -268,7 +268,7 @@ class GrokMarketClient:
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
-            timeout=60
+            timeout=180
         )
         
         self.logger.info("GrokMarketClient initialized successfully")
