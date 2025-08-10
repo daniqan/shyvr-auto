@@ -261,7 +261,7 @@ class GrokMarketClient:
         
         self.api_key = api_key
         self.base_url = 'https://api.x.ai/v1'
-        self.model = "grok-2-1212"
+        self.model = "grok-4-0709"  # Model with search capabilities for real-time data
         self.logger = structlog.get_logger().bind(client=self.__class__.__name__)
         
         # Initialize OpenAI client with xAI configuration
@@ -279,7 +279,7 @@ class GrokMarketClient:
         
         prompt = f"""Extract the Bitcoin Fear & Greed Index values from @BitcoinFear for the last {days_back} days.
     
-Use internal x_keyword_search for "Bitcoin Fear and Greed Index is [int]" to locate values.
+Use internal x_keyword_search for "Bitcoin Fear and Greed Index is [int]" to locate values. There is only one unique value per day.
 
 Return ONLY a Python dictionary with the following format, no other text:
 {{
