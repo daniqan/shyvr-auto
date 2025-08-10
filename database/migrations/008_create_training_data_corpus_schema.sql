@@ -180,18 +180,18 @@ CREATE TABLE onchain_metrics (
     chain VARCHAR(50) NOT NULL,
     
     -- Transaction metrics (matching code expectations)
-    transaction_count_24h INTEGER,         -- Renamed from transaction_count
-    active_addresses_24h INTEGER,
+    transaction_count_24h BIGINT,          -- Changed to BIGINT for large values like Solana
+    active_addresses_24h BIGINT,           -- Changed to BIGINT for scalability
     
     -- Optional fields
     token_address VARCHAR(255),            -- Made optional
-    unique_addresses INTEGER,
-    new_addresses_24h INTEGER,
+    unique_addresses BIGINT,               -- Changed to BIGINT
+    new_addresses_24h BIGINT,              -- Changed to BIGINT
     
     -- Whale activity
     whale_activity NUMERIC(12, 6),
-    whale_transactions INTEGER,
-    large_transactions_count INTEGER,
+    whale_transactions BIGINT,             -- Changed to BIGINT
+    large_transactions_count BIGINT,       -- Changed to BIGINT
     
     -- Network metrics
     gas_used NUMERIC(32, 8),

@@ -818,7 +818,8 @@ class InitialCorpusCollector:
                     None,  # $13: returns_7d - would need price data to calculate
                     getattr(tech_data, 'volatility_score', None),  # $14: volatility_24h
                     '1.0',  # $15: feature_version
-                    datetime.now(timezone.utc)  # $16: calculated_at
+                    datetime.now(timezone.utc),  # $16: calculated_at
+                    'initial'  # $17: data_source
                 ))
             
             # Batch insert features
@@ -831,8 +832,8 @@ class InitialCorpusCollector:
                         volume_sma_20,
                         returns_1h, returns_24h, returns_7d,
                         volatility_24h,
-                        feature_version, calculated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                        feature_version, calculated_at, data_source
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                 """
                 
                 await conn.executemany(query, feature_records)
