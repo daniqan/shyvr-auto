@@ -853,9 +853,9 @@ class InitialCorpusCollector:
         
         query = """
             INSERT INTO training_corpus_versions (
-                version_name, data_source, start_date, end_date,
+                version_name, data_source, start_timestamp, end_timestamp,
                 sample_count, feature_count, tokens,
-                is_active, description
+                is_active, is_immutable
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9
             ) RETURNING version_id
@@ -872,7 +872,7 @@ class InitialCorpusCollector:
                 130,  # Expected feature count
                 tokens,
                 True,   # is_active
-                f'Initial training corpus collected from {len(tokens)} tokens over {self.collection_days} days'
+                True    # is_immutable for initial corpus
             )
         
         self.logger.info("Corpus version created", 
