@@ -123,6 +123,16 @@ class SystemSecrets:
         return self._get_secret("ALCHEMY_API_KEY")
     
     @property
+    def graph_api_key(self) -> Optional[str]:
+        """Get The Graph Protocol API key"""
+        return self._get_secret("GRAPH_API_KEY")
+    
+    @property
+    def graph_api_token(self) -> Optional[str]:
+        """Get The Graph Protocol API token (for authenticated queries)"""
+        return self._get_secret("GRAPH_API_TOKEN")
+    
+    @property
     def birdeye_api_key(self) -> Optional[str]:
         """Get Birdeye API key"""
         return self._get_secret("BIRDEYE_API_KEY")
@@ -193,6 +203,8 @@ class SystemSecrets:
             "helius": self.helius_api_key,
             "etherscan": self.etherscan_api_key,
             "alchemy": self.alchemy_api_key,
+            "graph": self.graph_api_key,
+            "graph_token": self.graph_api_token,
             "birdeye": self.birdeye_api_key,
             "quicknode": self.quicknode_api_key,
             "moralis": self.moralis_api_key,

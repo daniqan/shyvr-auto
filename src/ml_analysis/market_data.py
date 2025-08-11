@@ -163,11 +163,17 @@ class MarketDataClientBase(ABC):
         return ssl_context
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session with SSL verification disabled"""
+        """Get or create aiohttp session with proper SSL verification"""
         if self.session is None:
             timeout = aiohttp.ClientTimeout(total=30)
-            # Create SSL-disabled connector for development/testing
-            ssl_context = self._create_unverified_ssl_context()
+            # Use certifi for SSL certificates (fixes macOS SSL issues)
+            try:
+                import certifi
+                import ssl
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                # Fallback to unverified SSL if certifi not available
+                ssl_context = self._create_unverified_ssl_context()
             connector = aiohttp.TCPConnector(ssl=ssl_context)
             self.session = aiohttp.ClientSession(
                 timeout=timeout,
@@ -1964,6 +1970,317 @@ class OnChainAnalyticsClient(MarketDataClientBase):
             "total_volume": total_volume,
             "unique_addresses": len(unique_addresses)
         }
+
+
+class GraphProtocolClient(MarketDataClientBase):
+    """Client for The Graph Protocol - decentralized blockchain data indexing
+    
+    Provides access to historical and real-time DeFi metrics via GraphQL subgraphs
+    """
+    
+    # Use direct subgraph studio URLs (these work without API keys for limited queries)
+    SUBGRAPH_ENDPOINTS = {
+        # Uniswap V3 public endpoint on Polygon
+        "uniswap_v3": "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon",
+        # DeFiLlama endpoints for aggregated data
+        "defi_aggregated": "https://api.llama.fi/protocol/uniswap",
+    }
+    
+    # Subgraph IDs for future use with proper API keys
+    SUBGRAPH_IDS = {
+        "uniswap_v3": "ELUcwgpm14LKPLrBRuVvPvNKHQ9HvwmtKgKSH6123cr7",
+        "uniswap_v2": "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu",
+        "aave_v3": "GQFbb95cE6d8mV989mL5figjaGH5qC3qJUqYrfEPqhXP",
+        "aave_v2": "8wR23o3HiXQHqMXpX1oqY4xwgJXsMRTqfJGcsY1V8Dxy",
+        "compound_v3": "Ehks5TUAiLwJKQmYNfHQVxYBwb9wBWFcZKCfWUBfP4JE",
+        "compound_v2": "6tGbL7RjaT8Wuu9v2vKQ8yfZQ4KUzUQdXnqPb7MiPPNP",
+    }
+    
+    def __init__(self, api_key: Optional[str] = None, api_token: Optional[str] = None, **kwargs):
+        """Initialize Graph Protocol client
+        
+        Args:
+            api_key: Graph API key for gateway access
+            api_token: Graph API token for authenticated queries
+        """
+        super().__init__(api_key=api_key, **kwargs)
+        
+        # Get API credentials from environment or secrets
+        if not api_key and not api_token:
+            from src.utils.system_secrets import get_system_secrets
+            system_secrets = get_system_secrets()
+            self.api_key = system_secrets.graph_api_key
+            self.api_token = system_secrets.graph_api_token
+        else:
+            self.api_key = api_key
+            self.api_token = api_token
+        
+        # Use Arbitrum gateway (decentralized network) without API key for now
+        # The Graph allows some free queries
+        # TODO: Add proper API key authentication once format is confirmed
+        self.base_url = "https://api.studio.thegraph.com/query/1931"
+        
+        # For testing, we'll use public endpoints that don't require auth
+        self.logger.info("Using The Graph public endpoints (rate limited)")
+        
+        # Set authorization header if token is available
+        self.headers = {}
+        if self.api_token:
+            self.headers["Authorization"] = f"Bearer {self.api_token}"
+    
+    async def query_subgraph(
+        self, 
+        subgraph_name: str, 
+        query: str, 
+        variables: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Execute GraphQL query against a subgraph
+        
+        Args:
+            subgraph_name: Name of the subgraph from SUBGRAPH_IDS
+            query: GraphQL query string
+            variables: Optional query variables
+            
+        Returns:
+            Query result data
+            
+        Raises:
+            ValueError: If subgraph_name not found
+            MarketDataError: If query fails
+        """
+        # Use public endpoints for now (no auth required)
+        if subgraph_name not in self.SUBGRAPH_ENDPOINTS:
+            raise ValueError(f"Unknown subgraph: {subgraph_name}. Available: {list(self.SUBGRAPH_ENDPOINTS.keys())}")
+        
+        # Use the direct endpoint URL
+        url = self.SUBGRAPH_ENDPOINTS[subgraph_name]
+        
+        # Prepare GraphQL request
+        payload = {
+            "query": query,
+            "variables": variables or {}
+        }
+        
+        try:
+            # Execute query
+            session = await self._get_session()
+            async with session.post(url, json=payload, headers=self.headers) as response:
+                result = await response.json()
+                
+                # Check for errors
+                if "errors" in result:
+                    error_msg = "; ".join([e.get("message", str(e)) for e in result["errors"]])
+                    raise MarketDataError(f"GraphQL query error: {error_msg}")
+                
+                # Return data
+                return result.get("data", {})
+                
+        except Exception as e:
+            self.logger.error(f"Failed to query subgraph {subgraph_name}", error=str(e))
+            raise MarketDataError(f"Failed to query {subgraph_name}: {str(e)}")
+    
+    async def get_historical_defi_metrics(
+        self,
+        protocols: List[str],
+        start_date: datetime,
+        end_date: datetime,
+        interval: str = "daily"
+    ) -> List[DeFiMetrics]:
+        """Get historical DeFi metrics from multiple protocols
+        
+        Args:
+            protocols: List of protocol names (from SUBGRAPH_IDS)
+            start_date: Start date for historical data
+            end_date: End date for historical data
+            interval: Data interval (daily, hourly)
+            
+        Returns:
+            List of DeFiMetrics objects with aggregated data
+        """
+        all_metrics = []
+        protocol_data = {}
+        
+        # Calculate timestamps
+        start_timestamp = int(start_date.timestamp())
+        end_timestamp = int(end_date.timestamp())
+        
+        # Query each protocol
+        for protocol in protocols:
+            try:
+                if protocol == "uniswap_v3":
+                    data = await self._get_uniswap_v3_metrics(start_timestamp, end_timestamp)
+                elif protocol == "aave_v3":
+                    data = await self._get_aave_v3_metrics(start_timestamp, end_timestamp)
+                elif protocol == "compound_v3":
+                    data = await self._get_compound_v3_metrics(start_timestamp, end_timestamp)
+                else:
+                    self.logger.warning(f"Protocol {protocol} not yet implemented")
+                    continue
+                
+                protocol_data[protocol] = data
+                
+            except Exception as e:
+                self.logger.error(f"Failed to get data for {protocol}", error=str(e))
+                continue
+        
+        # Aggregate data by date
+        date_metrics = {}
+        
+        for protocol, data_points in protocol_data.items():
+            for point in data_points:
+                date = point["date"]
+                if date not in date_metrics:
+                    date_metrics[date] = {
+                        "total_tvl": 0,
+                        "total_volume": 0,
+                        "protocols": [],
+                        "timestamp": datetime.fromtimestamp(date, tz=timezone.utc)
+                    }
+                
+                date_metrics[date]["total_tvl"] += point.get("tvl", 0)
+                date_metrics[date]["total_volume"] += point.get("volume", 0)
+                date_metrics[date]["protocols"].append(protocol)
+        
+        # Convert to DeFiMetrics objects
+        for date, metrics in sorted(date_metrics.items()):
+            defi_metric = DeFiMetrics(
+                total_value_locked=metrics["total_tvl"],
+                tvl_change_24h=0,  # Calculate from previous day if needed
+                tvl_change_7d=0,
+                protocol_count=len(set(metrics["protocols"])),
+                defi_dominance=min(metrics["total_tvl"] / 100_000_000_000, 1.0),  # Rough estimate
+                chains_tvl={},  # Could aggregate by chain if needed
+                lending_tvl=0,  # Could separate by protocol type
+                dex_tvl=metrics["total_tvl"] if "uniswap" in metrics["protocols"] else 0,
+                derivatives_tvl=0,
+                timestamp=metrics["timestamp"]
+            )
+            all_metrics.append(defi_metric)
+        
+        return all_metrics
+    
+    async def _get_uniswap_v3_metrics(self, start_timestamp: int, end_timestamp: int) -> List[Dict]:
+        """Get Uniswap V3 historical metrics"""
+        query = """
+        query($start: Int!, $end: Int!) {
+            uniswapDayDatas(
+                first: 1000,
+                orderBy: date,
+                orderDirection: asc,
+                where: { 
+                    date_gte: $start,
+                    date_lte: $end
+                }
+            ) {
+                date
+                tvlUSD
+                volumeUSD
+                txCount
+                feesUSD
+            }
+        }
+        """
+        
+        variables = {
+            "start": start_timestamp,
+            "end": end_timestamp
+        }
+        
+        result = await self.query_subgraph("uniswap_v3", query, variables)
+        
+        metrics = []
+        for day_data in result.get("uniswapDayDatas", []):
+            metrics.append({
+                "date": int(day_data["date"]),
+                "tvl": float(day_data["tvlUSD"]),
+                "volume": float(day_data["volumeUSD"]),
+                "tx_count": int(day_data["txCount"]),
+                "fees": float(day_data.get("feesUSD", 0))
+            })
+        
+        return metrics
+    
+    async def _get_aave_v3_metrics(self, start_timestamp: int, end_timestamp: int) -> List[Dict]:
+        """Get Aave V3 historical metrics"""
+        # Note: Aave subgraph structure may be different
+        # This is a simplified query - adjust based on actual subgraph schema
+        query = """
+        query($start: Int!, $end: Int!) {
+            markets(first: 100) {
+                id
+                totalValueLockedUSD
+                totalBorrowsUSD
+                totalDepositBalanceUSD
+            }
+        }
+        """
+        
+        variables = {
+            "start": start_timestamp,
+            "end": end_timestamp
+        }
+        
+        result = await self.query_subgraph("aave_v3", query, variables)
+        
+        # Aggregate market TVLs
+        total_tvl = 0
+        for market in result.get("markets", []):
+            total_tvl += float(market.get("totalValueLockedUSD", 0))
+        
+        # Return single point for now (could enhance with daily snapshots)
+        return [{
+            "date": start_timestamp,
+            "tvl": total_tvl,
+            "volume": 0,  # Not directly available
+            "tx_count": 0,
+            "fees": 0
+        }]
+    
+    async def _get_compound_v3_metrics(self, start_timestamp: int, end_timestamp: int) -> List[Dict]:
+        """Get Compound V3 historical metrics"""
+        # Simplified query - adjust based on actual subgraph schema
+        query = """
+        query {
+            markets(first: 10) {
+                id
+                name
+                totalSupply
+                totalBorrow
+            }
+        }
+        """
+        
+        result = await self.query_subgraph("compound_v3", query)
+        
+        # Calculate total TVL (supply - borrow)
+        total_tvl = 0
+        for market in result.get("markets", []):
+            supply = float(market.get("totalSupply", 0))
+            borrow = float(market.get("totalBorrow", 0))
+            total_tvl += (supply - borrow)
+        
+        return [{
+            "date": start_timestamp,
+            "tvl": total_tvl,
+            "volume": 0,
+            "tx_count": 0,
+            "fees": 0
+        }]
+    
+    async def get_market_data(self) -> Optional[DeFiMetrics]:
+        """Get current DeFi metrics (implements base class method)"""
+        # Get latest data from major protocols
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=1)
+        
+        metrics = await self.get_historical_defi_metrics(
+            protocols=["uniswap_v3", "aave_v3"],
+            start_date=start_date,
+            end_date=end_date,
+            interval="daily"
+        )
+        
+        return metrics[-1] if metrics else None
 
 
 class SocialSentimentClient(MarketDataClientBase):
