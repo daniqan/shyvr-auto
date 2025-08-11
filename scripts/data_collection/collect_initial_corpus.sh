@@ -76,7 +76,7 @@ echo ""
 # Determine Python command arguments based on mode
 case "$MODE" in
     clean)
-        PYTHON_ARGS="--clean"
+        PYTHON_ARGS="--clean $@"  # Pass remaining args (like --force)
         echo -e "${YELLOW}🧹 This will clean all existing initial corpus data${NC}"
         echo ""
         ;;

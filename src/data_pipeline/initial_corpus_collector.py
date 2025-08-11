@@ -736,10 +736,6 @@ class InitialCorpusCollector:
                 timestamp, fear_greed_index, fear_greed_classification,
                 data_source, collection_timestamp
             ) VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (timestamp, data_source) DO UPDATE SET
-                fear_greed_index = EXCLUDED.fear_greed_index,
-                fear_greed_classification = EXCLUDED.fear_greed_classification,
-                collection_timestamp = EXCLUDED.collection_timestamp
         """
         
         # Handle both single and list of sentiment data
@@ -797,10 +793,6 @@ class InitialCorpusCollector:
                 sentiment_score, social_volume_24h,
                 data_source, collection_timestamp
             ) VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (token_id, timestamp, data_source) DO UPDATE SET
-                sentiment_score = EXCLUDED.sentiment_score,
-                social_volume_24h = EXCLUDED.social_volume_24h,
-                collection_timestamp = EXCLUDED.collection_timestamp
         """
         
         # Handle both single and list of sentiment data
