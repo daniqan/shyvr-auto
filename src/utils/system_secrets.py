@@ -118,6 +118,11 @@ class SystemSecrets:
         return self._get_secret("ETHERSCAN_API_KEY")
     
     @property
+    def alchemy_api_key(self) -> Optional[str]:
+        """Get Alchemy API key"""
+        return self._get_secret("ALCHEMY_API_KEY")
+    
+    @property
     def birdeye_api_key(self) -> Optional[str]:
         """Get Birdeye API key"""
         return self._get_secret("BIRDEYE_API_KEY")
@@ -187,6 +192,7 @@ class SystemSecrets:
             "lunarcrush": self.lunarcrush_api_key,
             "helius": self.helius_api_key,
             "etherscan": self.etherscan_api_key,
+            "alchemy": self.alchemy_api_key,
             "birdeye": self.birdeye_api_key,
             "quicknode": self.quicknode_api_key,
             "moralis": self.moralis_api_key,

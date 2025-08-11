@@ -1346,17 +1346,202 @@ class OnChainAnalyticsClient(MarketDataClientBase):
             )
     
     async def _get_ethereum_data(self, chain: Chain) -> OnChainMetrics:
-        """Get Ethereum on-chain data using Etherscan API"""
+        """Get Ethereum on-chain data using Alchemy API (preferred) or Etherscan API"""
         try:
-            # Get Etherscan API key from system secrets
+            # Get API keys from system secrets
             from src.utils.system_secrets import get_system_secrets
             system_secrets = get_system_secrets()
+            alchemy_api_key = system_secrets.alchemy_api_key
             etherscan_api_key = system_secrets.etherscan_api_key
             
-            if not etherscan_api_key:
-                self.logger.warning("Etherscan API key not found, using fallback data")
+            # Prefer Alchemy API if available
+            if alchemy_api_key:
+                return await self._get_ethereum_data_alchemy(chain, alchemy_api_key)
+            elif etherscan_api_key:
+                self.logger.info("Alchemy API key not found, falling back to Etherscan")
+                return await self._get_ethereum_data_etherscan(chain, etherscan_api_key)
+            else:
+                self.logger.warning("Neither Alchemy nor Etherscan API keys found, using fallback data")
                 return await self._get_ethereum_fallback_data(chain)
             
+        except Exception as e:
+            self.logger.error(f"Failed to get {chain.value} data", error=str(e))
+            return await self._get_ethereum_fallback_data(chain)
+    
+    async def _get_ethereum_data_alchemy(self, chain: Chain, api_key: str) -> OnChainMetrics:
+        """Get Ethereum on-chain data using Alchemy API"""
+        try:
+            # Map chain to Alchemy network endpoints
+            chain_networks = {
+                Chain.ETHEREUM: "eth-mainnet",
+                Chain.POLYGON: "polygon-mainnet",
+                Chain.ARBITRUM: "arb-mainnet",
+                Chain.BASE: "base-mainnet",
+                Chain.AVALANCHE: "avax-mainnet"
+            }
+            
+            network = chain_networks.get(chain, "eth-mainnet")
+            base_url = f"https://{network}.g.alchemy.com/v2/{api_key}"
+            
+            # Get latest block number
+            latest_block_payload = {
+                "jsonrpc": "2.0",
+                "method": "eth_blockNumber",
+                "params": [],
+                "id": 1
+            }
+            
+            session = await self._get_session()
+            async with session.post(base_url, json=latest_block_payload) as response:
+                block_data = await response.json()
+                latest_block = int(block_data.get("result", "0x0"), 16)
+            
+            # Calculate block 24 hours ago
+            blocks_per_day = 7200 if chain == Chain.ETHEREUM else 43200  # ETH: 12s, Others: ~2s blocks
+            block_24h_ago = latest_block - blocks_per_day
+            
+            # Get gas price
+            gas_price_payload = {
+                "jsonrpc": "2.0",
+                "method": "eth_gasPrice",
+                "params": [],
+                "id": 1
+            }
+            
+            async with session.post(base_url, json=gas_price_payload) as response:
+                gas_data = await response.json()
+                gas_price_wei = int(gas_data.get("result", "0x0"), 16)
+                gas_price_gwei = gas_price_wei / 1e9
+            
+            # Get block details for transaction count estimation
+            block_payload = {
+                "jsonrpc": "2.0",
+                "method": "eth_getBlockByNumber",
+                "params": [hex(latest_block), False],  # False = don't include full tx objects
+                "id": 1
+            }
+            
+            async with session.post(base_url, json=block_payload) as response:
+                block_info = await response.json()
+                block_result = block_info.get("result", {})
+                tx_per_block = len(block_result.get("transactions", []))
+                gas_used = int(block_result.get("gasUsed", "0x0"), 16)
+                gas_limit = int(block_result.get("gasLimit", "0x0"), 16)
+                base_fee = int(block_result.get("baseFeePerGas", "0x0"), 16) / 1e9 if "baseFeePerGas" in block_result else gas_price_gwei
+            
+            # Estimate daily transaction count
+            estimated_tx_count = tx_per_block * blocks_per_day
+            
+            # Use Alchemy's enhanced APIs for better metrics
+            # Get asset transfers for volume estimation (last 1000 blocks sample)
+            transfers_payload = {
+                "jsonrpc": "2.0",
+                "method": "alchemy_getAssetTransfers",
+                "params": [{
+                    "fromBlock": hex(latest_block - 100),
+                    "toBlock": hex(latest_block),
+                    "category": ["external", "internal"],
+                    "maxCount": "0x64"  # 100 transfers
+                }],
+                "id": 1
+            }
+            
+            async with session.post(base_url, json=transfers_payload) as response:
+                transfers_data = await response.json()
+                transfers = transfers_data.get("result", {}).get("transfers", [])
+                
+                # Calculate volume and active addresses from transfers
+                unique_addresses = set()
+                total_value_eth = 0.0
+                large_transfers = 0
+                whale_threshold = 100  # ETH
+                
+                for transfer in transfers:
+                    if transfer.get("from"):
+                        unique_addresses.add(transfer["from"])
+                    if transfer.get("to"):
+                        unique_addresses.add(transfer["to"])
+                    
+                    value = float(transfer.get("value", 0))
+                    total_value_eth += value
+                    
+                    if value >= whale_threshold:
+                        large_transfers += 1
+                
+                # Scale up estimates
+                scaling_factor = blocks_per_day / 100  # We sampled 100 blocks
+                estimated_active_addresses = int(len(unique_addresses) * scaling_factor)
+                estimated_volume_eth = total_value_eth * scaling_factor
+                estimated_large_tx = int(large_transfers * scaling_factor)
+            
+            # Get ETH price for USD conversions
+            # Using CoinGecko as price oracle (could use Chainlink in production)
+            eth_price = 3000.0  # Default fallback
+            try:
+                coingecko_url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+                async with session.get(coingecko_url) as response:
+                    price_data = await response.json()
+                    eth_price = price_data.get("ethereum", {}).get("usd", 3000.0)
+            except:
+                pass
+            
+            # Calculate network fees
+            avg_gas_per_tx = 21000  # Basic transfer
+            estimated_fees_eth = (estimated_tx_count * avg_gas_per_tx * base_fee) / 1e9
+            estimated_fees_usd = estimated_fees_eth * eth_price
+            
+            # Calculate staking ratio (post-merge Ethereum)
+            staking_ratio = 0.27 if chain == Chain.ETHEREUM else None
+            
+            whale_activity = {
+                "large_transactions_24h": estimated_large_tx,
+                "whale_net_flow": estimated_large_tx * whale_threshold,
+                "whale_threshold": whale_threshold,
+                "unique_whale_addresses": estimated_large_tx // 10  # Rough estimate
+            }
+            
+            network_activity = {
+                "chain": chain.value,
+                "gas_price_gwei": gas_price_gwei,
+                "base_fee_gwei": base_fee,
+                "gas_used": gas_used,
+                "gas_limit": gas_limit,
+                "utilization": (gas_used / gas_limit * 100) if gas_limit > 0 else 0,
+                "block_number": latest_block,
+                "block_time": 12.0 if chain == Chain.ETHEREUM else 2.0,
+                "eth_price": eth_price,
+                "staking_ratio": staking_ratio,
+                "network": network
+            }
+            
+            self.logger.info(f"Retrieved Alchemy data for {chain.value}",
+                           tx_count=estimated_tx_count,
+                           active_addresses=estimated_active_addresses)
+            
+            return OnChainMetrics(
+                network_activity=network_activity,
+                transaction_count_24h=estimated_tx_count,
+                active_addresses_24h=estimated_active_addresses,
+                transaction_volume_24h=estimated_volume_eth * eth_price,
+                network_fees_24h=estimated_fees_usd,
+                hash_rate=None,
+                staking_ratio=staking_ratio,
+                whale_activity=whale_activity
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get {chain.value} data from Alchemy", error=str(e))
+            # Fall back to Etherscan if available
+            from src.utils.system_secrets import get_system_secrets
+            system_secrets = get_system_secrets()
+            if system_secrets.etherscan_api_key:
+                return await self._get_ethereum_data_etherscan(chain, system_secrets.etherscan_api_key)
+            else:
+                return await self._get_ethereum_fallback_data(chain)
+    
+    async def _get_ethereum_data_etherscan(self, chain: Chain, api_key: str) -> OnChainMetrics:
+        """Get Ethereum on-chain data using Etherscan API"""
+        try:
             # Map chain to Etherscan endpoints
             chain_endpoints = {
                 Chain.ETHEREUM: "https://api.etherscan.io/api",
@@ -1370,17 +1555,17 @@ class OnChainAnalyticsClient(MarketDataClientBase):
             base_url = chain_endpoints.get(chain, "https://api.etherscan.io/api")
             
             # Get gas oracle for current gas prices
-            gas_oracle_url = f"{base_url}?module=gastracker&action=gasoracle&apikey={etherscan_api_key}"
+            gas_oracle_url = f"{base_url}?module=gastracker&action=gasoracle&apikey={api_key}"
             gas_data = await self._make_request(gas_oracle_url)
             gas_result = gas_data.get("result", {})
             
             # Get current ETH price
-            eth_price_url = f"{base_url}?module=stats&action=ethprice&apikey={etherscan_api_key}"
+            eth_price_url = f"{base_url}?module=stats&action=ethprice&apikey={api_key}"
             price_data = await self._make_request(eth_price_url)
             eth_price = float(price_data.get("result", {}).get("ethusd", 3000))
             
             # Get latest block number for calculating 24h range
-            latest_block_url = f"{base_url}?module=proxy&action=eth_blockNumber&apikey={etherscan_api_key}"
+            latest_block_url = f"{base_url}?module=proxy&action=eth_blockNumber&apikey={api_key}"
             block_data = await self._make_request(latest_block_url)
             latest_block = int(block_data.get("result", "0x0"), 16)
             
@@ -1390,7 +1575,7 @@ class OnChainAnalyticsClient(MarketDataClientBase):
             
             # Get transaction count (simplified - would need more complex logic for accurate count)
             # Using proxy module to get block transaction counts
-            tx_count_url = f"{base_url}?module=proxy&action=eth_getBlockTransactionCountByNumber&tag={hex(latest_block)}&apikey={etherscan_api_key}"
+            tx_count_url = f"{base_url}?module=proxy&action=eth_getBlockTransactionCountByNumber&tag={hex(latest_block)}&apikey={api_key}"
             tx_count_data = await self._make_request(tx_count_url)
             tx_per_block = int(tx_count_data.get("result", "0x100"), 16)
             estimated_tx_count = tx_per_block * blocks_per_day
