@@ -148,8 +148,8 @@ class InitialCorpusCollector:
             # LunarCrush client (optional)
             lunarcrush_key = system_secrets.lunarcrush_api_key
             if lunarcrush_key:
-                # Check for tier configuration from environment
-                lunarcrush_tier = os.environ.get('LUNARCRUSH_TIER', 'basic')
+                # Check for tier configuration from environment (default to enterprise)
+                lunarcrush_tier = os.environ.get('LUNARCRUSH_TIER', 'enterprise')
                 self.social_client = SocialSentimentClient(
                     api_key=lunarcrush_key,
                     tier=lunarcrush_tier
@@ -476,18 +476,32 @@ class InitialCorpusCollector:
                 await asyncio.sleep(self.rate_limit_delay)
                 
                 if is_historical:
-                    # For historical data, check if we have Pro tier
-                    if hasattr(self.social_client, 'tier') and self.social_client.tier == 'pro':
-                        # Use midpoint of date range for historical sentiment
-                        target_timestamp = start_date + (end_date - start_date) / 2
-                        social_data = await self.social_client.get_historical_sentiment('bitcoin', target_timestamp)
-                        if social_data:
-                            market_data['social'] = social_data
+                    # For historical data, check if we have Pro/Enterprise tier
+                    if hasattr(self.social_client, 'tier') and self.social_client.tier in ['pro', 'enterprise']:
+                        # Get full historical data for the date range
+                        historical_social = await self.social_client.get_historical_data(
+                            'bitcoin', start_date, end_date, interval='1d'
+                        )
+                        
+                        if historical_social:
+                            market_data['social'] = historical_social
                             self.logger.info("Historical social sentiment collected",
-                                           score=social_data.social_score,
-                                           timestamp=target_timestamp.isoformat())
+                                           count=len(historical_social),
+                                           start=start_date.isoformat(),
+                                           end=end_date.isoformat())
+                        else:
+                            # Fallback to single point at midpoint
+                            target_timestamp = start_date + (end_date - start_date) / 2
+                            social_data = await self.social_client.get_historical_sentiment('bitcoin', target_timestamp)
+                            if social_data:
+                                market_data['social'] = [social_data]
+                                self.logger.info("Historical social sentiment collected (single point)",
+                                               score=social_data.social_score,
+                                               timestamp=target_timestamp.isoformat())
+                            else:
+                                market_data['social'] = None
                     else:
-                        self.logger.debug("Skipping historical social sentiment (requires Pro tier)")
+                        self.logger.debug("Skipping historical social sentiment (requires Pro/Enterprise tier)")
                         # Store None to indicate data not available
                         market_data['social'] = None
                 else:
@@ -776,24 +790,45 @@ class InitialCorpusCollector:
         )
     
     async def _store_social_sentiment(self, conn, social_data) -> None:
-        """Store social sentiment data"""
+        """Store social sentiment data (single or multiple records)"""
         query = """
             INSERT INTO social_sentiment (
                 token_id, timestamp,
                 sentiment_score, social_volume_24h,
                 data_source, collection_timestamp
             ) VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (token_id, timestamp, data_source) DO UPDATE SET
+                sentiment_score = EXCLUDED.sentiment_score,
+                social_volume_24h = EXCLUDED.social_volume_24h,
+                collection_timestamp = EXCLUDED.collection_timestamp
         """
         
-        await conn.execute(
-            query,
-            'bitcoin',  # token_id (Bitcoin as market proxy)
-            self._ensure_timezone_aware(social_data.timestamp),
-            float(social_data.social_score),
-            int(social_data.mention_volume),
-            'initial',
-            datetime.now(timezone.utc)
-        )
+        # Handle both single and list of sentiment data
+        if isinstance(social_data, list):
+            count = 0
+            for sentiment in social_data:
+                await conn.execute(
+                    query,
+                    'bitcoin',  # token_id (Bitcoin as market proxy)
+                    self._ensure_timezone_aware(sentiment.timestamp),
+                    float(sentiment.social_score),
+                    int(sentiment.mention_volume),
+                    'initial',
+                    datetime.now(timezone.utc)
+                )
+                count += 1
+            self.logger.debug(f"Stored {count} social sentiment records")
+        else:
+            # Single record (backward compatibility)
+            await conn.execute(
+                query,
+                'bitcoin',  # token_id (Bitcoin as market proxy)
+                self._ensure_timezone_aware(social_data.timestamp),
+                float(social_data.social_score),
+                int(social_data.mention_volume),
+                'initial',
+                datetime.now(timezone.utc)
+            )
     
     async def _store_onchain_metrics(self, conn, onchain_data) -> None:
         """Store on-chain metrics data"""

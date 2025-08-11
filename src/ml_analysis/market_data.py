@@ -1578,7 +1578,7 @@ class SocialSentimentClient(MarketDataClientBase):
         "avalanche", "chainlink", "uniswap", "aave", "curve"
     ]
     
-    def __init__(self, api_key: Optional[str] = None, tier: str = "basic", **kwargs):
+    def __init__(self, api_key: Optional[str] = None, tier: str = "enterprise", **kwargs):
         # Get API key from environment if not provided
         if not api_key:
             api_key = os.getenv("LUNARCRUSH_API_KEY")
@@ -1588,14 +1588,14 @@ class SocialSentimentClient(MarketDataClientBase):
         if not self.api_key:
             raise APIAuthenticationError("LunarCrush API key is required. Set LUNARCRUSH_API_KEY environment variable or pass api_key parameter.")
         
-        self.tier = tier  # 'basic' or 'pro'
+        self.tier = tier  # 'basic', 'pro', or 'enterprise'
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
     
     async def get_historical_sentiment(self, asset: str, timestamp: datetime) -> Optional[SocialSentimentData]:
-        """Get historical sentiment data for a specific timestamp (requires Pro tier)
+        """Get historical sentiment data for a specific timestamp (requires Pro/Enterprise tier)
         
         Args:
             asset: Cryptocurrency to get sentiment for (e.g., 'bitcoin')
@@ -1604,9 +1604,9 @@ class SocialSentimentClient(MarketDataClientBase):
         Returns:
             SocialSentimentData or None if not available
         """
-        if self.tier != "pro":
+        if self.tier not in ["pro", "enterprise"]:
             self.logger.warning(
-                "Historical sentiment requires Pro tier",
+                "Historical sentiment requires Pro or Enterprise tier",
                 asset=asset,
                 timestamp=timestamp.isoformat()
             )
@@ -1635,7 +1635,7 @@ class SocialSentimentClient(MarketDataClientBase):
             # Find the data point closest to our timestamp
             closest_point = min(
                 data_points,
-                key=lambda x: abs(datetime.fromtimestamp(x.get("time", 0)) - timestamp)
+                key=lambda x: abs(datetime.fromtimestamp(x.get("time", 0), tz=timezone.utc) - timestamp)
             )
             
             # Extract sentiment data from historical point
@@ -1839,20 +1839,121 @@ class SocialSentimentClient(MarketDataClientBase):
             self.logger.error("Failed to get topic data", asset=asset, error=str(e))
             raise MarketDataError(f"Failed to get topic data for {asset}: {str(e)}")
     
+    async def get_historical_data(self, 
+                                 asset: str,
+                                 start_date: datetime, 
+                                 end_date: datetime,
+                                 interval: str = "1d") -> List[SocialSentimentData]:
+        """Get historical sentiment data for a date range (requires Enterprise tier)
+        
+        Args:
+            asset: Cryptocurrency to get sentiment for (e.g., 'bitcoin')
+            start_date: Start date for historical data
+            end_date: End date for historical data
+            interval: Data interval ('1h', '1d', '1w')
+            
+        Returns:
+            List of SocialSentimentData objects for each time period
+        """
+        if self.tier not in ["pro", "enterprise"]:
+            self.logger.warning(
+                "Historical time series requires Pro or Enterprise tier",
+                asset=asset,
+                tier=self.tier
+            )
+            return []
+        
+        historical_data = []
+        
+        try:
+            # Use time-series endpoint for historical data
+            url = f"{self.BASE_URL}/public/topic/{asset}/time-series/v2"
+            
+            params = {
+                "start": int(start_date.timestamp()),
+                "end": int(end_date.timestamp()),
+                "interval": interval
+            }
+            
+            self.logger.info(f"Fetching LunarCrush historical data for {asset}", 
+                           start=start_date.isoformat(), 
+                           end=end_date.isoformat(),
+                           interval=interval)
+            
+            response = await self._make_request(url, params=params, headers=self.headers)
+            data_points = response.get("data", [])
+            
+            if not data_points:
+                self.logger.warning(f"No historical data available for {asset}")
+                return []
+            
+            self.logger.debug(f"Sample data point: {data_points[0] if data_points else 'None'}")
+            
+            # Convert each data point to SocialSentimentData
+            for point in data_points:
+                timestamp = datetime.fromtimestamp(point.get("time", 0), tz=timezone.utc)
+                
+                sentiment_data = SocialSentimentData(
+                    social_score=(point.get("sentiment", 3) - 1) / 4,  # Convert 1-5 to 0-1
+                    mention_volume=point.get("posts", 0),
+                    sentiment_trend=0.0,  # Will be calculated from overall series
+                    platform_mentions={
+                        "twitter": point.get("twitter_posts", 0),
+                        "reddit": point.get("reddit_posts", 0),
+                        "youtube": point.get("youtube_posts", 0),
+                        "telegram": point.get("telegram_posts", 0)
+                    },
+                    sentiment_breakdown={},  # Not available in time series
+                    trending_keywords=[],  # Not available in time series
+                    influencer_sentiment=None,  # Not available in time series
+                    timestamp=timestamp
+                )
+                
+                historical_data.append(sentiment_data)
+            
+            # Calculate trend for each data point based on surrounding context
+            for i, data in enumerate(historical_data):
+                # Calculate trend based on surrounding points
+                window_start = max(0, i - 3)
+                window_end = min(len(historical_data), i + 4)
+                window_data = historical_data[window_start:window_end]
+                
+                if len(window_data) >= 2:
+                    # Simple linear trend calculation
+                    first_half = window_data[:len(window_data)//2]
+                    second_half = window_data[len(window_data)//2:]
+                    
+                    first_avg = sum(d.social_score for d in first_half) / len(first_half)
+                    second_avg = sum(d.social_score for d in second_half) / len(second_half)
+                    
+                    data.sentiment_trend = max(-1.0, min(1.0, (second_avg - first_avg) * 2))
+            
+            self.logger.info(f"Retrieved {len(historical_data)} historical data points for {asset}")
+            return sorted(historical_data, key=lambda x: x.timestamp)
+            
+        except Exception as e:
+            self.logger.error(
+                "Failed to get historical time series",
+                asset=asset,
+                error=str(e)
+            )
+            return []
+    
     async def _calculate_sentiment_trend(self, asset: str) -> float:
         """Calculate sentiment trend from time series data"""
         try:
-            # Time series endpoint requires paid subscription
-            # Return neutral trend for free tier
-            return 0.0  # Neutral trend
+            # For Enterprise tier, use time series data
+            if self.tier in ["pro", "enterprise"]:
+                url = f"{self.BASE_URL}/public/topic/{asset}/time-series/v2"
+                params = {"interval": "1h", "data_points": 24}  # Last 24 hours
+                response = await self._make_request(url, params=params, headers=self.headers)
+                data_points = response.get("data", [])
+                
+                if len(data_points) >= 2:
+                    return self._calculate_trend_from_series(data_points)
             
-            # Original code for paid subscription:
-            # url = f"{self.BASE_URL}/public/topic/{asset}/time-series/v2"
-            # params = {"interval": "1h", "data_points": 24}  # Last 24 hours
-            # response = await self._make_request(url, params=params, headers=self.headers)
-            # data_points = response.get("data", [])
-            # if len(data_points) < 2:
-            #     return 0.0  # No trend available
+            # Return neutral trend for free tier
+            return 0.0
             
         except Exception as e:
             self.logger.warning("Failed to calculate sentiment trend", asset=asset, error=str(e))
