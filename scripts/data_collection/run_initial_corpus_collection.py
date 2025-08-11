@@ -76,7 +76,9 @@ async def run_collection(
     if len(tokens) > 3:
         print(f'     • ... and {len(tokens) - 3} more')
     print(f'   - Period: {days} days')
-    print(f'   - Expected records: ~{len(tokens) * days * 4:,} (4-hour candles)')
+    # CoinGecko returns ~6 candles per day (4-hour intervals)
+    print(f'   - Expected OHLCV records: ~{len(tokens) * days * 6:,} (4-hour candles)')
+    print(f'   - Expected sentiment records: ~{days} (daily)')
     print('')
     
     try:
@@ -341,7 +343,7 @@ def main():
         print('🧪 Running TEST collection...')
     elif args.production:
         tokens = PRODUCTION_TOKENS
-        days = 180
+        days = 365  # Full year of historical data for production
         print('🚀 Running PRODUCTION collection...')
     else:
         # Use custom configuration or defaults

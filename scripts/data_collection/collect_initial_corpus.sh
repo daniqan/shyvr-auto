@@ -10,10 +10,10 @@
 #   # Clean existing data
 #   ./scripts/data_collection/collect_initial_corpus.sh clean
 #   
-#   # Test run (2 tokens, 7 days)
+#   # Test run (2 tokens, 30 days)
 #   ./scripts/data_collection/collect_initial_corpus.sh test
 #   
-#   # Production run (10 tokens, 180 days) 
+#   # Production run (10 tokens, 365 days) 
 #   ./scripts/data_collection/collect_initial_corpus.sh production
 #   
 #   # Custom run
@@ -85,8 +85,8 @@ case "$MODE" in
         ;;
     production)
         PYTHON_ARGS="--production"
-        echo -e "${YELLOW}⚠️  This will collect 180 days of data for 10 tokens${NC}"
-        echo -e "${YELLOW}   Estimated time: 30-60 minutes${NC}"
+        echo -e "${YELLOW}⚠️  This will collect 365 days of data for 10 tokens${NC}"
+        echo -e "${YELLOW}   Estimated time: 60-90 minutes${NC}"
         echo ""
         read -p "Continue? (y/N): " -n 1 -r
         echo

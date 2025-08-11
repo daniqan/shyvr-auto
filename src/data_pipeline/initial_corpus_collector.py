@@ -78,7 +78,7 @@ class InitialCorpusCollector:
     ]
     
     def __init__(self,
-                 collection_days: int = 180,  # 6 months of data
+                 collection_days: int = 30,  # Default for test mode
                  rate_limit_delay: float = 2.1,  # Conservative rate limiting
                  retry_attempts: int = 3,
                  batch_size: int = 100):
@@ -86,7 +86,7 @@ class InitialCorpusCollector:
         Initialize Initial Corpus Collector
         
         Args:
-            collection_days: Days of historical data to collect
+            collection_days: Days of historical data to collect (30 for test, 365 for production)
             rate_limit_delay: Delay between API calls in seconds
             retry_attempts: Number of retry attempts for failed API calls
             batch_size: Batch size for database operations
