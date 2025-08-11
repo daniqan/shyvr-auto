@@ -1640,7 +1640,7 @@ class SocialSentimentClient(MarketDataClientBase):
             
             # Extract sentiment data from historical point
             return SocialSentimentData(
-                social_score=(closest_point.get("sentiment", 3) - 1) / 4,  # Convert 1-5 to 0-1
+                social_score=closest_point.get("sentiment", 50) / 100.0,  # Convert 0-100 to 0-1
                 mention_volume=closest_point.get("posts", 0),
                 sentiment_trend=self._calculate_trend_from_series(data_points),
                 platform_mentions=closest_point.get("platforms", {}),
@@ -1664,18 +1664,18 @@ class SocialSentimentClient(MarketDataClientBase):
         if len(data_points) < 2:
             return 0.0
         
-        # Simple linear trend of sentiment over time
-        sentiments = [p.get("sentiment", 3) for p in data_points]
+        # Simple linear trend of sentiment over time (0-100 scale)
+        sentiments = [p.get("sentiment", 50) for p in data_points]
         if len(sentiments) < 2:
             return 0.0
         
         # Calculate change from first half to second half average
         mid = len(sentiments) // 2
-        first_half_avg = sum(sentiments[:mid]) / mid if mid > 0 else 3
-        second_half_avg = sum(sentiments[mid:]) / len(sentiments[mid:]) if sentiments[mid:] else 3
+        first_half_avg = sum(sentiments[:mid]) / mid if mid > 0 else 50
+        second_half_avg = sum(sentiments[mid:]) / len(sentiments[mid:]) if sentiments[mid:] else 50
         
-        # Normalize to -1 to 1 range
-        trend = (second_half_avg - first_half_avg) / 4
+        # Normalize to -1 to 1 range (50 point swing = full trend)
+        trend = (second_half_avg - first_half_avg) / 50
         return max(-1.0, min(1.0, trend))
     
     async def get_current_sentiment(self, assets: Optional[List[str]] = None) -> Dict[str, SocialSentimentData]:
@@ -1894,7 +1894,7 @@ class SocialSentimentClient(MarketDataClientBase):
                 timestamp = datetime.fromtimestamp(point.get("time", 0), tz=timezone.utc)
                 
                 sentiment_data = SocialSentimentData(
-                    social_score=(point.get("sentiment", 3) - 1) / 4,  # Convert 1-5 to 0-1
+                    social_score=point.get("sentiment", 50) / 100.0,  # Convert 0-100 to 0-1
                     mention_volume=point.get("posts", 0),
                     sentiment_trend=0.0,  # Will be calculated from overall series
                     platform_mentions={
@@ -1927,6 +1927,45 @@ class SocialSentimentClient(MarketDataClientBase):
                     second_avg = sum(d.social_score for d in second_half) / len(second_half)
                     
                     data.sentiment_trend = max(-1.0, min(1.0, (second_avg - first_avg) * 2))
+            
+            # If we requested daily data but got hourly, aggregate to daily
+            if interval == '1d' and len(historical_data) > (end_date - start_date).days * 2:
+                self.logger.info(f"Aggregating {len(historical_data)} hourly points to daily")
+                daily_data = {}
+                
+                for data_point in historical_data:
+                    date_key = data_point.timestamp.date()
+                    
+                    if date_key not in daily_data:
+                        daily_data[date_key] = []
+                    daily_data[date_key].append(data_point)
+                
+                # Average each day's data
+                aggregated_data = []
+                for date_key, day_points in sorted(daily_data.items()):
+                    if not day_points:
+                        continue
+                    
+                    # Average the scores and sum the volumes for the day
+                    avg_score = sum(p.social_score for p in day_points) / len(day_points)
+                    total_volume = sum(p.mention_volume for p in day_points)
+                    avg_trend = sum(p.sentiment_trend for p in day_points) / len(day_points)
+                    
+                    # Use the last data point of the day for timestamp
+                    daily_sentiment = SocialSentimentData(
+                        social_score=avg_score,
+                        mention_volume=total_volume,
+                        sentiment_trend=avg_trend,
+                        platform_mentions=day_points[-1].platform_mentions,
+                        sentiment_breakdown=day_points[-1].sentiment_breakdown,
+                        trending_keywords=day_points[-1].trending_keywords,
+                        influencer_sentiment=day_points[-1].influencer_sentiment,
+                        timestamp=day_points[-1].timestamp
+                    )
+                    aggregated_data.append(daily_sentiment)
+                
+                self.logger.info(f"Aggregated to {len(aggregated_data)} daily data points for {asset}")
+                return aggregated_data
             
             self.logger.info(f"Retrieved {len(historical_data)} historical data points for {asset}")
             return sorted(historical_data, key=lambda x: x.timestamp)

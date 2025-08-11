@@ -407,8 +407,9 @@ class InitialCorpusCollector:
         market_data = {}
         
         # Determine if we're collecting historical or current data
-        time_diff = datetime.now(timezone.utc) - end_date
-        is_historical = time_diff.total_seconds() > 48 * 3600  # More than 48 hours old
+        # For initial corpus collection, if we have a date range > 1 day, consider it historical
+        date_range = end_date - start_date
+        is_historical = date_range.total_seconds() > 24 * 3600  # More than 1 day range
         
         self.logger.info("Starting market data collection", 
                         mode="historical" if is_historical else "current",
