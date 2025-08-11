@@ -1978,22 +1978,21 @@ class GraphProtocolClient(MarketDataClientBase):
     Provides access to historical and real-time DeFi metrics via GraphQL subgraphs
     """
     
-    # Use direct subgraph studio URLs (these work without API keys for limited queries)
-    SUBGRAPH_ENDPOINTS = {
-        # Uniswap V3 public endpoint on Polygon
-        "uniswap_v3": "https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon",
-        # DeFiLlama endpoints for aggregated data
-        "defi_aggregated": "https://api.llama.fi/protocol/uniswap",
-    }
-    
-    # Subgraph IDs for future use with proper API keys
+    # Official subgraph IDs from The Graph Explorer (as of August 2025)
+    # Note: Only Uniswap V3 is currently confirmed working with our API key
+    # Other protocols may require different subgraph IDs or authentication
     SUBGRAPH_IDS = {
-        "uniswap_v3": "ELUcwgpm14LKPLrBRuVvPvNKHQ9HvwmtKgKSH6123cr7",
-        "uniswap_v2": "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu",
-        "aave_v3": "GQFbb95cE6d8mV989mL5figjaGH5qC3qJUqYrfEPqhXP",
-        "aave_v2": "8wR23o3HiXQHqMXpX1oqY4xwgJXsMRTqfJGcsY1V8Dxy",
-        "compound_v3": "Ehks5TUAiLwJKQmYNfHQVxYBwb9wBWFcZKCfWUBfP4JE",
-        "compound_v2": "6tGbL7RjaT8Wuu9v2vKQ8yfZQ4KUzUQdXnqPb7MiPPNP",
+        "uniswap_v3": "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",  # Uniswap V3 (confirmed working)
+        # The following IDs need to be verified/updated:
+        # "uniswap_v2": "A3Np3RQbaBA6oKJgiwDJeo5T3zrYfGHPWFYayMwtNDum",  
+        # "aave_v3": "GQFbb95cE6d8mV989mL5figjaGH5qC3qJUqYrfEPqhXP",  
+        # "aave_v2": "8wR23o3HiXQHqMXpX1oqY4xwgJXsMRTqfJGcsY1V8Dxy", 
+        # "compound_v3": "Ehks5TUAiLwJKQmYNfHQVxYBwb9wBWFcZKCfWUBfP4JE",  
+        # "compound_v2": "6tGbL7RjaT8Wuu9v2vKQ8yfZQ4KUzUQdXnqPb7MiPPNP", 
+        # "curve": "CkQZp1aqB9jkNGgcV9Ek5xLZJDj1HtLgyjVZjs8TMuis",  
+        # "balancer_v2": "C4ayEZP2yFXqKTVhN3k8sT5TQ2DyjtmQY8fAxQQw3vUb",  
+        # "sushiswap": "7h1x51fyT5KigAhXd8sdE3kzzgQJMr1ymsUZNBhFwvhQ",  
+        # "maker": "8L5fdJuU9bkpqAUNaVVjeGkxh9XS7gPsMmhBP6FcNZko",  
     }
     
     def __init__(self, api_key: Optional[str] = None, api_token: Optional[str] = None, **kwargs):
@@ -2015,18 +2014,18 @@ class GraphProtocolClient(MarketDataClientBase):
             self.api_key = api_key
             self.api_token = api_token
         
-        # Use Arbitrum gateway (decentralized network) without API key for now
-        # The Graph allows some free queries
-        # TODO: Add proper API key authentication once format is confirmed
-        self.base_url = "https://api.studio.thegraph.com/query/1931"
+        # The Graph gateway URL structure: https://gateway.thegraph.com/api/[api-key]/subgraphs/id/[subgraph-id]
+        if self.api_key:
+            # Use API key directly without any cleaning
+            self.base_url = f"https://gateway.thegraph.com/api/{self.api_key}/subgraphs/id"
+            self.logger.info(f"Using The Graph with API key authentication (key starts with: {self.api_key[:10]}...)")
+        else:
+            # Use without API key (limited queries)
+            self.base_url = "https://gateway.thegraph.com/api/subgraphs/id"
+            self.logger.info("Using The Graph without API key (rate limited)")
         
-        # For testing, we'll use public endpoints that don't require auth
-        self.logger.info("Using The Graph public endpoints (rate limited)")
-        
-        # Set authorization header if token is available
+        # Do not set any headers - API key is in URL path
         self.headers = {}
-        if self.api_token:
-            self.headers["Authorization"] = f"Bearer {self.api_token}"
     
     async def query_subgraph(
         self, 
@@ -2048,12 +2047,15 @@ class GraphProtocolClient(MarketDataClientBase):
             ValueError: If subgraph_name not found
             MarketDataError: If query fails
         """
-        # Use public endpoints for now (no auth required)
-        if subgraph_name not in self.SUBGRAPH_ENDPOINTS:
-            raise ValueError(f"Unknown subgraph: {subgraph_name}. Available: {list(self.SUBGRAPH_ENDPOINTS.keys())}")
+        # Get subgraph ID
+        if subgraph_name not in self.SUBGRAPH_IDS:
+            raise ValueError(f"Unknown subgraph: {subgraph_name}. Available: {list(self.SUBGRAPH_IDS.keys())}")
         
-        # Use the direct endpoint URL
-        url = self.SUBGRAPH_ENDPOINTS[subgraph_name]
+        subgraph_id = self.SUBGRAPH_IDS[subgraph_name]
+        url = f"{self.base_url}/{subgraph_id}"
+        
+        # Log the URL being used for debugging
+        self.logger.debug(f"Querying subgraph {subgraph_name} at URL: {url[:80]}...")
         
         # Prepare GraphQL request
         payload = {
@@ -2070,11 +2072,15 @@ class GraphProtocolClient(MarketDataClientBase):
                 # Check for errors
                 if "errors" in result:
                     error_msg = "; ".join([e.get("message", str(e)) for e in result["errors"]])
+                    self.logger.error(f"GraphQL error from {subgraph_name}: {error_msg}")
+                    self.logger.debug(f"Full URL was: {url}")
                     raise MarketDataError(f"GraphQL query error: {error_msg}")
                 
                 # Return data
                 return result.get("data", {})
                 
+        except MarketDataError:
+            raise  # Re-raise MarketDataError as-is
         except Exception as e:
             self.logger.error(f"Failed to query subgraph {subgraph_name}", error=str(e))
             raise MarketDataError(f"Failed to query {subgraph_name}: {str(e)}")
@@ -2147,12 +2153,9 @@ class GraphProtocolClient(MarketDataClientBase):
                 total_value_locked=metrics["total_tvl"],
                 tvl_change_24h=0,  # Calculate from previous day if needed
                 tvl_change_7d=0,
-                protocol_count=len(set(metrics["protocols"])),
+                protocols_count=len(set(metrics["protocols"])),  # Fixed field name
                 defi_dominance=min(metrics["total_tvl"] / 100_000_000_000, 1.0),  # Rough estimate
                 chains_tvl={},  # Could aggregate by chain if needed
-                lending_tvl=0,  # Could separate by protocol type
-                dex_tvl=metrics["total_tvl"] if "uniswap" in metrics["protocols"] else 0,
-                derivatives_tvl=0,
                 timestamp=metrics["timestamp"]
             )
             all_metrics.append(defi_metric)
