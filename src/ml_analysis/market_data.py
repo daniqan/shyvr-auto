@@ -373,19 +373,15 @@ class FearGreedIndexClient(MarketDataClientBase):
     BASE_URL = "https://api.alternative.me/fng/"
     
     def __init__(self, api_key: Optional[str] = None, rate_limit: int = 60, cache_ttl: int = 300):
-        """Initialize with optional Grok client for historical data"""
+        """Initialize Fear & Greed client with historical data support"""
         super().__init__(api_key, rate_limit, cache_ttl)
         
-        # Try to initialize Grok client for historical data
-        self.grok_client = None
-        self.historical_enabled = False
+        # Alternative.me API supports extensive historical data (2000+ days / 5+ years)
+        self.historical_enabled = True
+        self.grok_client = None  # Optional, not required since alternative.me works well
+        self.max_historical_days = 2000  # API supports at least 2000 days (5+ years)
         
-        try:
-            self.grok_client = GrokMarketClient()
-            self.historical_enabled = True
-            self.logger.info("Historical Fear & Greed data enabled via Grok")
-        except Exception as e:
-            self.logger.warning(f"Grok client not available, historical data disabled: {e}")
+        self.logger.info("Fear & Greed client initialized with 2000-day (5+ years) historical data support")
     
     async def get_market_data(self, days: int = 1) -> MarketSentimentData:
         """Get Fear & Greed Index data"""
@@ -466,84 +462,12 @@ class FearGreedIndexClient(MarketDataClientBase):
         # Calculate days needed
         days_back = (end_date - start_date).days + 1
         
-        # Try Grok first if available
-        if self.historical_enabled and self.grok_client:
+        # Use alternative.me API which supports days of historical data
+        if self.historical_enabled:
             try:
-                self.logger.info(f"Fetching {days_back} days of historical Fear & Greed data via Grok")
-                
-                # Get historical data from Grok
-                raw_data = await self.grok_client.get_historical_fear_greed(days_back)
-                
-                if raw_data:
-                    # Convert to MarketSentimentData objects
-                    for entry in raw_data:
-                        # Parse date
-                        try:
-                            entry_date = datetime.strptime(entry['date'], '%Y-%m-%d')
-                            
-                            # Skip if outside requested range
-                            if entry_date.date() < start_date.date() or entry_date.date() > end_date.date():
-                                continue
-                            
-                            value = float(entry['value'])
-                            
-                            # Determine classification if not provided
-                            if 'classification' in entry:
-                                classification = entry['classification'].replace('_', ' ').title()
-                            else:
-                                if value <= 25:
-                                    classification = "Extreme Fear"
-                                elif value <= 45:
-                                    classification = "Fear"
-                                elif value <= 55:
-                                    classification = "Neutral"
-                                elif value <= 75:
-                                    classification = "Greed"
-                                else:
-                                    classification = "Extreme Greed"
-                            
-                            # Determine market trend
-                            if value <= 30:
-                                trend = "bear"
-                            elif value >= 70:
-                                trend = "bull"
-                            else:
-                                trend = "sideways"
-                            
-                            # Determine volatility
-                            if value <= 20 or value >= 80:
-                                volatility = "high"
-                            elif value <= 40 or value >= 60:
-                                volatility = "medium"
-                            else:
-                                volatility = "low"
-                            
-                            sentiment_data = MarketSentimentData(
-                                fear_greed_index=value,
-                                fear_greed_classification=classification,
-                                market_trend=trend,
-                                volatility_regime=volatility,
-                                timestamp=entry_date.replace(tzinfo=timezone.utc)
-                            )
-                            
-                            historical_data.append(sentiment_data)
-                            
-                        except Exception as e:
-                            self.logger.warning(f"Failed to parse historical entry: {entry}, error: {e}")
-                            continue
-                    
-                    if historical_data:
-                        self.logger.info(f"Retrieved {len(historical_data)} days of historical Fear & Greed data")
-                        return sorted(historical_data, key=lambda x: x.timestamp)
-                
-            except Exception as e:
-                self.logger.warning(f"Failed to get historical data from Grok: {e}")
-        
-        # Fallback: Try alternative.me historical endpoint (limited to 30 days)
-        if not historical_data and days_back <= 30:
-            try:
-                self.logger.info("Falling back to alternative.me for historical data")
-                params = {"limit": min(days_back, 30), "format": "json"}
+                self.logger.info(f"Fetching {days_back} days of historical Fear & Greed data from alternative.me")
+                # Alternative.me supports extensive historical data
+                params = {"limit": days_back, "format": "json"}
                 data = await self._make_request(self.BASE_URL, params=params)
                 
                 if data and data.get("data"):
