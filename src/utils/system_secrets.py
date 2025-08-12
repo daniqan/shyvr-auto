@@ -103,6 +103,16 @@ class SystemSecrets:
         return self._get_secret("COINGECKO_API_KEY")
     
     @property
+    def coingecko_pro_api_key(self) -> Optional[str]:
+        """Get CoinGecko Pro API key for enhanced limits and data"""
+        # Try Pro key first, fallback to regular
+        pro_key = self._get_secret("COINGECKO_PRO_API_KEY")
+        if pro_key:
+            return pro_key
+        # Fallback to regular key if Pro not available
+        return self._get_secret("COINGECKO_API_KEY")
+    
+    @property
     def lunarcrush_api_key(self) -> Optional[str]:
         """Get LunarCrush API key"""
         return self._get_secret("LUNARCRUSH_API_KEY")

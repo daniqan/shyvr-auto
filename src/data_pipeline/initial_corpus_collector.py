@@ -72,11 +72,21 @@ class InitialCorpusCollector:
     real market APIs with comprehensive feature engineering.
     """
     
-    # Initial corpus token list - 10 major tokens for proof of concept
+    # Initial corpus token list - mix of coin IDs and contract addresses
     DEFAULT_TOKENS = [
         'bitcoin', 'ethereum', 'binancecoin', 'solana', 'cardano',
         'matic-network', 'avalanche-2', 'polkadot', 'chainlink', 'uniswap'
     ]
+    
+    # Contract addresses for high-quality OHLCV data via Pro API
+    CONTRACT_TOKENS = {
+        # Ethereum mainnet tokens
+        'eth:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 'WETH',  # Wrapped Ethereum
+        'eth:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 'USDC',  # USD Coin
+        'eth:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599': 'WBTC',  # Wrapped Bitcoin
+        'eth:0x514910771af9ca656af840dff83e8264ecf986ca': 'LINK',  # Chainlink
+        'eth:0x1f9840a85d5af5bf1d1762f925bdaddc4201f984': 'UNI',   # Uniswap
+    }
     
     def __init__(self,
                  collection_days: int = 30,  # Default for test mode
@@ -132,13 +142,16 @@ class InitialCorpusCollector:
         try:
             system_secrets = get_system_secrets()
             
-            # CoinGecko client (required)
-            coingecko_key = system_secrets.coingecko_api_key
+            # CoinGecko client (required) - use Pro API key for better limits
+            coingecko_key = system_secrets.coingecko_pro_api_key  # Will fallback to regular if Pro not available
             self.coingecko_client = CoinGeckoClient(
                 api_key=coingecko_key,
-                rate_limit=30,  # Conservative rate limit
+                rate_limit=10 if coingecko_key and 'pro' in str(coingecko_key).lower() else 30,  # Pro has better limits
                 cache_ttl=300   # 5 minute cache
             )
+            if coingecko_key:
+                self.logger.info("CoinGecko client initialized", 
+                               using_pro=('pro' in str(coingecko_key).lower()))
             
             # Fear & Greed client (no API key needed)
             self.fear_greed_client = FearGreedIndexClient(rate_limit=10)
@@ -189,7 +202,8 @@ class InitialCorpusCollector:
     async def collect_standardized_corpus(self, 
                                         tokens: Optional[List[str]] = None,
                                         start_date: Optional[datetime] = None,
-                                        end_date: Optional[datetime] = None) -> Dict[str, Any]:
+                                        end_date: Optional[datetime] = None,
+                                        use_contract_addresses: bool = True) -> Dict[str, Any]:
         """
         Collect standardized corpus with comprehensive feature engineering
         
@@ -197,12 +211,19 @@ class InitialCorpusCollector:
             tokens: List of token IDs to collect (defaults to DEFAULT_TOKENS)
             start_date: Start date for collection (defaults to collection_days ago)
             end_date: End date for collection (defaults to now)
+            use_contract_addresses: Whether to also collect from contract addresses for better data
             
         Returns:
             Dictionary with collection results and statistics
         """
         if tokens is None:
             tokens = self.DEFAULT_TOKENS.copy()
+            
+            # Add contract addresses if Pro API is available
+            if use_contract_addresses and self.coingecko_client.api_key:
+                tokens.extend(list(self.CONTRACT_TOKENS.keys()))
+                self.logger.info("Including contract addresses for enhanced OHLCV data", 
+                               contract_count=len(self.CONTRACT_TOKENS))
         
         if start_date is None:
             start_date = datetime.now() - timedelta(days=self.collection_days)
@@ -359,7 +380,12 @@ class InitialCorpusCollector:
         return ohlcv_data
     
     async def _collect_token_ohlcv_with_retries(self, token: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
-        """Collect OHLCV data for a single token with retry logic"""
+        """Collect OHLCV data for a single token with retry logic
+        
+        Supports both coin IDs and contract addresses:
+        - Coin ID format: 'bitcoin', 'ethereum', etc.
+        - Contract format: 'network:address' (e.g., 'eth:0xc02aaa...')
+        """
         last_error = None
         
         for attempt in range(self.retry_attempts):
@@ -367,12 +393,31 @@ class InitialCorpusCollector:
                 # Calculate days for API call
                 days = (end_date - start_date).days
                 
-                data = await self.coingecko_client.get_ohlcv_data(
-                    coin_id=token,
-                    days=days,
-                    from_date=start_date,
-                    to_date=end_date
-                )
+                # Check if this is a contract address or coin ID
+                if ':' in token:
+                    # Contract address format: 'network:address'
+                    network, address = token.split(':', 1)
+                    
+                    # Use the new contract OHLCV endpoint with pagination
+                    data = await self.coingecko_client._get_contract_ohlcv_with_pagination(
+                        contract_address=address,
+                        network=network,
+                        days=days,
+                        from_date=start_date,
+                        to_date=end_date
+                    )
+                    
+                    self.logger.info(f"Using contract OHLCV endpoint for {self.CONTRACT_TOKENS.get(token, token)}", 
+                                   network=network, 
+                                   address=address[:10] + "...")
+                else:
+                    # Regular coin ID
+                    data = await self.coingecko_client.get_ohlcv_data(
+                        coin_id=token,
+                        days=days,
+                        from_date=start_date,
+                        to_date=end_date
+                    )
                 
                 # Validate data quality
                 if not data.empty and len(data) > 10:  # At least 10 data points
@@ -715,9 +760,42 @@ class InitialCorpusCollector:
             raise StorageError(f"Failed to store corpus data: {str(e)}")
     
     async def _store_ohlcv_records(self, conn, token: str, price_data: pd.DataFrame) -> int:
-        """Store OHLCV records for a single token"""
+        """Store OHLCV records for a single token
+        
+        Handles both coin IDs and contract addresses:
+        - Coin ID: 'bitcoin' -> symbol='BTC', token_id='bitcoin'
+        - Contract: 'eth:0xc02aaa39...' -> symbol='WETH', token_id='eth:0xc02aaa39...', 
+                                           token_address='0xc02aaa39...', chain='eth'
+        """
         if price_data.empty:
             return 0
+        
+        # Parse token identifier
+        if ':' in token:
+            # Contract address format: 'network:address'
+            chain, token_address = token.split(':', 1)
+            # Get symbol from our mapping or use a default
+            symbol = self.CONTRACT_TOKENS.get(token, 'TOKEN')[:20]  # Ensure max 20 chars
+            token_id = token  # Keep full format for uniqueness
+        else:
+            # Regular coin ID
+            chain = None
+            token_address = None
+            token_id = token
+            # Map common coin IDs to symbols
+            symbol_map = {
+                'bitcoin': 'BTC',
+                'ethereum': 'ETH',
+                'binancecoin': 'BNB',
+                'solana': 'SOL',
+                'cardano': 'ADA',
+                'matic-network': 'MATIC',
+                'avalanche-2': 'AVAX',
+                'polkadot': 'DOT',
+                'chainlink': 'LINK',
+                'uniswap': 'UNI'
+            }
+            symbol = symbol_map.get(token, token.upper()[:20])  # Fallback to uppercase, max 20 chars
         
         # Prepare batch insert data
         records = []
@@ -726,8 +804,10 @@ class InitialCorpusCollector:
             timestamp = self._ensure_timezone_aware(row['timestamp'])
             
             records.append((
-                token.upper(),  # symbol
-                token,          # token_id
+                symbol,         # symbol (max 20 chars)
+                token_id,       # token_id (full identifier)
+                token_address,  # token_address (contract address if applicable)
+                chain,          # chain (network if contract)
                 timestamp,
                 float(row['open']),
                 float(row['high']),
@@ -742,15 +822,15 @@ class InitialCorpusCollector:
                 None,          # circulating_supply
             ))
         
-        # Batch insert
+        # Batch insert with proper fields
         query = """
             INSERT INTO crypto_ohlcv (
-                symbol, token_id, timestamp,
+                symbol, token_id, token_address, chain, timestamp,
                 open, high, low, close, volume,
                 data_source, collection_timestamp, training_status, model_version,
                 market_cap, circulating_supply
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
             )
         """
         
@@ -828,7 +908,7 @@ class InitialCorpusCollector:
                     'ethereum',  # chain (Uniswap V3 is on Ethereum)
                     float(metrics.total_value_locked),
                     float(metrics.tvl_change_24h) if metrics.tvl_change_24h else 0.0,
-                    'graph_protocol',  # data_source to indicate Graph Protocol
+                    'initial',  # data_source (use 'initial' for corpus collection)
                     datetime.now(timezone.utc)
                 )
                 count += 1

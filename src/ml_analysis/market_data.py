@@ -942,9 +942,8 @@ class CoinGeckoClient(MarketDataClientBase):
                                           to_date: Optional[datetime] = None) -> pd.DataFrame:
         """Get historical OHLCV data for a token by its contract address
         
-        This method uses the CoinGecko Pro API endpoint that provides OHLCV data
-        directly by contract address. If Pro API is not available, falls back to
-        the free API with contract resolution.
+        This method uses the CoinGecko Pro API contract OHLCV endpoint that provides
+        high-quality OHLCV data with proper pagination support for up to 1+ years.
         
         Args:
             token_address: Contract address of the token
@@ -957,17 +956,32 @@ class CoinGeckoClient(MarketDataClientBase):
             DataFrame with OHLCV data
         """
         
-        # Try Pro API first if we have an API key
+        # Map platform_id to network name for the contract endpoint
+        network_map = {
+            'ethereum': 'eth',
+            'binance-smart-chain': 'bsc',
+            'polygon-pos': 'polygon',
+            'solana': 'solana',
+            'avalanche': 'avalanche',
+            'arbitrum-one': 'arbitrum',
+            'optimistic-ethereum': 'optimism'
+        }
+        
+        network = network_map.get(platform_id, platform_id)
+        
+        # Try Pro API contract endpoint if we have an API key
         if self.api_key:
             try:
-                # Attempt to use Pro API endpoint for direct contract address lookup
-                return await self._get_ohlcv_by_contract_pro(token_address, platform_id, days, from_date, to_date)
+                # Use the new contract OHLCV endpoint with pagination
+                return await self._get_contract_ohlcv_with_pagination(
+                    token_address, network, days, from_date, to_date
+                )
             except Exception as e:
-                self.logger.info("Pro API not available or failed, using free API fallback", 
+                self.logger.info("Contract OHLCV endpoint failed, trying alternative method", 
                                error=str(e)[:100])
         
-        # Fall back to free API with contract resolution
-        self.logger.info("Using free API for contract address lookup", 
+        # Fall back to coin ID resolution
+        self.logger.info("Using coin ID resolution for contract address", 
                        token_address=token_address[:10] + "...")
         
         try:
@@ -1063,6 +1077,154 @@ class CoinGeckoClient(MarketDataClientBase):
             self.logger.info("Falling back to free API method")
             coin_id = await self._resolve_contract_to_coin_id(contract_address, platform_id)
             return await self.get_ohlcv_data(coin_id, days, from_date, to_date)
+    
+    async def _get_contract_ohlcv_with_pagination(self, 
+                                                  contract_address: str,
+                                                  network: str,
+                                                  days: int = 365,
+                                                  from_date: Optional[datetime] = None,
+                                                  to_date: Optional[datetime] = None) -> pd.DataFrame:
+        """Get OHLCV data using the Pro API contract endpoint with pagination
+        
+        Uses the /onchain/networks/{network}/tokens/{address}/ohlcv/{timeframe} endpoint
+        which supports up to 181 days (6 months) per request. Automatically paginates
+        to fetch up to 1+ years of data.
+        
+        Args:
+            contract_address: Token contract address
+            network: Network identifier (eth, bsc, polygon, solana, etc.)
+            days: Number of days to fetch (up to 540+ days)
+            from_date: Optional start date
+            to_date: Optional end date
+            
+        Returns:
+            DataFrame with timestamp, open, high, low, close, volume columns
+        """
+        cache_key = f"contract_ohlcv_{network}_{contract_address[:10]}_{days}_{from_date}_{to_date}"
+        cached = self._get_cached_data(cache_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            all_data = []
+            
+            # Determine timeframe based on requested days
+            if days <= 30:
+                timeframe = 'hour'
+                aggregate = 1  # 1-hour candles for recent data
+            elif days <= 90:
+                timeframe = 'hour'
+                aggregate = 4  # 4-hour candles for medium term
+            else:
+                timeframe = 'day'
+                aggregate = 1  # Daily candles for long term
+            
+            # Calculate number of chunks needed (max 181 days per chunk)
+            max_days_per_chunk = 181
+            num_chunks = (days + max_days_per_chunk - 1) // max_days_per_chunk
+            
+            self.logger.info(f"Fetching {days} days of data in {num_chunks} chunks",
+                           network=network,
+                           contract=contract_address[:10] + "...")
+            
+            # Fetch data in chunks with pagination
+            before_timestamp = None
+            
+            for chunk_num in range(num_chunks):
+                # Build URL for contract OHLCV endpoint
+                url = f"{self.base_url}/onchain/networks/{network}/tokens/{contract_address}/ohlcv/{timeframe}"
+                
+                params = {
+                    'aggregate': aggregate,
+                    'include_empty_intervals': 'false',
+                    'limit': 1000  # Request max candles per chunk
+                }
+                
+                if before_timestamp:
+                    params['before_timestamp'] = before_timestamp
+                
+                # Make API request
+                self.logger.debug(f"Fetching chunk {chunk_num + 1}/{num_chunks}")
+                chunk_data = await self._make_request(url, params=params, headers=self.headers)
+                
+                # Parse response based on the nested structure
+                if isinstance(chunk_data, dict) and 'data' in chunk_data:
+                    # Handle nested response structure
+                    if 'attributes' in chunk_data['data']:
+                        ohlcv_list = chunk_data['data']['attributes'].get('ohlcv_list', [])
+                    else:
+                        ohlcv_list = []
+                elif isinstance(chunk_data, list):
+                    # Direct list response
+                    ohlcv_list = chunk_data
+                else:
+                    ohlcv_list = []
+                
+                if not ohlcv_list:
+                    self.logger.debug(f"No more data available at chunk {chunk_num + 1}")
+                    break
+                
+                all_data.extend(ohlcv_list)
+                
+                # Get oldest timestamp for next pagination
+                if ohlcv_list:
+                    # Timestamps are in seconds (not milliseconds)
+                    oldest_timestamp = ohlcv_list[0][0]
+                    before_timestamp = oldest_timestamp - 1
+                
+                self.logger.debug(f"Retrieved {len(ohlcv_list)} candles in chunk {chunk_num + 1}")
+                
+                # Stop if we have enough data
+                if len(all_data) >= days:
+                    break
+                
+                # Rate limit between chunks
+                await asyncio.sleep(0.5)
+            
+            if not all_data:
+                self.logger.warning("No OHLCV data retrieved from contract endpoint")
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Convert to DataFrame
+            ohlcv_data = []
+            for entry in all_data:
+                if len(entry) >= 5:
+                    ohlcv_data.append({
+                        'timestamp': pd.to_datetime(entry[0], unit='s'),  # Timestamps in seconds
+                        'open': float(entry[1]),
+                        'high': float(entry[2]),
+                        'low': float(entry[3]),
+                        'close': float(entry[4]),
+                        'volume': float(entry[5]) if len(entry) > 5 else 0.0
+                    })
+            
+            df = pd.DataFrame(ohlcv_data)
+            
+            # Sort by timestamp and remove duplicates
+            df = df.sort_values('timestamp').drop_duplicates(subset=['timestamp']).reset_index(drop=True)
+            
+            # Apply date filters if specified
+            if from_date:
+                df = df[df['timestamp'] >= pd.to_datetime(from_date)]
+            if to_date:
+                df = df[df['timestamp'] <= pd.to_datetime(to_date)]
+            
+            # Cache the result
+            self._cache_data(cache_key, df)
+            
+            self.logger.info(f"Successfully retrieved {len(df)} candles via contract OHLCV endpoint",
+                           network=network,
+                           contract=contract_address[:10] + "...",
+                           timeframe=f"{aggregate}-{timeframe}" if aggregate > 1 else timeframe)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error("Failed to get contract OHLCV data",
+                            network=network,
+                            contract=contract_address[:10] + "...",
+                            error=str(e))
+            raise MarketDataError(f"Failed to get contract OHLCV data: {str(e)}")
     
     async def _resolve_contract_to_coin_id(self, contract_address: str, platform_id: str = "ethereum") -> str:
         """Resolve contract address to CoinGecko coin ID using free API
