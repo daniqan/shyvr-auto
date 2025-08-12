@@ -157,9 +157,8 @@ class FeatureEngineer:
                                btc_dominance=features.btc_dominance,
                                defi_tvl=features.total_value_locked)
             else:
-                # Fallback to placeholder values for testing/development
-                features = self._get_placeholder_market_features()
-                self.logger.info("Using placeholder market features (live data disabled)")
+                # Live data is disabled, raise error
+                raise FeatureEngineeringError("Market data aggregator not available - enable_live_data is False")
             
             # Cache the result
             self._market_cache = (datetime.now(), features)
@@ -168,52 +167,8 @@ class FeatureEngineer:
             
         except Exception as e:
             self.logger.error("Market feature calculation failed", error=str(e))
-            # Fallback to placeholder values if live data fails
-            if self.enable_live_data:
-                self.logger.warning("Falling back to placeholder market features due to API error")
-                features = self._get_placeholder_market_features()
-                self._market_cache = (datetime.now(), features)
-                return features
-            else:
-                raise FeatureEngineeringError(f"Failed to calculate market features: {str(e)}")
-    
-    def _get_placeholder_market_features(self) -> MarketFeatures:
-        """Get placeholder market features for testing/fallback"""
-        return MarketFeatures(
-            # Market sentiment
-            fear_greed_index=50.0,
-            fear_greed_classification="Neutral",
-            market_trend="sideways",
-            volatility_regime="medium",
-            
-            # Cross-asset correlations
-            btc_correlation=0.5,
-            eth_correlation=0.4,
-            btc_dominance=40.0,
-            eth_dominance=15.0,
-            stablecoin_dominance=10.0,
-            market_beta=1.0,
-            
-            # DeFi ecosystem metrics
-            total_value_locked=100e9,  # $100B
-            tvl_change_24h=0.0,
-            tvl_change_7d=0.0,
-            defi_dominance=0.05,
-            active_protocols=300,
-            
-            # On-chain activity metrics
-            transaction_count_24h=1000000,
-            active_addresses_24h=500000,
-            transaction_volume_24h=5e9,
-            network_fees_24h=1e6,
-            whale_activity_score=0.5,
-            
-            # Social sentiment
-            social_score=0.5,
-            mention_volume=1000,
-            sentiment_trend=0.0,
-            influencer_sentiment=0.5,
-        )
+            # Always raise the error - no fallback to placeholder data
+            raise FeatureEngineeringError(f"Failed to calculate market features: {str(e)}")
     
     def _create_default_indicators(self) -> TechnicalIndicators:
         """Create default indicators when calculation fails"""
@@ -1426,7 +1381,7 @@ class FeatureEngineer:
                 'volatility_spike_risk': 0.25  # Low spike risk
             }
             
-            self.logger.info("Market stress indicators calculated with placeholder values")
+            self.logger.info("Market stress indicators calculated with default values")
             return stress_indicators
             
         except Exception as e:
