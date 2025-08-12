@@ -1797,6 +1797,163 @@ class FeatureEngineer:
             'hours_until_major_session': 6.0
         }
     
+    def extract_stablecoin_features(self, ohlcv_data: pd.DataFrame, 
+                                   token_symbol: str = None,
+                                   target_price: float = 1.0) -> dict:
+        """
+        Extract stablecoin-specific features for market stress detection
+        
+        Args:
+            ohlcv_data: DataFrame with OHLCV data
+            token_symbol: Token symbol to check if it's a stablecoin
+            target_price: Expected stable price (default 1.0 for USD stables)
+            
+        Returns:
+            Dictionary of stablecoin-specific features
+        """
+        # Check if this is a stablecoin
+        stablecoins = ['USDC', 'USDT', 'DAI', 'BUSD', 'TUSD', 'USDP', 'GUSD', 'FRAX']
+        if token_symbol and token_symbol.upper() not in stablecoins:
+            return {}  # Not a stablecoin, return empty dict
+        
+        try:
+            if ohlcv_data is None or ohlcv_data.empty or len(ohlcv_data) < 2:
+                return self._get_default_stablecoin_features()
+            
+            features = {}
+            close_prices = ohlcv_data['close']
+            volumes = ohlcv_data['volume']
+            
+            # Depeg Magnitude Features
+            features['stable_current_depeg'] = float(abs(close_prices.iloc[-1] - target_price))
+            features['stable_depeg_ratio'] = float(close_prices.iloc[-1] / target_price)
+            
+            # Max depeg in last 24 hours
+            lookback = min(24, len(close_prices))
+            recent_prices = close_prices.tail(lookback)
+            features['stable_max_depeg_24h'] = float(max(abs(recent_prices.max() - target_price), 
+                                                        abs(recent_prices.min() - target_price)))
+            features['stable_depeg_direction'] = 1.0 if close_prices.iloc[-1] > target_price else -1.0
+            
+            # Depeg Persistence Features
+            depeg_threshold = 0.002  # 0.2%
+            features['stable_hours_depegged'] = float(sum(abs(recent_prices - target_price) > depeg_threshold))
+            features['stable_consecutive_depeg'] = float(self._count_consecutive_depeg(close_prices, target_price, depeg_threshold))
+            features['stable_depeg_volatility'] = float(recent_prices.std()) if len(recent_prices) > 1 else 0.0
+            
+            # Volume Spike Features (Flight to Safety)
+            baseline_lookback = min(168, len(volumes))  # 7 days
+            avg_volume_7d = volumes.tail(baseline_lookback).mean() if baseline_lookback > 0 else volumes.mean()
+            
+            if avg_volume_7d > 0:
+                features['stable_volume_spike_ratio'] = float(volumes.iloc[-1] / avg_volume_7d)
+                features['stable_volume_spike_24h'] = float(volumes.tail(lookback).max() / avg_volume_7d)
+            else:
+                features['stable_volume_spike_ratio'] = 1.0
+                features['stable_volume_spike_24h'] = 1.0
+            
+            features['stable_panic_volume_score'] = float(min(features['stable_volume_spike_ratio'] / 10, 1.0))
+            
+            # Recovery/Stress Features
+            features['stable_mean_reversion'] = float(self._calculate_stable_mean_reversion(close_prices, target_price))
+            features['stable_stress_persistence'] = float(self._calculate_stable_stress_persistence(close_prices, target_price, depeg_threshold))
+            
+            # Market Regime Features
+            features['stable_is_panic_mode'] = 1.0 if (features['stable_current_depeg'] > 0.01 and 
+                                                       features['stable_volume_spike_ratio'] > 3) else 0.0
+            features['stable_is_premium'] = 1.0 if close_prices.iloc[-1] > (target_price + 0.005) else 0.0
+            features['stable_is_discount'] = 1.0 if close_prices.iloc[-1] < (target_price - 0.005) else 0.0
+            
+            # Arbitrage Opportunities
+            features['stable_arbitrage_opportunity'] = float(abs(features['stable_current_depeg']) * features['stable_volume_spike_ratio'])
+            features['stable_profit_potential_bps'] = float(abs(features['stable_current_depeg']) * 10000)  # In basis points
+            
+            # Liquidity Stress Features
+            if 'high' in ohlcv_data.columns and 'low' in ohlcv_data.columns:
+                features['stable_range_ratio'] = float((ohlcv_data['high'].iloc[-1] - ohlcv_data['low'].iloc[-1]) / 
+                                                      close_prices.iloc[-1]) if close_prices.iloc[-1] > 0 else 0.0
+                ranges = (ohlcv_data['high'].tail(lookback) - ohlcv_data['low'].tail(lookback)) / close_prices.tail(lookback)
+                features['stable_avg_range_24h'] = float(ranges.mean())
+            else:
+                features['stable_range_ratio'] = 0.001
+                features['stable_avg_range_24h'] = 0.001
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error("Failed to extract stablecoin features", error=str(e))
+            return self._get_default_stablecoin_features()
+    
+    def _count_consecutive_depeg(self, prices: pd.Series, target: float, threshold: float) -> int:
+        """Count consecutive hours of depeg from target price"""
+        if prices is None or prices.empty:
+            return 0
+        
+        depegged = abs(prices - target) > threshold
+        count = 0
+        
+        # Count from the end backwards
+        for i in range(len(depegged) - 1, -1, -1):
+            if depegged.iloc[i]:
+                count += 1
+            else:
+                break
+        
+        return count
+    
+    def _calculate_stable_mean_reversion(self, prices: pd.Series, target: float) -> float:
+        """Calculate mean reversion strength towards target price (0-1)"""
+        if prices is None or len(prices) < 6:
+            return 0.5
+        
+        # Check if price is reverting to target
+        lookback = min(6, len(prices))
+        distance_now = abs(prices.iloc[-1] - target)
+        distance_before = abs(prices.iloc[-lookback] - target)
+        
+        if distance_before > 0:
+            reversion = 1 - (distance_now / distance_before)
+            return max(0.0, min(1.0, reversion))
+        
+        return 0.5
+    
+    def _calculate_stable_stress_persistence(self, prices: pd.Series, target: float, threshold: float) -> float:
+        """Calculate how persistent the stress is (0-1)"""
+        if prices is None or len(prices) < 2:
+            return 0.0
+        
+        # Measure how long price stays away from target
+        lookback = min(24, len(prices))
+        recent_prices = prices.tail(lookback)
+        deviations = abs(recent_prices - target)
+        persistence = (deviations > threshold).mean()
+        
+        return float(persistence)
+    
+    def _get_default_stablecoin_features(self) -> dict:
+        """Default stablecoin features when data is insufficient"""
+        return {
+            'stable_current_depeg': 0.0,
+            'stable_depeg_ratio': 1.0,
+            'stable_max_depeg_24h': 0.0,
+            'stable_depeg_direction': 0.0,
+            'stable_hours_depegged': 0.0,
+            'stable_consecutive_depeg': 0.0,
+            'stable_depeg_volatility': 0.0,
+            'stable_volume_spike_ratio': 1.0,
+            'stable_volume_spike_24h': 1.0,
+            'stable_panic_volume_score': 0.0,
+            'stable_mean_reversion': 0.5,
+            'stable_stress_persistence': 0.0,
+            'stable_is_panic_mode': 0.0,
+            'stable_is_premium': 0.0,
+            'stable_is_discount': 0.0,
+            'stable_arbitrage_opportunity': 0.0,
+            'stable_profit_potential_bps': 0.0,
+            'stable_range_ratio': 0.001,
+            'stable_avg_range_24h': 0.001
+        }
+    
     def _get_default_block_features(self) -> dict:
         """Default block time features"""
         return {
