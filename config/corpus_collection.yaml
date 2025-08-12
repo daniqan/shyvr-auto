@@ -1,0 +1,234 @@
+# Multi-Granularity Initial Corpus Collection Configuration
+# This configuration defines the tokens and timeframes for comprehensive training data
+
+corpus_version: "v2.0"
+collection_name: "multi_granularity_corpus"
+
+# Core tokens for collection
+tokens:
+  # Wrapped major cryptocurrencies
+  - symbol: "WETH"
+    contract_address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    network: "eth"
+    coingecko_id: "weth"
+    category: "wrapped_crypto"
+    
+  - symbol: "WBTC"
+    contract_address: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"
+    network: "eth"
+    coingecko_id: "wrapped-bitcoin"
+    category: "wrapped_crypto"
+    
+  # Stablecoin for stress detection
+  - symbol: "USDC"
+    contract_address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    network: "eth"
+    coingecko_id: "usd-coin"
+    category: "stablecoin"
+    extract_stablecoin_features: true
+    
+  # DeFi infrastructure tokens
+  - symbol: "LINK"
+    contract_address: "0x514910771af9ca656af840dff83e8264ecf986ca"
+    network: "eth"
+    coingecko_id: "chainlink"
+    category: "defi"
+    
+  - symbol: "UNI"
+    contract_address: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
+    network: "eth"
+    coingecko_id: "uniswap"
+    category: "defi"
+    
+  # Alternative L1
+  - symbol: "SOL"
+    contract_address: null  # Use CoinGecko ID instead
+    network: null
+    coingecko_id: "solana"
+    category: "alt_l1"
+    
+  # Meme coin for sentiment
+  - symbol: "PEPE"
+    contract_address: "0x6982508145454ce325ddbe47a25d4ec3d2311933"
+    network: "eth"
+    coingecko_id: "pepe"
+    category: "meme"
+
+# Multi-granularity timeframe configuration
+timeframes:
+  # Long-term trends
+  daily:
+    interval: "day"
+    aggregate: 1
+    days_back: 365
+    expected_candles: 365
+    features_focus:
+      - trend_following
+      - support_resistance
+      - macro_patterns
+    
+  # Medium-term patterns  
+  four_hour:
+    interval: "hour"
+    aggregate: 4
+    days_back: 180  # 6 months
+    expected_candles: 1095
+    features_focus:
+      - swing_trading
+      - momentum
+      - pattern_recognition
+    
+  # Short-term volatility
+  hourly:
+    interval: "hour"
+    aggregate: 1
+    days_back: 90  # 3 months
+    expected_candles: 2190
+    features_focus:
+      - intraday_patterns
+      - volatility_clusters
+      - mean_reversion
+    
+  # Micro-structure (optional - high API usage)
+  fifteen_minute:
+    interval: "minute"
+    aggregate: 15
+    days_back: 7  # 1 week
+    expected_candles: 672
+    features_focus:
+      - market_microstructure
+      - high_frequency_signals
+      - liquidity_patterns
+    enabled: false  # Disabled by default due to high API usage
+
+# Collection strategy
+collection_strategy:
+  # Use parallel collection for different timeframes
+  parallel_collection: true
+  max_concurrent_requests: 3
+  
+  # Rate limiting (CoinGecko Pro)
+  rate_limit_per_minute: 30
+  retry_on_rate_limit: true
+  max_retries: 3
+  
+  # Pagination settings for large requests
+  use_pagination: true
+  max_candles_per_request: 1000
+  
+  # Error handling
+  skip_on_error: false
+  save_partial_on_error: true
+  checkpoint_interval: 100  # Save progress every 100 candles
+
+# Feature extraction configuration
+feature_extraction:
+  # Standard technical indicators for all timeframes
+  technical_indicators:
+    - rsi
+    - macd
+    - bollinger_bands
+    - atr
+    - volume_profile
+    
+  # Timeframe-specific features
+  daily_specific:
+    - weekly_seasonality
+    - monthly_patterns
+    - long_term_trend
+    
+  four_hour_specific:
+    - session_patterns
+    - intraday_momentum
+    - swing_levels
+    
+  hourly_specific:
+    - volume_microstructure
+    - bid_ask_imbalance
+    - short_term_mean_reversion
+    
+  # Special handling for stablecoins
+  stablecoin_features:
+    - depeg_detection
+    - flight_to_safety
+    - arbitrage_opportunities
+    - liquidity_stress
+
+# Storage configuration
+storage:
+  # Database storage
+  database:
+    table_prefix: "corpus_v2"
+    use_partitioning: true
+    partition_by: "timeframe"
+    
+  # GCS export
+  gcs:
+    bucket: "gs://shyvr-models-prod"
+    path: "training-data/initial-corpus/v2.0"
+    format: "parquet"
+    compression: "snappy"
+    
+  # Metadata tracking
+  metadata:
+    track_collection_time: true
+    track_api_calls: true
+    track_data_quality: true
+    generate_statistics: true
+
+# Data quality checks
+quality_checks:
+  # Completeness checks
+  min_completeness_ratio: 0.95  # Accept 95% complete data
+  
+  # Outlier detection
+  remove_outliers: true
+  outlier_std_threshold: 10
+  
+  # Gap handling
+  max_gap_hours: 24
+  interpolation_method: "linear"
+  
+  # Validation
+  validate_ohlc_consistency: true  # Ensure high >= low, etc.
+  validate_volume_sanity: true
+  validate_timestamp_continuity: true
+
+# Model training hints
+training_hints:
+  # Suggest sequence lengths based on timeframe
+  sequence_lengths:
+    daily: 60  # 2 months of daily data
+    four_hour: 168  # 1 week of 4-hour data  
+    hourly: 168  # 1 week of hourly data
+    fifteen_minute: 96  # 1 day of 15-min data
+    
+  # Multi-scale learning
+  enable_multi_scale_features: true
+  cross_timeframe_attention: true
+  
+  # Ensemble hints
+  ensemble_weights:
+    daily: 0.3  # Long-term trends
+    four_hour: 0.4  # Primary trading timeframe
+    hourly: 0.2  # Short-term adjustments
+    fifteen_minute: 0.1  # Micro-structure
+
+# Monitoring and logging
+monitoring:
+  log_level: "INFO"
+  progress_reporting: true
+  report_interval_seconds: 30
+  
+  # Metrics to track
+  metrics:
+    - api_calls_made
+    - data_points_collected
+    - features_extracted
+    - errors_encountered
+    - collection_duration
+    
+  # Alerts
+  alert_on_failure: true
+  alert_on_completion: true
+  slack_webhook: "${SLACK_WEBHOOK_URL}"
