@@ -137,21 +137,27 @@ async def main():
     
     # Perform collection
     if args.dry_run:
-        logger.info("DRY RUN MODE - Showing collection plan")
-        logger.info(f"Tokens to collect: {list(collector.tokens.keys())}")
-        logger.info(f"Timeframes to collect: {[tf.value for tf, config in collector.timeframes.items() if config.enabled]}")
+        print("\n" + "="*60)
+        print("DRY RUN MODE - Showing collection plan")
+        print("="*60)
+        print(f"Tokens to collect: {list(collector.tokens.keys())}")
+        enabled_timeframes = [tf.value for tf, config in collector.timeframes.items() if config.enabled]
+        print(f"Timeframes to collect: {enabled_timeframes}")
+        print("")
         
         total_expected_candles = 0
         for token in collector.tokens.keys():
             for tf_enum, tf_config in collector.timeframes.items():
                 if tf_config.enabled:
-                    logger.info(
-                        f"  {token} @ {tf_enum.value}: ~{tf_config.expected_candles} candles"
-                    )
+                    print(f"  {token} @ {tf_enum.value}: ~{tf_config.expected_candles:,} candles")
                     total_expected_candles += tf_config.expected_candles
         
-        logger.info(f"Total expected candles: {total_expected_candles}")
-        logger.info(f"Estimated API calls: {total_expected_candles // 1000 + len(collector.tokens) * len([tf for tf in collector.timeframes.values() if tf.enabled])}")
+        print("")
+        print(f"Total expected candles: {total_expected_candles:,}")
+        api_calls = total_expected_candles // 1000 + len(collector.tokens) * len(enabled_timeframes)
+        print(f"Estimated API calls: {api_calls}")
+        print(f"Estimated time: ~{api_calls * 2.1 / 60:.1f} minutes with rate limiting")
+        print("="*60)
         
         return 0
     

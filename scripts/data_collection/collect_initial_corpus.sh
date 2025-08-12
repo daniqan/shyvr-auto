@@ -1,7 +1,10 @@
 #!/bin/bash
 #
 # Initial Corpus Collection Runner
-# Sets up environment and runs the corpus collection script
+# DEPRECATED: Use collect_corpus.sh instead for unified single/multi-granularity support
+#
+# This script is maintained for backward compatibility only.
+# Please use: ./scripts/data_collection/collect_corpus.sh
 #
 # Usage:
 #   ./scripts/data_collection/collect_initial_corpus.sh [clean|test|production|custom]
