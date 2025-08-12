@@ -25,6 +25,7 @@ from src.ml_analysis.market_data import (
     CoinGeckoClient,
     FearGreedIndexClient, 
     DeFiLlamaClient,
+    GraphProtocolClient,  # Added Graph Protocol client
     SocialSentimentClient,
     OnChainAnalyticsClient,
     MarketDataError,
@@ -144,6 +145,12 @@ class InitialCorpusCollector:
             
             # DeFiLlama client (no API key needed)  
             self.defillama_client = DeFiLlamaClient(rate_limit=20)
+            
+            # Graph Protocol client for historical DeFi data
+            self.graph_client = None
+            if system_secrets.graph_api_key:
+                self.graph_client = GraphProtocolClient()
+                self.logger.info("Graph Protocol client initialized for historical DeFi data")
             
             # LunarCrush client (optional)
             lunarcrush_key = system_secrets.lunarcrush_api_key
@@ -289,6 +296,10 @@ class InitialCorpusCollector:
         # Close DeFiLlama client
         if hasattr(self, 'defillama_client') and self.defillama_client:
             tasks.append(self.defillama_client.close())
+        
+        # Close Graph Protocol client
+        if hasattr(self, 'graph_client') and self.graph_client:
+            tasks.append(self.graph_client.close())
         
         # Close Social client
         if hasattr(self, 'social_client') and self.social_client:
@@ -458,18 +469,48 @@ class InitialCorpusCollector:
             market_data['sentiment'] = []
         
         try:
-            # DeFi metrics
+            # DeFi metrics - use Graph Protocol for historical data if available
             await asyncio.sleep(self.rate_limit_delay)
-            defi_data = await self.defillama_client.get_market_data()
-            market_data['defi'] = defi_data
-            self.collection_stats['api_calls_made'] += 1
             
-            self.logger.info("DeFi metrics collected", 
-                           tvl=defi_data.total_value_locked)
+            if self.graph_client and is_historical:
+                # Use Graph Protocol for historical DeFi data
+                self.logger.info("Collecting historical DeFi data from Graph Protocol",
+                               start=start_date.isoformat(),
+                               end=end_date.isoformat())
+                
+                # Get historical data from Uniswap V3 (currently the only working subgraph)
+                defi_metrics = await self.graph_client.get_historical_defi_metrics(
+                    protocols=["uniswap_v3"],
+                    start_date=start_date,
+                    end_date=end_date,
+                    interval="daily"
+                )
+                
+                if defi_metrics:
+                    market_data['defi'] = defi_metrics  # List of DeFiMetrics objects
+                    self.logger.info("Historical DeFi metrics collected from Graph Protocol", 
+                                   count=len(defi_metrics),
+                                   start_tvl=defi_metrics[0].total_value_locked if defi_metrics else 0,
+                                   end_tvl=defi_metrics[-1].total_value_locked if defi_metrics else 0)
+                else:
+                    # Fallback to DeFiLlama for current snapshot
+                    defi_data = await self.defillama_client.get_market_data()
+                    market_data['defi'] = [defi_data]  # Wrap in list for consistency
+                    self.logger.info("DeFi metrics collected from DeFiLlama (fallback)", 
+                                   tvl=defi_data.total_value_locked)
+            else:
+                # Use DeFiLlama for current data or when Graph is not available
+                defi_data = await self.defillama_client.get_market_data()
+                market_data['defi'] = [defi_data] if is_historical else defi_data
+                self.logger.info("DeFi metrics collected from DeFiLlama", 
+                               tvl=defi_data.total_value_locked)
+            
+            self.collection_stats['api_calls_made'] += 1
             
         except Exception as e:
             self.logger.error("Failed to collect DeFi data", error=str(e))
             self.collection_stats['errors_encountered'] += 1
+            market_data['defi'] = []
         
         # Social sentiment (optional)
         if self.has_social_data:
@@ -638,8 +679,9 @@ class InitialCorpusCollector:
                 
                 # Store DeFi metrics
                 if 'defi' in market_data:
-                    await self._store_defi_metrics(conn, market_data['defi'])
-                    total_records += 1
+                    defi_count = await self._store_defi_metrics(conn, market_data['defi'])
+                    total_records += defi_count
+                    self.logger.info(f"Stored {defi_count} DeFi metrics records")
                 
                 # Store social sentiment (if available)
                 if 'social' in market_data:
@@ -765,8 +807,8 @@ class InitialCorpusCollector:
             )
             return 1
     
-    async def _store_defi_metrics(self, conn, defi_data) -> None:
-        """Store DeFi metrics data"""
+    async def _store_defi_metrics(self, conn, defi_data) -> int:
+        """Store DeFi metrics data (single or multiple records)"""
         query = """
             INSERT INTO defi_metrics (
                 timestamp, protocol_name, chain,
@@ -775,16 +817,35 @@ class InitialCorpusCollector:
             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         """
         
-        await conn.execute(
-            query,
-            self._ensure_timezone_aware(defi_data.timestamp),
-            'DeFi Market Wide',  # protocol_name
-            'multi_chain',  # chain
-            float(defi_data.total_value_locked),
-            float(defi_data.tvl_change_24h),
-            'initial',
-            datetime.now(timezone.utc)
-        )
+        # Handle both single and list of DeFi metrics
+        if isinstance(defi_data, list):
+            count = 0
+            for metrics in defi_data:
+                await conn.execute(
+                    query,
+                    self._ensure_timezone_aware(metrics.timestamp),
+                    'Uniswap V3',  # protocol_name (currently only Uniswap V3)
+                    'ethereum',  # chain (Uniswap V3 is on Ethereum)
+                    float(metrics.total_value_locked),
+                    float(metrics.tvl_change_24h) if metrics.tvl_change_24h else 0.0,
+                    'graph_protocol',  # data_source to indicate Graph Protocol
+                    datetime.now(timezone.utc)
+                )
+                count += 1
+            return count
+        else:
+            # Single record (backward compatibility)
+            await conn.execute(
+                query,
+                self._ensure_timezone_aware(defi_data.timestamp),
+                'DeFi Market Wide',  # protocol_name
+                'multi_chain',  # chain
+                float(defi_data.total_value_locked),
+                float(defi_data.tvl_change_24h),
+                'initial',
+                datetime.now(timezone.utc)
+            )
+            return 1
     
     async def _store_social_sentiment(self, conn, social_data) -> None:
         """Store social sentiment data (single or multiple records)"""
@@ -1398,6 +1459,9 @@ class InitialCorpusCollector:
             await self.coingecko_client.close()
             await self.fear_greed_client.close()
             await self.defillama_client.close()
+            
+            if self.graph_client:
+                await self.graph_client.close()
             
             if self.social_client:
                 await self.social_client.close()
