@@ -1,0 +1,44 @@
+# Test Configuration for Multi-Granularity Corpus Collection
+# This is a minimal configuration for testing the collection pipeline
+
+corpus_version: "test"
+collection_name: "test_multi_granularity"
+
+# Test with just 2 tokens
+tokens:
+  - symbol: "WETH"
+    contract_address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    network: "eth"
+    coingecko_id: "weth"
+    category: "wrapped_crypto"
+    
+  - symbol: "USDC"
+    contract_address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    network: "eth"
+    coingecko_id: "usd-coin"
+    category: "stablecoin"
+    extract_stablecoin_features: true
+
+# Test with minimal timeframes
+timeframes:
+  daily:
+    interval: "day"
+    aggregate: 1
+    days_back: 7
+    expected_candles: 7
+    features_focus: ["trend_following"]
+    enabled: true
+    
+  hourly:
+    interval: "hour"
+    aggregate: 1
+    days_back: 1
+    expected_candles: 24
+    features_focus: ["intraday_patterns"]
+    enabled: true
+
+# Conservative collection strategy for testing
+collection_strategy:
+  parallel_collection: false
+  max_concurrent_requests: 2
+  rate_limit_per_minute: 30

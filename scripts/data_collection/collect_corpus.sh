@@ -41,6 +41,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 echo -e "${GREEN}🔧 Corpus Collection Setup${NC}"
 echo ""
 
@@ -97,42 +101,6 @@ run_multi_granularity() {
     return $?
 }
 
-# Function to clean corpus data
-clean_corpus() {
-    echo -e "${YELLOW}🧹 Cleaning ALL corpus data...${NC}"
-    echo ""
-    
-    # Simple confirmation - clean all data
-    echo -e "${RED}⚠️  WARNING: This will delete all corpus data!${NC}"
-    read -p "Are you sure? Type 'yes' to confirm: " -r
-    if [[ "$REPLY" != "yes" ]]; then
-        echo "Aborted."
-        exit 0
-    fi
-    
-    # Run cleanup via Python script
-    uv run python -c "
-import asyncio
-from src.utils.database import get_database_connection
-
-async def clean():
-    async with get_database_connection() as conn:
-        # Clean corpus tables
-        tables = ['crypto_ohlcv', 'crypto_features', 'market_sentiment', 
-                  'defi_metrics', 'onchain_metrics', 'social_sentiment',
-                  'training_corpus_versions']
-        for table in tables:
-            result = await conn.execute(
-                f\"DELETE FROM {table} WHERE data_source = 'initial'\"
-            )
-            print(f'Cleaned {table}')
-        print('✅ Corpus data cleaned')
-
-asyncio.run(clean())
-"
-    return $?
-}
-
 # Determine Python command arguments based on mode
 echo -e "${GREEN}🚀 Starting corpus collection (mode: $MODE)${NC}"
 echo "============================================================"
@@ -140,69 +108,16 @@ echo ""
 
 case "$MODE" in
     clean)
-        clean_corpus
+        echo -e "${YELLOW}🧹 Cleaning ALL corpus data...${NC}"
+        echo ""
+        uv run python scripts/data_collection/clean_corpus_data.py --mode all
         EXIT_CODE=$?
         ;;
         
     clean-multi)
-        # Direct clean for multi-granularity data
         echo -e "${YELLOW}🧹 Cleaning multi-granularity corpus data...${NC}"
         echo ""
-        echo -e "${RED}⚠️  WARNING: This will delete all multi-granularity corpus data!${NC}"
-        read -p "Are you sure? Type 'yes' to confirm: " -r
-        echo
-        if [[ "$REPLY" != "yes" ]]; then
-            echo "Aborted."
-            exit 0
-        fi
-        
-        uv run python -c "
-import asyncio
-from src.utils.database import get_database_connection
-
-async def clean_multi():
-    async with get_database_connection() as conn:
-        try:
-            # Note: granularity column may not exist yet
-            # Try to clean multi-granularity data if column exists
-            result = await conn.execute(
-                \"\"\"DELETE FROM crypto_ohlcv 
-                   WHERE data_source = 'initial' 
-                   AND EXISTS (
-                       SELECT 1 FROM information_schema.columns 
-                       WHERE table_name = 'crypto_ohlcv' 
-                       AND column_name = 'granularity'
-                   )
-                   AND granularity IS NOT NULL 
-                   AND granularity != ''\"\"\"
-            )
-            print(f'Cleaned multi-granularity OHLCV data')
-            
-            result = await conn.execute(
-                \"\"\"DELETE FROM crypto_features 
-                   WHERE data_source = 'initial' 
-                   AND EXISTS (
-                       SELECT 1 FROM information_schema.columns 
-                       WHERE table_name = 'crypto_features' 
-                       AND column_name = 'granularity'
-                   )
-                   AND granularity IS NOT NULL 
-                   AND granularity != ''\"\"\"
-            )
-            print(f'Cleaned multi-granularity feature data')
-            
-            result = await conn.execute(
-                \"DELETE FROM training_corpus_versions WHERE data_source = 'initial' AND metadata::text LIKE '%multi_granularity%'\"
-            )
-            print(f'Cleaned multi-granularity corpus versions')
-            
-            print('✅ Multi-granularity corpus data cleaned')
-        except Exception as e:
-            print(f'Note: {e}')
-            print('Multi-granularity tables may not exist yet')
-
-asyncio.run(clean_multi())
-"
+        uv run python scripts/data_collection/clean_corpus_data.py --mode multi
         EXIT_CODE=$?
         ;;
         
@@ -218,54 +133,19 @@ asyncio.run(clean_multi())
         echo "   Timeframes: daily (7 days), hourly (1 day)"
         echo ""
         
-        # Create test config
-        cat > /tmp/test_corpus_config.yaml << EOF
-corpus_version: "test"
-collection_name: "test_multi_granularity"
-
-tokens:
-  - symbol: "WETH"
-    contract_address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-    network: "eth"
-    coingecko_id: "weth"
-    category: "wrapped_crypto"
-    
-  - symbol: "USDC"
-    contract_address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-    network: "eth"
-    coingecko_id: "usd-coin"
-    category: "stablecoin"
-    extract_stablecoin_features: true
-
-timeframes:
-  daily:
-    interval: "day"
-    aggregate: 1
-    days_back: 7
-    expected_candles: 7
-    features_focus: ["trend_following"]
-    enabled: true
-    
-  hourly:
-    interval: "hour"
-    aggregate: 1
-    days_back: 1
-    expected_candles: 24
-    features_focus: ["intraday_patterns"]
-    enabled: true
-
-collection_strategy:
-  parallel_collection: false
-  max_concurrent_requests: 2
-  rate_limit_per_minute: 30
-EOF
+        # Use the test config file from the config directory
+        CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection_test.yaml"
         
-        run_multi_granularity --config /tmp/test_corpus_config.yaml --dry-run
+        # Dry run first
+        run_multi_granularity --config "$CONFIG_FILE" --dry-run
         echo ""
         read -p "Continue with actual collection? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            run_multi_granularity --config /tmp/test_corpus_config.yaml
+            run_multi_granularity --config "$CONFIG_FILE"
+        else
+            echo "Aborted."
+            EXIT_CODE=0
         fi
         EXIT_CODE=$?
         ;;
@@ -302,13 +182,15 @@ EOF
         fi
         
         # Run with production config
-        run_multi_granularity --config config/corpus_collection.yaml
+        CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection.yaml"
+        run_multi_granularity --config "$CONFIG_FILE"
         EXIT_CODE=$?
         ;;
         
     multi-dry)
         echo -e "${BLUE}📋 Multi-granularity dry run${NC}"
-        run_multi_granularity --config config/corpus_collection.yaml --dry-run
+        CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection.yaml"
+        run_multi_granularity --config "$CONFIG_FILE" --dry-run
         EXIT_CODE=$?
         ;;
         
