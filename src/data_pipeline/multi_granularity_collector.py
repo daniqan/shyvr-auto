@@ -638,10 +638,24 @@ class MultiGranularityCollector(InitialCorpusCollector):
         # Prepare data for insertion
         records = []
         for _, row in df.iterrows():
+            # Get timestamp and ensure it's timezone-aware
+            ts = row.get('timestamp', row.name if isinstance(row.name, pd.Timestamp) else None)
+            if ts is not None and pd.notna(ts):
+                # Convert to pandas Timestamp if needed
+                if not isinstance(ts, pd.Timestamp):
+                    ts = pd.to_datetime(ts)
+                # Ensure timezone-aware (UTC)
+                if ts.tz is None:
+                    ts = ts.tz_localize('UTC')
+                else:
+                    ts = ts.tz_convert('UTC')
+                # Convert to Python datetime for asyncpg
+                ts = ts.to_pydatetime()
+            
             record = {
                 'token_id': token_symbol.lower(),
                 'symbol': token_symbol,
-                'timestamp': row.get('timestamp', row.name if isinstance(row.name, pd.Timestamp) else None),
+                'timestamp': ts,
                 'open': float(row['open']),
                 'high': float(row['high']),
                 'low': float(row['low']),
@@ -687,9 +701,23 @@ class MultiGranularityCollector(InitialCorpusCollector):
         # Store features (simplified - you might want to map to specific columns)
         records = []
         for _, row in df.iterrows():
+            # Get timestamp and ensure it's timezone-aware
+            ts = row.get('timestamp', row.name if isinstance(row.name, pd.Timestamp) else None)
+            if ts is not None and pd.notna(ts):
+                # Convert to pandas Timestamp if needed
+                if not isinstance(ts, pd.Timestamp):
+                    ts = pd.to_datetime(ts)
+                # Ensure timezone-aware (UTC)
+                if ts.tz is None:
+                    ts = ts.tz_localize('UTC')
+                else:
+                    ts = ts.tz_convert('UTC')
+                # Convert to Python datetime for asyncpg
+                ts = ts.to_pydatetime()
+            
             record = {
                 'token_id': token_symbol.lower(),
-                'timestamp': row.get('timestamp', row.name if isinstance(row.name, pd.Timestamp) else None),
+                'timestamp': ts,
                 'granularity': granularity,
                 'data_source': 'initial',
                 'collection_timestamp': datetime.now(timezone.utc)
