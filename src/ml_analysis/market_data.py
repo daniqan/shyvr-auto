@@ -1204,11 +1204,22 @@ class CoinGeckoClient(MarketDataClientBase):
             df = df.sort_values('timestamp').drop_duplicates(subset=['timestamp']).reset_index(drop=True)
             
             # Apply date filters if specified
-            if from_date:
+            if from_date and not df.empty:
                 from_date_ts = pd.to_datetime(from_date)
+                # Ensure both are timezone-aware or both are timezone-naive
+                if df['timestamp'].dt.tz is not None and from_date_ts.tz is None:
+                    from_date_ts = from_date_ts.tz_localize('UTC')
+                elif df['timestamp'].dt.tz is None and from_date_ts.tz is not None:
+                    from_date_ts = from_date_ts.tz_localize(None)
                 df = df[df['timestamp'] >= from_date_ts]
-            if to_date:
+            
+            if to_date and not df.empty:
                 to_date_ts = pd.to_datetime(to_date)
+                # Ensure both are timezone-aware or both are timezone-naive
+                if df['timestamp'].dt.tz is not None and to_date_ts.tz is None:
+                    to_date_ts = to_date_ts.tz_localize('UTC')
+                elif df['timestamp'].dt.tz is None and to_date_ts.tz is not None:
+                    to_date_ts = to_date_ts.tz_localize(None)
                 df = df[df['timestamp'] <= to_date_ts]
             
             # Cache the result
