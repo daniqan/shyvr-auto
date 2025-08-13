@@ -340,17 +340,29 @@ class MultiGranularityCollector(InitialCorpusCollector):
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=timeframe.days_back)
         
+        # Map our timeframe interval to CoinGecko API timeframe
+        # CoinGecko supports: 'day', 'hour', 'minute', 'second'
+        if timeframe.interval == 'day':
+            api_timeframe = 'day'
+        elif timeframe.interval == 'hour':
+            api_timeframe = 'hour'
+        else:
+            # For 4-hour or 15-minute, we fetch hourly and aggregate
+            api_timeframe = 'hour'
+        
         # Use the contract OHLCV method with pagination
         df = await self.coingecko_client._get_contract_ohlcv_with_pagination(
             contract_address=token.contract_address,
             network=token.network,
             days=timeframe.days_back,
             from_date=start_date,
-            to_date=end_date
+            to_date=end_date,
+            timeframe=api_timeframe  # Pass the explicit timeframe
         )
         
-        # Aggregate if needed (e.g., for 4-hour from hourly data)
-        if timeframe.aggregate > 1:
+        # Aggregate if needed for non-native timeframes
+        if timeframe.aggregate > 1 and not df.empty:
+            # Aggregate for timeframes like 4-hour
             df = self._aggregate_ohlcv(df, timeframe.aggregate)
         
         return df
@@ -403,6 +415,52 @@ class MultiGranularityCollector(InitialCorpusCollector):
         aggregated.reset_index(inplace=True)
         
         return aggregated
+    
+    def _aggregate_to_daily(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Aggregate hourly OHLCV data to daily candles
+        
+        Args:
+            df: DataFrame with hourly OHLCV data
+            
+        Returns:
+            DataFrame with daily OHLCV data
+        """
+        if df.empty:
+            return df
+        
+        # Ensure timestamp column exists and is datetime
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+        elif not isinstance(df.index, pd.DatetimeIndex):
+            logger.warning("DataFrame doesn't have proper timestamp index for aggregation")
+            return df
+        
+        # Aggregate hourly data to daily using proper OHLCV rules
+        agg_rules = {
+            'open': 'first',   # First price of the day
+            'high': 'max',     # Highest price of the day
+            'low': 'min',      # Lowest price of the day
+            'close': 'last',   # Last price of the day
+            'volume': 'sum'    # Total volume for the day
+        }
+        
+        # Resample to daily frequency ('D' for calendar day)
+        daily_df = df.resample('D').agg(agg_rules).dropna()
+        
+        # Reset index to have timestamp as a column
+        daily_df.reset_index(inplace=True)
+        
+        logger.info(
+            f"Aggregated {len(df)} hourly candles to {len(daily_df)} daily candles",
+            hourly_start=df.index[0] if len(df) > 0 else None,
+            hourly_end=df.index[-1] if len(df) > 0 else None,
+            daily_start=daily_df['timestamp'].iloc[0] if len(daily_df) > 0 else None,
+            daily_end=daily_df['timestamp'].iloc[-1] if len(daily_df) > 0 else None
+        )
+        
+        return daily_df
     
     async def _extract_features(self,
                                ohlcv_data: pd.DataFrame,
