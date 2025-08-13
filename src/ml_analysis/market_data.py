@@ -1205,9 +1205,11 @@ class CoinGeckoClient(MarketDataClientBase):
             
             # Apply date filters if specified
             if from_date:
-                df = df[df['timestamp'] >= pd.to_datetime(from_date)]
+                from_date_ts = pd.to_datetime(from_date)
+                df = df[df['timestamp'] >= from_date_ts]
             if to_date:
-                df = df[df['timestamp'] <= pd.to_datetime(to_date)]
+                to_date_ts = pd.to_datetime(to_date)
+                df = df[df['timestamp'] <= to_date_ts]
             
             # Cache the result
             self._cache_data(cache_key, df)
