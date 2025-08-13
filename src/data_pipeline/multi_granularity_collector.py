@@ -651,6 +651,9 @@ class MultiGranularityCollector(InitialCorpusCollector):
                     ts = ts.tz_convert('UTC')
                 # Convert to Python datetime for asyncpg
                 ts = ts.to_pydatetime()
+            else:
+                # Skip records without valid timestamps
+                continue
             
             record = {
                 'token_id': token_symbol.lower(),
@@ -714,6 +717,9 @@ class MultiGranularityCollector(InitialCorpusCollector):
                     ts = ts.tz_convert('UTC')
                 # Convert to Python datetime for asyncpg
                 ts = ts.to_pydatetime()
+            else:
+                # Skip records without valid timestamps
+                continue
             
             record = {
                 'token_id': token_symbol.lower(),
