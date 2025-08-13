@@ -7,11 +7,13 @@
 #   ./scripts/data_collection/collect_corpus.sh [mode] [options]
 #
 # Modes:
-#   clean         - Clean existing corpus data
+#   clean         - Clean existing corpus data (interactive menu)
+#   clean-multi   - Clean multi-granularity data only
 #   test          - Test run (2 tokens, 7 days, single granularity)
 #   test-multi    - Test multi-granularity (2 tokens, multiple timeframes)
 #   production    - Production run (10 tokens, 365 days, single granularity)
 #   multi         - Full multi-granularity production run (7 tokens, multiple timeframes)
+#   multi-dry     - Dry run for multi-granularity collection
 #   custom        - Custom configuration (pass additional arguments)
 #
 # Examples:
@@ -100,33 +102,91 @@ clean_corpus() {
     echo -e "${YELLOW}🧹 Cleaning corpus data...${NC}"
     echo ""
     
-    # Ask for confirmation
-    echo -e "${RED}⚠️  WARNING: This will delete all corpus data!${NC}"
+    # Ask what to clean
+    echo "What would you like to clean?"
+    echo "  1) All corpus data (single and multi-granularity)"
+    echo "  2) Single-granularity data only"
+    echo "  3) Multi-granularity data only"
+    echo "  4) Cancel"
+    read -p "Select option (1-4): " -r CLEAN_OPTION
+    
+    case "$CLEAN_OPTION" in
+        1)
+            CLEAN_MODE="all"
+            echo -e "${RED}⚠️  WARNING: This will delete ALL corpus data!${NC}"
+            ;;
+        2)
+            CLEAN_MODE="single"
+            echo -e "${YELLOW}⚠️  This will delete single-granularity corpus data${NC}"
+            ;;
+        3)
+            CLEAN_MODE="multi"
+            echo -e "${YELLOW}⚠️  This will delete multi-granularity corpus data${NC}"
+            ;;
+        *)
+            echo "Aborted."
+            return 0
+            ;;
+    esac
+    
     read -p "Are you sure? Type 'yes' to confirm: " -r
     if [[ "$REPLY" != "yes" ]]; then
         echo "Aborted."
-        exit 0
+        return 0
     fi
     
     # Run cleanup via Python script
     uv run python -c "
 import asyncio
-from src.utils.database import get_database_connection, execute_query
+from src.utils.database import get_database_connection
 
-async def clean():
+async def clean(mode='$CLEAN_MODE'):
     conn = await get_database_connection()
     try:
-        # Clean corpus tables
-        tables = ['crypto_ohlcv', 'crypto_features', 'market_sentiment', 
-                  'defi_metrics', 'onchain_metrics', 'social_sentiment',
-                  'training_corpus_versions']
-        for table in tables:
-            result = await execute_query(
-                conn,
-                f\"DELETE FROM {table} WHERE data_source = 'initial'\"
+        # Clean corpus tables based on mode
+        if mode == 'all':
+            # Clean all initial corpus data
+            tables = ['crypto_ohlcv', 'crypto_features', 'market_sentiment', 
+                      'defi_metrics', 'onchain_metrics', 'social_sentiment',
+                      'training_corpus_versions']
+            for table in tables:
+                result = await conn.execute(f\"DELETE FROM {table} WHERE data_source = 'initial'\")
+                print(f'Cleaned {table}')
+                
+        elif mode == 'single':
+            # Clean only single-granularity data (no granularity field or granularity IS NULL)
+            result = await conn.execute(
+                \"DELETE FROM crypto_ohlcv WHERE data_source = 'initial' AND (granularity IS NULL OR granularity = '')\"
             )
-            print(f'Cleaned {table}')
+            print(f'Cleaned single-granularity OHLCV data')
+            
+            result = await conn.execute(
+                \"DELETE FROM crypto_features WHERE data_source = 'initial' AND (granularity IS NULL OR granularity = '')\"
+            )
+            print(f'Cleaned single-granularity feature data')
+            
+        elif mode == 'multi':
+            # Clean only multi-granularity data (has granularity field)
+            result = await conn.execute(
+                \"DELETE FROM crypto_ohlcv WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
+            )
+            print(f'Cleaned multi-granularity OHLCV data')
+            
+            result = await conn.execute(
+                \"DELETE FROM crypto_features WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
+            )
+            print(f'Cleaned multi-granularity feature data')
+            
+            # Also clean multi-granularity corpus versions
+            result = await conn.execute(
+                \"DELETE FROM training_corpus_versions WHERE data_source = 'initial' AND metadata::text LIKE '%multi_granularity%'\"
+            )
+            print(f'Cleaned multi-granularity corpus versions')
+        
         print('✅ Corpus data cleaned')
+    except Exception as e:
+        print(f'❌ Error: {e}')
+        raise
     finally:
         await conn.close()
 
@@ -143,6 +203,53 @@ echo ""
 case "$MODE" in
     clean)
         clean_corpus
+        EXIT_CODE=$?
+        ;;
+        
+    clean-multi)
+        # Direct clean for multi-granularity data
+        echo -e "${YELLOW}🧹 Cleaning multi-granularity corpus data...${NC}"
+        echo ""
+        echo -e "${RED}⚠️  WARNING: This will delete all multi-granularity corpus data!${NC}"
+        read -p "Are you sure? Type 'yes' to confirm: " -r
+        echo
+        if [[ "$REPLY" != "yes" ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+        
+        uv run python -c "
+import asyncio
+from src.utils.database import get_database_connection
+
+async def clean_multi():
+    conn = await get_database_connection()
+    try:
+        # Clean multi-granularity data
+        result = await conn.execute(
+            \"DELETE FROM crypto_ohlcv WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
+        )
+        print(f'Cleaned multi-granularity OHLCV data')
+        
+        result = await conn.execute(
+            \"DELETE FROM crypto_features WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
+        )
+        print(f'Cleaned multi-granularity feature data')
+        
+        result = await conn.execute(
+            \"DELETE FROM training_corpus_versions WHERE data_source = 'initial' AND metadata::text LIKE '%multi_granularity%'\"
+        )
+        print(f'Cleaned multi-granularity corpus versions')
+        
+        print('✅ Multi-granularity corpus data cleaned')
+    except Exception as e:
+        print(f'❌ Error: {e}')
+        raise
+    finally:
+        await conn.close()
+
+asyncio.run(clean_multi())
+"
         EXIT_CODE=$?
         ;;
         
@@ -269,7 +376,8 @@ EOF
         echo -e "${RED}❌ Invalid mode: $MODE${NC}"
         echo ""
         echo "Available modes:"
-        echo "  clean       - Clean existing corpus data"
+        echo "  clean       - Clean existing corpus data (interactive)"
+        echo "  clean-multi - Clean multi-granularity data only"
         echo "  test        - Test run (single granularity)"
         echo "  test-multi  - Test multi-granularity"
         echo "  production  - Production run (single granularity)"
@@ -278,10 +386,11 @@ EOF
         echo "  custom      - Custom configuration"
         echo ""
         echo "Examples:"
-        echo "  ./collect_corpus.sh test"
+        echo "  ./collect_corpus.sh clean"
+        echo "  ./collect_corpus.sh clean-multi"
         echo "  ./collect_corpus.sh test-multi"
+        echo "  ./collect_corpus.sh multi-dry"
         echo "  ./collect_corpus.sh multi"
-        echo "  ./collect_corpus.sh custom --multi --tokens WETH USDC"
         exit 1
         ;;
 esac
