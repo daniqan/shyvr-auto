@@ -113,24 +113,20 @@ clean_corpus() {
     # Run cleanup via Python script
     uv run python -c "
 import asyncio
-from src.utils.database import get_database_connection, execute_query
+from src.utils.database import get_database_connection
 
 async def clean():
-    conn = await get_database_connection()
-    try:
+    async with get_database_connection() as conn:
         # Clean corpus tables
         tables = ['crypto_ohlcv', 'crypto_features', 'market_sentiment', 
                   'defi_metrics', 'onchain_metrics', 'social_sentiment',
                   'training_corpus_versions']
         for table in tables:
-            result = await execute_query(
-                conn,
+            result = await conn.execute(
                 f\"DELETE FROM {table} WHERE data_source = 'initial'\"
             )
             print(f'Cleaned {table}')
         print('✅ Corpus data cleaned')
-    finally:
-        await conn.close()
 
 asyncio.run(clean())
 "
@@ -165,30 +161,45 @@ import asyncio
 from src.utils.database import get_database_connection
 
 async def clean_multi():
-    conn = await get_database_connection()
-    try:
-        # Clean multi-granularity data
-        result = await conn.execute(
-            \"DELETE FROM crypto_ohlcv WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
-        )
-        print(f'Cleaned multi-granularity OHLCV data')
-        
-        result = await conn.execute(
-            \"DELETE FROM crypto_features WHERE data_source = 'initial' AND granularity IS NOT NULL AND granularity != ''\"
-        )
-        print(f'Cleaned multi-granularity feature data')
-        
-        result = await conn.execute(
-            \"DELETE FROM training_corpus_versions WHERE data_source = 'initial' AND metadata::text LIKE '%multi_granularity%'\"
-        )
-        print(f'Cleaned multi-granularity corpus versions')
-        
-        print('✅ Multi-granularity corpus data cleaned')
-    except Exception as e:
-        print(f'❌ Error: {e}')
-        raise
-    finally:
-        await conn.close()
+    async with get_database_connection() as conn:
+        try:
+            # Note: granularity column may not exist yet
+            # Try to clean multi-granularity data if column exists
+            result = await conn.execute(
+                \"\"\"DELETE FROM crypto_ohlcv 
+                   WHERE data_source = 'initial' 
+                   AND EXISTS (
+                       SELECT 1 FROM information_schema.columns 
+                       WHERE table_name = 'crypto_ohlcv' 
+                       AND column_name = 'granularity'
+                   )
+                   AND granularity IS NOT NULL 
+                   AND granularity != ''\"\"\"
+            )
+            print(f'Cleaned multi-granularity OHLCV data')
+            
+            result = await conn.execute(
+                \"\"\"DELETE FROM crypto_features 
+                   WHERE data_source = 'initial' 
+                   AND EXISTS (
+                       SELECT 1 FROM information_schema.columns 
+                       WHERE table_name = 'crypto_features' 
+                       AND column_name = 'granularity'
+                   )
+                   AND granularity IS NOT NULL 
+                   AND granularity != ''\"\"\"
+            )
+            print(f'Cleaned multi-granularity feature data')
+            
+            result = await conn.execute(
+                \"DELETE FROM training_corpus_versions WHERE data_source = 'initial' AND metadata::text LIKE '%multi_granularity%'\"
+            )
+            print(f'Cleaned multi-granularity corpus versions')
+            
+            print('✅ Multi-granularity corpus data cleaned')
+        except Exception as e:
+            print(f'Note: {e}')
+            print('Multi-granularity tables may not exist yet')
 
 asyncio.run(clean_multi())
 "
