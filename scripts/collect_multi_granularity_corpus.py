@@ -56,7 +56,12 @@ async def main():
     parser.add_argument(
         '--export-to-gcs',
         action='store_true',
-        help='Export collected data to Google Cloud Storage'
+        help='Export collected data to Google Cloud Storage as Parquet files'
+    )
+    parser.add_argument(
+        '--export-to-parquet',
+        action='store_true',
+        help='Export collected data to local Parquet files'
     )
     parser.add_argument(
         '--dry-run',
@@ -202,7 +207,42 @@ async def main():
         
         # Export to GCS if requested
         if args.export_to_gcs:
-            logger.info("GCS export temporarily disabled - TODO: Fix GCS exporter")
+            logger.info("Exporting corpus to Google Cloud Storage as Parquet files...")
+            
+            try:
+                gcs_paths = await collector.export_to_gcs(
+                    corpus_data=corpus_data,
+                    bucket_name="shyvr-models-prod",
+                    gcs_prefix=f"training-data/initial-corpus/{collector.corpus_version}"
+                )
+                
+                logger.info(
+                    "Corpus exported to GCS",
+                    total_files=len(gcs_paths),
+                    sample_path=next(iter(gcs_paths.values())) if gcs_paths else None
+                )
+            except Exception as e:
+                logger.error(f"Failed to export to GCS: {e}")
+                logger.info("Falling back to local Parquet export...")
+                
+                # Export to local Parquet files as fallback
+                local_paths = await collector.export_to_parquet(corpus_data)
+                logger.info(
+                    "Corpus exported locally as Parquet",
+                    total_files=len(local_paths),
+                    directory="data/corpus/v2.0"
+                )
+        
+        # Export to local Parquet if requested (without GCS)
+        elif args.export_to_parquet:
+            logger.info("Exporting corpus to local Parquet files...")
+            
+            local_paths = await collector.export_to_parquet(corpus_data)
+            logger.info(
+                "Corpus exported as Parquet",
+                total_files=len(local_paths),
+                directory="data/corpus/v2.0"
+            )
             # logger.info("Exporting corpus to Google Cloud Storage...")
             # 
             # exporter = GCSCorpusExporter(

@@ -29,6 +29,9 @@ CREATE TABLE crypto_ohlcv (
     close NUMERIC(24, 8) NOT NULL,
     volume NUMERIC(32, 8) NOT NULL,
     
+    -- Granularity for multi-timeframe support
+    granularity VARCHAR(20),  -- '15m', '1h', '4h', '1d', etc. NULL for legacy data
+    
     -- Data lifecycle management
     data_source data_source_type NOT NULL,
     collection_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -110,6 +113,9 @@ CREATE TABLE crypto_features (
     -- Metadata
     feature_version VARCHAR(10) NOT NULL DEFAULT '1.0',
     calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    
+    -- Granularity for multi-timeframe support
+    granularity VARCHAR(20),  -- Matches crypto_ohlcv.granularity
     
     -- Data source tracking
     data_source data_source_type NOT NULL,
@@ -301,6 +307,7 @@ CREATE TABLE training_corpus_versions (
     sample_count INTEGER NOT NULL,
     feature_count INTEGER NOT NULL,
     tokens TEXT[] NOT NULL, -- Array of token symbols/addresses
+    granularities TEXT[], -- Array of granularities included in this corpus
     
     -- Time range
     start_timestamp TIMESTAMPTZ,
@@ -315,6 +322,9 @@ CREATE TABLE training_corpus_versions (
     
     -- Statistics
     statistics JSONB,
+    
+    -- Additional metadata for multi-granularity and other info
+    metadata JSONB,
     
     created_by VARCHAR(100),
     notes TEXT
@@ -405,12 +415,26 @@ CREATE INDEX idx_crypto_ohlcv_training_status
 CREATE INDEX idx_crypto_ohlcv_model_version 
     ON crypto_ohlcv (model_version) WHERE model_version IS NOT NULL;
 
+-- Multi-granularity indexes
+CREATE INDEX idx_crypto_ohlcv_symbol_granularity_timestamp 
+    ON crypto_ohlcv (symbol, granularity, timestamp DESC);
+CREATE INDEX idx_crypto_ohlcv_token_granularity_timestamp 
+    ON crypto_ohlcv (token_id, granularity, timestamp DESC);
+CREATE INDEX idx_crypto_ohlcv_granularity 
+    ON crypto_ohlcv (granularity) WHERE granularity IS NOT NULL;
+
 -- Features indexes
 CREATE INDEX idx_crypto_features_ohlcv_id ON crypto_features (ohlcv_id);
 CREATE INDEX idx_crypto_features_token_timestamp 
     ON crypto_features (token_id, timestamp DESC);
 CREATE INDEX idx_crypto_features_data_source 
     ON crypto_features (data_source);
+
+-- Multi-granularity features indexes
+CREATE INDEX idx_crypto_features_token_granularity_timestamp 
+    ON crypto_features (token_id, granularity, timestamp DESC);
+CREATE INDEX idx_crypto_features_granularity 
+    ON crypto_features (granularity) WHERE granularity IS NOT NULL;
 
 -- Sentiment indexes
 CREATE INDEX idx_market_sentiment_timestamp ON market_sentiment (timestamp DESC);
