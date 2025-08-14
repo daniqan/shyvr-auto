@@ -24,8 +24,8 @@ timeframes:
   daily:
     interval: "day"
     aggregate: 1
-    days_back: 7
-    expected_candles: 7
+    days_back: 30  # Increased for better technical indicators
+    expected_candles: 30
     features_focus: ["trend_following"]
     enabled: true
     

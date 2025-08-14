@@ -485,7 +485,9 @@ class MultiGranularityCollector(InitialCorpusCollector):
             features = {}
             
             # Extract technical indicators
-            if len(window_data) >= 20:  # Minimum for most indicators
+            # For testing with limited data, lower the threshold
+            min_candles = 5 if len(ohlcv_data) < 30 else 20
+            if len(window_data) >= min_candles:
                 tech_features = await self._extract_technical_features(window_data)
                 features.update(tech_features)
             
@@ -752,17 +754,31 @@ class MultiGranularityCollector(InitialCorpusCollector):
         if df.empty:
             return
         
-        # Filter to only feature columns (non-OHLCV)
-        feature_cols = [col for col in df.columns 
-                       if col not in ['open', 'high', 'low', 'close', 'volume', 'timestamp']]
+        # Get OHLCV IDs first - we need them to link features
+        ohlcv_ids = await conn.fetch("""
+            SELECT id, timestamp 
+            FROM crypto_ohlcv 
+            WHERE symbol = $1 
+              AND granularity = $2 
+              AND data_source = 'initial'
+            ORDER BY timestamp
+        """, token_symbol, granularity)
         
-        if not feature_cols:
+        if not ohlcv_ids:
+            logger.warning(f"No OHLCV records found for {token_symbol} at {granularity}")
             return
         
-        # Store features (simplified - you might want to map to specific columns)
-        records = []
+        # Create timestamp to ID mapping
+        ts_to_id = {}
+        for record in ohlcv_ids:
+            # Normalize timestamp to match DataFrame timestamps
+            ts = pd.Timestamp(record['timestamp']).tz_convert('UTC')
+            ts_to_id[ts] = record['id']
+        
+        # Build feature records with proper mapping
+        feature_records = []
         for _, row in df.iterrows():
-            # Get timestamp and ensure it's timezone-aware
+            # Get timestamp
             ts = row.get('timestamp', row.name if isinstance(row.name, pd.Timestamp) else None)
             if ts is not None and pd.notna(ts):
                 # Convert to pandas Timestamp if needed
@@ -773,36 +789,74 @@ class MultiGranularityCollector(InitialCorpusCollector):
                     ts = ts.tz_localize('UTC')
                 else:
                     ts = ts.tz_convert('UTC')
-                # Convert to Python datetime for asyncpg
-                ts = ts.to_pydatetime()
             else:
-                # Skip records without valid timestamps
                 continue
             
-            record = {
-                'token_id': token_symbol.lower(),
-                'timestamp': ts,
-                'granularity': granularity,
-                'data_source': 'initial',
-                'collection_timestamp': datetime.now(timezone.utc)
-            }
+            # Find matching OHLCV ID
+            ohlcv_id = ts_to_id.get(ts)
+            if not ohlcv_id:
+                logger.debug(f"No OHLCV ID found for timestamp {ts}")
+                continue
             
-            # Add available features
-            for col in feature_cols:
-                if col in row and pd.notna(row[col]):
-                    # Map to database column names
-                    if 'rsi' in col.lower():
-                        record['rsi_14'] = float(row[col])
-                    elif 'macd' in col.lower() and 'signal' not in col.lower():
-                        record['macd'] = float(row[col])
-                    # Add more mappings as needed
+            # Convert timestamp to Python datetime for asyncpg
+            ts_datetime = ts.to_pydatetime()
             
-            if len(record) > 5:  # Only add if we have some features
-                records.append(record)
+            # Build feature record with all available columns
+            feature_records.append((
+                ohlcv_id,  # $1: ohlcv_id
+                token_symbol.lower(),  # $2: token_id
+                ts_datetime,  # $3: timestamp
+                float(row.get('rsi', row.get('rsi_14', 50.0))),  # $4: rsi_14
+                float(row.get('macd', 0.0)),  # $5: macd
+                float(row.get('macd_signal', 0.0)),  # $6: macd_signal
+                float(row.get('macd_histogram', 0.0)),  # $7: macd_histogram
+                float(row.get('bb_upper', 0.0)),  # $8: bb_upper
+                float(row.get('bb_middle', 0.0)),  # $9: bb_middle
+                float(row.get('bb_lower', 0.0)),  # $10: bb_lower
+                float(row.get('volume_sma', row.get('volume_sma_20', 0.0))),  # $11: volume_sma_20
+                float(row.get('ema_12', 0.0)),  # $12: ema_12
+                float(row.get('ema_26', 0.0)),  # $13: ema_26
+                float(row.get('ema_50', 0.0)),  # $14: ema_50
+                float(row.get('ema_200', 0.0)),  # $15: ema_200
+                float(row.get('sma_20', 0.0)),  # $16: sma_20
+                float(row.get('sma_50', 0.0)),  # $17: sma_50
+                float(row.get('sma_200', 0.0)),  # $18: sma_200
+                float(row.get('atr', 0.0)),  # $19: atr
+                float(row.get('adx', 0.0)),  # $20: adx
+                float(row.get('returns_1h', 0.0)),  # $21: returns_1h
+                float(row.get('returns_24h', 0.0)),  # $22: returns_24h
+                float(row.get('returns_7d', 0.0)),  # $23: returns_7d
+                float(row.get('volatility_24h', 0.0)),  # $24: volatility_24h
+                float(row.get('price_change_1h', 0.0)),  # $25: price_change_1h
+                float(row.get('price_change_24h', 0.0)),  # $26: price_change_24h
+                float(row.get('price_change_7d', 0.0)),  # $27: price_change_7d
+                '1.0',  # $28: feature_version
+                datetime.now(timezone.utc),  # $29: calculated_at
+                'initial',  # $30: data_source
+                granularity  # $31: granularity
+            ))
         
-        # Insert features (simplified query - expand based on actual schema)
-        if records:
-            logger.info(f"Stored {len(records)} feature records for {token_symbol} at {granularity}")
+        # Insert features into database
+        if feature_records:
+            query = """
+                INSERT INTO crypto_features (
+                    ohlcv_id, token_id, timestamp,
+                    rsi_14, macd, macd_signal, macd_histogram,
+                    bb_upper, bb_middle, bb_lower,
+                    volume_sma_20,
+                    ema_12, ema_26, ema_50, ema_200,
+                    sma_20, sma_50, sma_200,
+                    atr, adx,
+                    returns_1h, returns_24h, returns_7d,
+                    volatility_24h,
+                    price_change_1h, price_change_24h, price_change_7d,
+                    feature_version, calculated_at, data_source, granularity
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
+                         $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+            """
+            
+            await conn.executemany(query, feature_records)
+            logger.info(f"Stored {len(feature_records)} feature records for {token_symbol} at {granularity}")
     
     async def store_corpus_to_database(self, corpus_data: Dict[str, pd.DataFrame]):
         """
