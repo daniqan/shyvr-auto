@@ -1083,7 +1083,8 @@ class CoinGeckoClient(MarketDataClientBase):
                                                   network: str,
                                                   days: int = 365,
                                                   from_date: Optional[datetime] = None,
-                                                  to_date: Optional[datetime] = None) -> pd.DataFrame:
+                                                  to_date: Optional[datetime] = None,
+                                                  timeframe: Optional[str] = None) -> pd.DataFrame:
         """Get OHLCV data using the Pro API contract endpoint with pagination
         
         Uses the /onchain/networks/{network}/tokens/{address}/ohlcv/{timeframe} endpoint
@@ -1096,11 +1097,12 @@ class CoinGeckoClient(MarketDataClientBase):
             days: Number of days to fetch (up to 540+ days)
             from_date: Optional start date
             to_date: Optional end date
+            timeframe: Optional timeframe ('day', 'hour', 'minute', 'second'). If not specified, auto-determines based on days
             
         Returns:
             DataFrame with timestamp, open, high, low, close, volume columns
         """
-        cache_key = f"contract_ohlcv_{network}_{contract_address[:10]}_{days}_{from_date}_{to_date}"
+        cache_key = f"contract_ohlcv_{network}_{contract_address[:10]}_{days}_{from_date}_{to_date}_{timeframe}"
         cached = self._get_cached_data(cache_key)
         if cached is not None:
             return cached
@@ -1108,16 +1110,22 @@ class CoinGeckoClient(MarketDataClientBase):
         try:
             all_data = []
             
-            # Determine timeframe based on requested days
-            if days <= 30:
-                timeframe = 'hour'
-                aggregate = 1  # 1-hour candles for recent data
-            elif days <= 90:
-                timeframe = 'hour'
-                aggregate = 4  # 4-hour candles for medium term
+            # Determine timeframe and aggregation
+            if timeframe:
+                # Use explicitly specified timeframe
+                api_timeframe = timeframe
+                aggregate = 1  # No aggregation when timeframe is explicit
             else:
-                timeframe = 'day'
-                aggregate = 1  # Daily candles for long term
+                # Auto-determine based on requested days (backward compatibility)
+                if days <= 30:
+                    api_timeframe = 'hour'
+                    aggregate = 1  # 1-hour candles for recent data
+                elif days <= 90:
+                    api_timeframe = 'hour'
+                    aggregate = 4  # 4-hour candles for medium term
+                else:
+                    api_timeframe = 'day'
+                    aggregate = 1  # Daily candles for long term
             
             # Calculate number of chunks needed (max 181 days per chunk)
             max_days_per_chunk = 181
@@ -1132,7 +1140,7 @@ class CoinGeckoClient(MarketDataClientBase):
             
             for chunk_num in range(num_chunks):
                 # Build URL for contract OHLCV endpoint
-                url = f"{self.base_url}/onchain/networks/{network}/tokens/{contract_address}/ohlcv/{timeframe}"
+                url = f"{self.base_url}/onchain/networks/{network}/tokens/{contract_address}/ohlcv/{api_timeframe}"
                 
                 params = {
                     'aggregate': aggregate,
