@@ -322,6 +322,189 @@ class FeatureEngineer:
         
         return float(normalized_vol)
     
+    def calculate_features_for_corpus(self, ohlcv_data: pd.DataFrame, 
+                                     min_periods: bool = True) -> Dict[str, float]:
+        """
+        Calculate all technical features for corpus collection
+        Handles limited data gracefully with min_periods support
+        
+        Args:
+            ohlcv_data: DataFrame with OHLCV columns
+            min_periods: Whether to use minimum periods for calculations
+        
+        Returns:
+            Dictionary of feature names to values
+        """
+        features = {}
+        
+        if ohlcv_data.empty:
+            return self._get_default_feature_dict()
+        
+        close = ohlcv_data['close']
+        high = ohlcv_data['high']
+        low = ohlcv_data['low']
+        volume = ohlcv_data['volume']
+        
+        # RSI - adaptive period
+        period = min(14, len(close) - 1) if min_periods and len(close) > 1 else 14
+        if len(close) > period:
+            features['rsi_14'] = self._calculate_rsi(close, period) or 50.0
+        else:
+            features['rsi_14'] = 50.0
+        
+        # MACD
+        if len(close) >= 26:
+            macd_vals = self._calculate_macd(close)
+            features['macd'] = macd_vals['macd'] or 0.0
+            features['macd_signal'] = macd_vals['signal'] or 0.0
+            features['macd_histogram'] = macd_vals['histogram'] or 0.0
+        else:
+            features['macd'] = 0.0
+            features['macd_signal'] = 0.0
+            features['macd_histogram'] = 0.0
+        
+        # Bollinger Bands - adaptive period
+        bb_period = min(20, len(close)) if min_periods else 20
+        if len(close) >= max(2, bb_period):
+            bb_vals = self._calculate_bollinger_bands(close, bb_period)
+            features['bb_upper'] = bb_vals['upper'] or 0.0
+            features['bb_middle'] = bb_vals['middle'] or 0.0
+            features['bb_lower'] = bb_vals['lower'] or 0.0
+            features['bb_width'] = bb_vals['width'] or 0.0
+        else:
+            features['bb_upper'] = 0.0
+            features['bb_middle'] = 0.0
+            features['bb_lower'] = 0.0
+            features['bb_width'] = 0.0
+        
+        # ATR - adaptive period
+        atr_period = min(14, len(ohlcv_data) - 1) if min_periods and len(ohlcv_data) > 1 else 14
+        if len(ohlcv_data) > atr_period:
+            features['atr'] = self._calculate_atr(ohlcv_data, atr_period) or 0.0
+        else:
+            features['atr'] = 0.0
+        
+        # Moving averages - calculate what's possible
+        for period, name_prefix in [(20, 'sma_20'), (50, 'sma_50'), (200, 'sma_200')]:
+            if len(close) >= period:
+                features[name_prefix] = self._calculate_sma(close, period) or 0.0
+            else:
+                features[name_prefix] = 0.0
+        
+        for period, name_prefix in [(12, 'ema_12'), (26, 'ema_26'), (50, 'ema_50'), (200, 'ema_200')]:
+            if len(close) >= period:
+                features[name_prefix] = self._calculate_ema(close, period) or 0.0
+            else:
+                features[name_prefix] = 0.0
+        
+        # Volume indicators
+        vol_period = min(20, len(volume)) if min_periods else 20
+        if len(volume) >= vol_period:
+            features['volume_sma_20'] = self._calculate_sma(volume, vol_period) or 0.0
+            features['volume_ratio'] = self._calculate_volume_ratio(volume, vol_period) or 1.0
+        else:
+            features['volume_sma_20'] = 0.0
+            features['volume_ratio'] = 1.0
+        
+        # OBV
+        if len(close) >= 2:
+            features['obv'] = self._calculate_obv(close, volume) or 0.0
+        else:
+            features['obv'] = 0.0
+        
+        # ADX (placeholder - not implemented in base class yet)
+        features['adx'] = 0.0
+        
+        # CCI (placeholder)
+        features['cci'] = 0.0
+        
+        # Stochastic (placeholder)
+        features['stoch_k'] = 0.0
+        features['stoch_d'] = 0.0
+        
+        # Williams %R (placeholder)
+        features['williams_r'] = 0.0
+        
+        # Volume EMA
+        if len(volume) >= 12:
+            features['volume_ema'] = self._calculate_ema(volume, 12) or 0.0
+        else:
+            features['volume_ema'] = 0.0
+        
+        # Returns and price changes
+        if len(close) > 1:
+            features['returns_1h'] = float((close.iloc[-1] / close.iloc[-2] - 1))
+            features['price_change_1h'] = float(close.iloc[-1] - close.iloc[-2])
+        else:
+            features['returns_1h'] = 0.0
+            features['price_change_1h'] = 0.0
+        
+        if len(close) > 24:
+            features['returns_24h'] = float((close.iloc[-1] / close.iloc[-24] - 1))
+            features['price_change_24h'] = float(close.iloc[-1] - close.iloc[-24])
+            features['volatility_24h'] = float(close.pct_change().tail(24).std())
+        else:
+            features['returns_24h'] = 0.0
+            features['price_change_24h'] = 0.0
+            features['volatility_24h'] = 0.0
+        
+        if len(close) > 168:  # 7 days
+            features['returns_7d'] = float((close.iloc[-1] / close.iloc[-168] - 1))
+            features['price_change_7d'] = float(close.iloc[-1] - close.iloc[-168])
+        else:
+            features['returns_7d'] = 0.0
+            features['price_change_7d'] = 0.0
+        
+        # 4h price change (placeholder for now)
+        features['price_change_4h'] = 0.0
+        
+        # 1h volatility
+        if len(close) > 2:
+            features['volatility_1h'] = float(close.pct_change().tail(2).std())
+        else:
+            features['volatility_1h'] = 0.0
+        
+        return features
+    
+    def _get_default_feature_dict(self) -> Dict[str, float]:
+        """Get dictionary with all features set to default values"""
+        return {
+            'rsi_14': 50.0,
+            'macd': 0.0,
+            'macd_signal': 0.0,
+            'macd_histogram': 0.0,
+            'bb_upper': 0.0,
+            'bb_middle': 0.0,
+            'bb_lower': 0.0,
+            'bb_width': 0.0,
+            'atr': 0.0,
+            'sma_20': 0.0,
+            'sma_50': 0.0,
+            'sma_200': 0.0,
+            'ema_12': 0.0,
+            'ema_26': 0.0,
+            'ema_50': 0.0,
+            'ema_200': 0.0,
+            'volume_sma_20': 0.0,
+            'volume_ratio': 1.0,
+            'volume_ema': 0.0,
+            'obv': 0.0,
+            'adx': 0.0,
+            'cci': 0.0,
+            'stoch_k': 0.0,
+            'stoch_d': 0.0,
+            'williams_r': 0.0,
+            'returns_1h': 0.0,
+            'returns_24h': 0.0,
+            'returns_7d': 0.0,
+            'volatility_24h': 0.0,
+            'volatility_1h': 0.0,
+            'price_change_1h': 0.0,
+            'price_change_4h': 0.0,
+            'price_change_24h': 0.0,
+            'price_change_7d': 0.0
+        }
+    
     async def create_feature_matrix(self, 
                                   tokens: List[DiscoveredToken],
                                   price_data: Dict[str, pd.DataFrame]) -> Tuple[np.ndarray, List[str]]:

@@ -524,147 +524,28 @@ class MultiGranularityCollector(InitialCorpusCollector):
         return pd.DataFrame(features_list)
     
     async def _extract_technical_features(self, ohlcv_data: pd.DataFrame) -> Dict[str, float]:
-        """Extract standard technical indicators using both custom and FeatureEngineer methods"""
-        features = {}
-        
-        # Use our own calculations for basic indicators (they handle limited data better)
+        """Extract standard technical indicators using FeatureEngineer"""
         try:
-            # RSI
-            features['rsi'] = self._calculate_rsi(ohlcv_data['close'])
+            # Use FeatureEngineer's centralized calculation
+            features = self.feature_engineer.calculate_features_for_corpus(
+                ohlcv_data, 
+                min_periods=True  # Enable adaptive periods for limited data
+            )
+            
+            # Map some feature names to match expected format
+            if 'rsi_14' in features:
+                features['rsi'] = features['rsi_14']
+            
+            # Add volume_sma as alias for volume_sma_20
+            if 'volume_sma_20' in features:
+                features['volume_sma'] = features['volume_sma_20']
+            
+            return features
+            
         except Exception as e:
-            logger.debug(f"RSI calculation failed: {e}")
-            features['rsi'] = 50.0
-        
-        try:
-            # MACD
-            macd_result = self._calculate_macd(ohlcv_data['close'])
-            features.update(macd_result)
-        except Exception as e:
-            logger.debug(f"MACD calculation failed: {e}")
-            features.update({'macd': 0.0, 'macd_signal': 0.0, 'macd_histogram': 0.0})
-        
-        try:
-            # Bollinger Bands
-            bb_result = self._calculate_bollinger_bands(ohlcv_data['close'])
-            features.update(bb_result)
-        except Exception as e:
-            logger.debug(f"Bollinger Bands calculation failed: {e}")
-            features.update({'bb_upper': 0.0, 'bb_lower': 0.0, 'bb_width': 0.0})
-        
-        try:
-            # ATR
-            features['atr'] = self._calculate_atr(ohlcv_data)
-        except Exception as e:
-            logger.debug(f"ATR calculation failed: {e}")
-            features['atr'] = 0.0
-        
-        try:
-            # Volume features - use min_periods to handle early rows
-            vol_window = min(20, len(ohlcv_data))
-            vol_sma = ohlcv_data['volume'].rolling(window=vol_window, min_periods=1).mean().iloc[-1]
-            features['volume_sma'] = float(vol_sma) if not pd.isna(vol_sma) else 0.0
-            
-            if features['volume_sma'] > 0 and not pd.isna(ohlcv_data['volume'].iloc[-1]):
-                features['volume_ratio'] = float(ohlcv_data['volume'].iloc[-1] / features['volume_sma'])
-            else:
-                features['volume_ratio'] = 1.0
-        except Exception as e:
-            logger.debug(f"Volume features calculation failed: {e}")
-            features['volume_sma'] = 0.0
-            features['volume_ratio'] = 1.0
-        
-        # Add additional indicators using FeatureEngineer methods if we have enough data
-        if len(ohlcv_data) >= 20:  # Lower threshold for basic MAs
-            try:
-                # Moving averages - calculate what we can based on available data
-                if len(ohlcv_data) >= 20:
-                    features['sma_20'] = self.feature_engineer._calculate_sma(ohlcv_data['close'], 20) or 0.0
-                else:
-                    features['sma_20'] = 0.0
-                    
-                if len(ohlcv_data) >= 50:
-                    features['sma_50'] = self.feature_engineer._calculate_sma(ohlcv_data['close'], 50) or 0.0
-                    features['ema_50'] = self.feature_engineer._calculate_ema(ohlcv_data['close'], 50) or 0.0
-                else:
-                    features['sma_50'] = 0.0
-                    features['ema_50'] = 0.0
-                    
-                if len(ohlcv_data) >= 200:
-                    features['sma_200'] = self.feature_engineer._calculate_sma(ohlcv_data['close'], 200) or 0.0
-                    features['ema_200'] = self.feature_engineer._calculate_ema(ohlcv_data['close'], 200) or 0.0
-                else:
-                    features['sma_200'] = 0.0
-                    features['ema_200'] = 0.0
-                    
-                # EMAs with shorter periods
-                features['ema_12'] = self.feature_engineer._calculate_ema(ohlcv_data['close'], 12) or 0.0
-                features['ema_26'] = self.feature_engineer._calculate_ema(ohlcv_data['close'], 26) or 0.0
-                
-                # OBV
-                features['obv'] = self.feature_engineer._calculate_obv(ohlcv_data['close'], ohlcv_data['volume']) or 0.0
-                
-                # Price momentum and volatility score
-                features['price_momentum'] = self.feature_engineer._calculate_price_momentum(ohlcv_data['close']) or 0.0
-                features['volatility_score'] = self.feature_engineer._calculate_volatility_score(ohlcv_data['close']) or 0.0
-            except Exception as e:
-                logger.debug(f"Additional feature calculation failed: {e}")
-        else:
-            # Default values for additional features
-            features.update({
-                'sma_20': 0.0,
-                'sma_50': 0.0,
-                'sma_200': 0.0,
-                'ema_12': 0.0,
-                'ema_26': 0.0,
-                'ema_50': 0.0,
-                'ema_200': 0.0,
-                'obv': 0.0,
-                'price_momentum': 0.0,
-                'volatility_score': 0.0
-            })
-        
-        # Calculate returns and price changes
-        close_prices = ohlcv_data['close']
-        
-        # Returns (percentage change)
-        if len(close_prices) > 1:
-            features['returns_1h'] = (close_prices.iloc[-1] / close_prices.iloc[-2] - 1) if len(close_prices) > 1 else 0.0
-        else:
-            features['returns_1h'] = 0.0
-            
-        if len(close_prices) > 24:
-            features['returns_24h'] = (close_prices.iloc[-1] / close_prices.iloc[-24] - 1)
-        else:
-            features['returns_24h'] = 0.0
-            
-        if len(close_prices) > 168:  # 7 days * 24 hours
-            features['returns_7d'] = (close_prices.iloc[-1] / close_prices.iloc[-168] - 1)
-        else:
-            features['returns_7d'] = 0.0
-        
-        # Volatility
-        if len(close_prices) > 24:
-            features['volatility_24h'] = close_prices.pct_change().tail(24).std()
-        else:
-            features['volatility_24h'] = 0.0
-            
-        # Price changes (absolute)
-        if len(close_prices) > 1:
-            features['price_change_1h'] = close_prices.iloc[-1] - close_prices.iloc[-2]
-        else:
-            features['price_change_1h'] = 0.0
-            
-        if len(close_prices) > 24:
-            features['price_change_24h'] = close_prices.iloc[-1] - close_prices.iloc[-24]
-        else:
-            features['price_change_24h'] = 0.0
-            
-        if len(close_prices) > 168:
-            features['price_change_7d'] = close_prices.iloc[-1] - close_prices.iloc[-168]
-        else:
-            features['price_change_7d'] = 0.0
-        
-        return features
+            logger.error(f"Feature extraction failed: {e}")
+            # Return default features on error
+            return self.feature_engineer._get_default_feature_dict()
     
     def _extract_timeframe_features(self,
                                    ohlcv_data: pd.DataFrame,
@@ -713,92 +594,6 @@ class MultiGranularityCollector(InitialCorpusCollector):
         
         return features
     
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """Calculate RSI"""
-        if len(prices) < 2:
-            return 50.0
-        
-        delta = prices.diff()
-        
-        # Use min_periods to handle early rows
-        window = min(period, len(prices) - 1)
-        gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=1).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=1).mean()
-        
-        # Get the last values as floats
-        last_gain = gain.iloc[-1] if not pd.isna(gain.iloc[-1]) else 0.0
-        last_loss = loss.iloc[-1] if not pd.isna(loss.iloc[-1]) else 0.0
-        
-        if last_loss != 0:
-            rs = last_gain / last_loss
-        else:
-            rs = 100 if last_gain > 0 else 0
-        
-        rsi = 100 - (100 / (1 + rs))
-        
-        return float(rsi) if not pd.isna(rsi) else 50.0
-    
-    def _calculate_macd(self, prices: pd.Series) -> Dict[str, float]:
-        """Calculate MACD indicators"""
-        if len(prices) < 26:
-            return {'macd': 0.0, 'macd_signal': 0.0, 'macd_histogram': 0.0}
-        
-        ema_12 = prices.ewm(span=12, adjust=False).mean()
-        ema_26 = prices.ewm(span=26, adjust=False).mean()
-        macd = ema_12 - ema_26
-        signal = macd.ewm(span=9, adjust=False).mean()
-        histogram = macd - signal
-        
-        return {
-            'macd': float(macd.iloc[-1]),
-            'macd_signal': float(signal.iloc[-1]),
-            'macd_histogram': float(histogram.iloc[-1])
-        }
-    
-    def _calculate_bollinger_bands(self, prices: pd.Series, period: int = 20) -> Dict[str, float]:
-        """Calculate Bollinger Bands"""
-        if len(prices) < 2:  # Need at least 2 prices for std
-            return {'bb_upper': 0.0, 'bb_lower': 0.0, 'bb_width': 0.0}
-        
-        window = min(period, len(prices))
-        sma = prices.rolling(window=window, min_periods=2).mean()
-        std = prices.rolling(window=window, min_periods=2).std()
-        
-        upper = sma + (std * 2)
-        lower = sma - (std * 2)
-        width = upper - lower
-        
-        # Handle NaN values
-        upper_val = upper.iloc[-1] if not pd.isna(upper.iloc[-1]) else 0.0
-        lower_val = lower.iloc[-1] if not pd.isna(lower.iloc[-1]) else 0.0
-        width_val = width.iloc[-1] if not pd.isna(width.iloc[-1]) else 0.0
-        
-        return {
-            'bb_upper': float(upper_val),
-            'bb_lower': float(lower_val),
-            'bb_width': float(width_val)
-        }
-    
-    def _calculate_atr(self, ohlcv_data: pd.DataFrame, period: int = 14) -> float:
-        """Calculate Average True Range"""
-        if len(ohlcv_data) < 2:
-            return 0.0
-        
-        high = ohlcv_data['high']
-        low = ohlcv_data['low']
-        close = ohlcv_data['close']
-        
-        tr1 = high - low
-        tr2 = abs(high - close.shift())
-        tr3 = abs(low - close.shift())
-        
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        
-        # Use min_periods to handle early rows
-        window = min(period, len(ohlcv_data))
-        atr = tr.rolling(window=window, min_periods=1).mean()
-        
-        return float(atr.iloc[-1]) if not pd.isna(atr.iloc[-1]) else 0.0
     
     async def _add_multi_scale_features(self, 
                                        corpus_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
