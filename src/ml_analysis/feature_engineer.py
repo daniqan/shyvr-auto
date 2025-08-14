@@ -368,7 +368,8 @@ class FeatureEngineer:
         if len(close) >= max(2, bb_period):
             bb_vals = self._calculate_bollinger_bands(close, bb_period)
             features['bb_upper'] = bb_vals['upper'] or 0.0
-            features['bb_middle'] = bb_vals['middle'] or 0.0
+            # Calculate middle band (SMA)
+            features['bb_middle'] = float(close.rolling(window=bb_period).mean().iloc[-1]) if len(close) >= bb_period else 0.0
             features['bb_lower'] = bb_vals['lower'] or 0.0
             features['bb_width'] = bb_vals['width'] or 0.0
         else:
