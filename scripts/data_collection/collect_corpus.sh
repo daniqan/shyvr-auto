@@ -130,23 +130,15 @@ case "$MODE" in
     test-multi)
         echo -e "${BLUE}📋 Test multi-granularity: 2 tokens, multiple timeframes${NC}"
         echo "   Tokens: WETH, USDC"
-        echo "   Timeframes: daily (7 days), hourly (1 day)"
+        echo "   Timeframes: daily (30 days), hourly (24 hours)"
         echo ""
         
         # Use the test config file from the config directory
         CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection_test.yaml"
         
-        # Dry run first
-        run_multi_granularity --config "$CONFIG_FILE" --dry-run
-        echo ""
-        read -p "Continue with actual collection? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            run_multi_granularity --config "$CONFIG_FILE"
-        else
-            echo "Aborted."
-            EXIT_CODE=0
-        fi
+        # Run directly without confirmation in test mode
+        echo -e "${BLUE}📊 Running multi-granularity collection${NC}"
+        run_multi_granularity --config "$CONFIG_FILE"
         EXIT_CODE=$?
         ;;
         
