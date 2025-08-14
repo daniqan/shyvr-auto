@@ -321,7 +321,10 @@ class MultiGranularityCollector(InitialCorpusCollector):
             ohlcv_data, token, timeframe
         )
         
-        # Combine OHLCV with features
+        # Ensure features_df has the same index as ohlcv_data for proper alignment
+        features_df.index = ohlcv_data.index
+        
+        # Combine OHLCV with features - now with aligned indices
         result_df = pd.concat([ohlcv_data, features_df], axis=1)
         
         # Add metadata columns
