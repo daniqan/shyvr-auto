@@ -492,18 +492,7 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 features.update(tech_features)
             else:
                 # Add default values for technical features when not enough data
-                features.update({
-                    'rsi': 50.0,  # Neutral RSI
-                    'macd': 0.0,
-                    'macd_signal': 0.0,
-                    'macd_histogram': 0.0,
-                    'bb_upper': 0.0,
-                    'bb_lower': 0.0,
-                    'bb_width': 0.0,
-                    'atr': 0.0,
-                    'volume_sma': 0.0,
-                    'volume_ratio': 1.0
-                })
+                features.update(self.feature_engineer._get_default_feature_dict())
             
             # Extract timeframe-specific features
             tf_features = self._extract_timeframe_features(
@@ -531,14 +520,6 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 ohlcv_data, 
                 min_periods=True  # Enable adaptive periods for limited data
             )
-            
-            # Map some feature names to match expected format
-            if 'rsi_14' in features:
-                features['rsi'] = features['rsi_14']
-            
-            # Add volume_sma as alias for volume_sma_20
-            if 'volume_sma_20' in features:
-                features['volume_sma'] = features['volume_sma_20']
             
             return features
             
@@ -770,14 +751,14 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 ohlcv_id,  # $1: ohlcv_id
                 token_symbol.lower(),  # $2: token_id
                 ts_datetime,  # $3: timestamp
-                safe_float(row.get('rsi', row.get('rsi_14', 50.0)), 50.0),  # $4: rsi_14
+                safe_float(row.get('rsi_14', 50.0), 50.0),  # $4: rsi_14
                 safe_float(row.get('macd', 0.0)),  # $5: macd
                 safe_float(row.get('macd_signal', 0.0)),  # $6: macd_signal
                 safe_float(row.get('macd_histogram', 0.0)),  # $7: macd_histogram
                 safe_float(row.get('bb_upper', 0.0)),  # $8: bb_upper
                 safe_float(row.get('bb_middle', 0.0)),  # $9: bb_middle
                 safe_float(row.get('bb_lower', 0.0)),  # $10: bb_lower
-                safe_float(row.get('volume_sma', row.get('volume_sma_20', 0.0))),  # $11: volume_sma_20
+                safe_float(row.get('volume_sma_20', 0.0)),  # $11: volume_sma_20
                 safe_float(row.get('ema_12', 0.0)),  # $12: ema_12
                 safe_float(row.get('ema_26', 0.0)),  # $13: ema_26
                 safe_float(row.get('ema_50', 0.0)),  # $14: ema_50
