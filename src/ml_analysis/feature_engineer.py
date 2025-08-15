@@ -323,34 +323,71 @@ class FeatureEngineer:
         return float(normalized_vol)
     
     def calculate_features_for_corpus(self, ohlcv_data: pd.DataFrame, 
-                                     min_periods: bool = True) -> Dict[str, float]:
+                                     min_periods: bool = True,
+                                     timestamp: Optional[datetime] = None) -> Dict[str, float]:
         """
-        Calculate all technical features for corpus collection
+        Calculate ALL features needed for ML training - complete training-ready dataset
         Handles limited data gracefully with min_periods support
         
         Args:
             ohlcv_data: DataFrame with OHLCV columns
             min_periods: Whether to use minimum periods for calculations
+            timestamp: Current timestamp for time-based features
         
         Returns:
-            Dictionary of feature names to values
+            Dictionary of ALL feature names to values (training-ready)
         """
         features = {}
         
         if ohlcv_data.empty:
-            return self._get_default_feature_dict()
+            return self._get_complete_training_features()
         
         close = ohlcv_data['close']
         high = ohlcv_data['high']
         low = ohlcv_data['low']
         volume = ohlcv_data['volume']
+        current = ohlcv_data.iloc[-1]
         
-        # RSI - adaptive period
-        period = min(14, len(close) - 1) if min_periods and len(close) > 1 else 14
-        if len(close) > period:
-            features['rsi_14'] = self._calculate_rsi(close, period) or 50.0
+        # ========== TIME FEATURES (for ML models) ==========
+        if timestamp:
+            features['hour'] = timestamp.hour
+            features['day_of_week'] = timestamp.dayofweek
+            features['month'] = timestamp.month
+            features['quarter'] = (timestamp.month - 1) // 3 + 1
+            features['is_weekend'] = 1 if timestamp.dayofweek >= 5 else 0
+            features['trading_session'] = self._get_trading_session(timestamp.hour)
+            # Cyclical encoding for neural networks
+            features['hour_sin'] = np.sin(2 * np.pi * timestamp.hour / 24)
+            features['hour_cos'] = np.cos(2 * np.pi * timestamp.hour / 24)
+            features['day_sin'] = np.sin(2 * np.pi * timestamp.dayofweek / 7)
+            features['day_cos'] = np.cos(2 * np.pi * timestamp.dayofweek / 7)
         else:
-            features['rsi_14'] = 50.0
+            # Default time features
+            for feat in ['hour', 'day_of_week', 'month', 'quarter', 'is_weekend', 
+                        'trading_session', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']:
+                features[feat] = 0
+        
+        # ========== PRICE-BASED FEATURES ==========
+        features['price_change'] = close.pct_change().iloc[-1] if len(close) > 1 else 0
+        features['high_low_ratio'] = current['high'] / current['low'] if current['low'] > 0 else 1
+        features['close_to_high'] = current['close'] / current['high'] if current['high'] > 0 else 1
+        features['close_to_low'] = current['close'] / current['low'] if current['low'] > 0 else 1
+        features['volume_price_ratio'] = current['volume'] / current['close'] if current['close'] > 0 else 0
+        
+        # Price momentum at different scales
+        for period in [5, 10, 20]:
+            if len(close) > period:
+                features[f'momentum_{period}'] = (current['close'] / close.iloc[-period-1] - 1) * 100
+            else:
+                features[f'momentum_{period}'] = 0
+        
+        # RSI - multiple periods for different trading strategies
+        for rsi_period in [7, 14, 21]:
+            period = min(rsi_period, len(close) - 1) if min_periods and len(close) > 1 else rsi_period
+            if len(close) > period:
+                features[f'rsi_{rsi_period}'] = self._calculate_rsi(close, period) or 50.0
+            else:
+                features[f'rsi_{rsi_period}'] = 50.0
         
         # MACD
         if len(close) >= 26:
@@ -363,20 +400,25 @@ class FeatureEngineer:
             features['macd_signal'] = 0.0
             features['macd_histogram'] = 0.0
         
-        # Bollinger Bands - adaptive period
+        # Bollinger Bands - adaptive period with position
         bb_period = min(20, len(close)) if min_periods else 20
         if len(close) >= max(2, bb_period):
             bb_vals = self._calculate_bollinger_bands(close, bb_period)
             features['bb_upper'] = bb_vals['upper'] or 0.0
-            # Calculate middle band (SMA)
             features['bb_middle'] = float(close.rolling(window=bb_period).mean().iloc[-1]) if len(close) >= bb_period else 0.0
             features['bb_lower'] = bb_vals['lower'] or 0.0
             features['bb_width'] = bb_vals['width'] or 0.0
+            # Add Bollinger position for ML models
+            if features['bb_width'] > 0:
+                features['bb_position'] = (current['close'] - features['bb_lower']) / features['bb_width']
+            else:
+                features['bb_position'] = 0.5
         else:
             features['bb_upper'] = 0.0
             features['bb_middle'] = 0.0
             features['bb_lower'] = 0.0
             features['bb_width'] = 0.0
+            features['bb_position'] = 0.5
         
         # ATR - adaptive period
         atr_period = min(14, len(ohlcv_data) - 1) if min_periods and len(ohlcv_data) > 1 else 14
@@ -465,12 +507,93 @@ class FeatureEngineer:
         else:
             features['volatility_1h'] = 0.0
         
+        # ========== VOLATILITY FEATURES ==========
+        if len(close) > 2:
+            returns = close.pct_change().dropna()
+            features['volatility'] = returns.std() if len(returns) > 0 else 0
+            features['volatility_ratio'] = features['volatility'] / returns.rolling(20).std().mean() if len(returns) > 20 else 1
+            features['realized_volatility'] = np.sqrt(252) * returns.std() if len(returns) > 0 else 0
+        else:
+            features['volatility'] = 0
+            features['volatility_ratio'] = 1
+            features['realized_volatility'] = 0
+        
+        # ========== NORMALIZED SCORES FOR ML ==========
+        features['volatility_score'] = min(features.get('volatility', 0) / 0.5, 1.0) if features.get('volatility', 0) > 0 else 0
+        features['volume_score'] = min(features.get('volume_ratio', 1), 2.0) / 2.0
+        features['momentum_score'] = np.tanh(features.get('momentum_20', 0) / 100)
+        features['price_momentum'] = features.get('momentum_10', 0)  # Alias for compatibility
+        
+        # ========== MARKET REGIME (simplified) ==========
+        features['market_regime'] = self._classify_market_regime(close)
+        features['trend_strength'] = self._calculate_trend_strength(close)
+        
         return features
     
+    def _get_trading_session(self, hour: int) -> int:
+        """Classify hour into trading session"""
+        if 0 <= hour < 6:
+            return 0  # Asian session
+        elif 6 <= hour < 12:
+            return 1  # European session
+        elif 12 <= hour < 18:
+            return 2  # US session
+        else:
+            return 3  # After hours
+    
+    def _classify_market_regime(self, prices: pd.Series) -> int:
+        """Classify market regime based on price action"""
+        if len(prices) < 20:
+            return 1  # Neutral
+        
+        sma_20 = prices.rolling(20).mean().iloc[-1]
+        sma_50 = prices.rolling(50).mean().iloc[-1] if len(prices) >= 50 else sma_20
+        current_price = prices.iloc[-1]
+        
+        if current_price > sma_20 > sma_50:
+            return 2  # Bullish
+        elif current_price < sma_20 < sma_50:
+            return 0  # Bearish
+        else:
+            return 1  # Neutral
+    
+    def _calculate_trend_strength(self, prices: pd.Series) -> float:
+        """Calculate trend strength using linear regression slope"""
+        if len(prices) < 10:
+            return 0.0
+        
+        recent = prices.tail(20) if len(prices) >= 20 else prices
+        x = np.arange(len(recent))
+        y = recent.values
+        
+        # Simple linear regression
+        slope = np.polyfit(x, y, 1)[0]
+        
+        # Normalize slope to [-1, 1]
+        normalized = np.tanh(slope / recent.mean() * 100) if recent.mean() > 0 else 0
+        
+        return float(normalized)
+    
+    def _get_complete_training_features(self) -> Dict[str, float]:
+        """Get complete dictionary of ALL training-ready feature defaults"""
+        return self._get_default_feature_dict()  # Will be expanded
+    
     def _get_default_feature_dict(self) -> Dict[str, float]:
-        """Get dictionary with all features set to default values"""
-        return {
-            'rsi_14': 50.0,
+        """Get dictionary with ALL training-ready features set to default values"""
+        defaults = {
+            # Time features
+            'hour': 0, 'day_of_week': 0, 'month': 0, 'quarter': 0, 'is_weekend': 0,
+            'trading_session': 0, 'hour_sin': 0, 'hour_cos': 0, 'day_sin': 0, 'day_cos': 0,
+            
+            # Price features
+            'price_change': 0, 'high_low_ratio': 1, 'close_to_high': 1, 'close_to_low': 1,
+            'volume_price_ratio': 0,
+            
+            # Momentum
+            'momentum_5': 0, 'momentum_10': 0, 'momentum_20': 0,
+            
+            # RSI variants
+            'rsi_7': 50.0, 'rsi_14': 50.0, 'rsi_21': 50.0,
             'macd': 0.0,
             'macd_signal': 0.0,
             'macd_histogram': 0.0,
@@ -478,6 +601,7 @@ class FeatureEngineer:
             'bb_middle': 0.0,
             'bb_lower': 0.0,
             'bb_width': 0.0,
+            'bb_position': 0.5,
             'atr': 0.0,
             'sma_20': 0.0,
             'sma_50': 0.0,
@@ -503,8 +627,25 @@ class FeatureEngineer:
             'price_change_1h': 0.0,
             'price_change_4h': 0.0,
             'price_change_24h': 0.0,
-            'price_change_7d': 0.0
+            'price_change_7d': 0.0,
+            
+            # Additional volatility features
+            'volatility': 0.0,
+            'volatility_ratio': 1.0,
+            'realized_volatility': 0.0,
+            
+            # ML scores
+            'volatility_score': 0.0,
+            'volume_score': 0.5,
+            'momentum_score': 0.0,
+            'price_momentum': 0.0,
+            
+            # Market regime
+            'market_regime': 1,
+            'trend_strength': 0.0
         }
+        
+        return defaults
     
     async def create_feature_matrix(self, 
                                   tokens: List[DiscoveredToken],

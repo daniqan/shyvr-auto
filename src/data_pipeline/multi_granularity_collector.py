@@ -21,7 +21,6 @@ import pyarrow.parquet as pq
 from google.cloud import storage
 
 from src.data_pipeline.initial_corpus_collector import InitialCorpusCollector
-from src.data_pipeline.enhanced_feature_extractor import EnhancedFeatureExtractor
 from src.ml_analysis.market_data import CoinGeckoClient
 from src.ml_analysis.feature_engineer import FeatureEngineer
 from src.utils.database import get_database_connection, execute_query
@@ -526,9 +525,10 @@ class MultiGranularityCollector(InitialCorpusCollector):
             elif isinstance(ohlcv_data.index, pd.DatetimeIndex):
                 timestamp = ohlcv_data.index[-1]
             
-            # Use enhanced extractor for ALL features models need
-            features = EnhancedFeatureExtractor.extract_all_features(
+            # Use FeatureEngineer for ALL training-ready features
+            features = self.feature_engineer.calculate_features_for_corpus(
                 ohlcv_data, 
+                min_periods=True,
                 timestamp=timestamp
             )
             
@@ -537,7 +537,7 @@ class MultiGranularityCollector(InitialCorpusCollector):
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
             # Return complete default features
-            return EnhancedFeatureExtractor._get_complete_default_features()
+            return self.feature_engineer._get_complete_training_features()
     
     def _extract_timeframe_features(self,
                                    ohlcv_data: pd.DataFrame,
