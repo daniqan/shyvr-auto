@@ -757,7 +757,7 @@ class MultiGranularityCollector(InitialCorpusCollector):
                     return default
                 return float(value)
             
-            # Build feature record with all available columns
+            # Build feature record with ALL training-ready columns
             feature_records.append((
                 ohlcv_id,  # $1: ohlcv_id
                 token_symbol.lower(),  # $2: token_id
@@ -789,7 +789,38 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 '1.0',  # $28: feature_version
                 datetime.now(timezone.utc),  # $29: calculated_at
                 'initial',  # $30: data_source
-                granularity  # $31: granularity
+                granularity,  # $31: granularity
+                # NEW TRAINING FEATURES
+                safe_float(row.get('rsi_7', 50.0), 50.0),  # $32: rsi_7
+                safe_float(row.get('rsi_21', 50.0), 50.0),  # $33: rsi_21
+                safe_float(row.get('bb_position', 0.5), 0.5),  # $34: bb_position
+                int(row.get('hour', 0)),  # $35: hour
+                int(row.get('day_of_week', 0)),  # $36: day_of_week
+                int(row.get('month', 0)),  # $37: month
+                int(row.get('quarter', 0)),  # $38: quarter
+                int(row.get('is_weekend', 0)),  # $39: is_weekend
+                int(row.get('trading_session', 0)),  # $40: trading_session
+                safe_float(row.get('hour_sin', 0)),  # $41: hour_sin
+                safe_float(row.get('hour_cos', 0)),  # $42: hour_cos
+                safe_float(row.get('day_sin', 0)),  # $43: day_sin
+                safe_float(row.get('day_cos', 0)),  # $44: day_cos
+                safe_float(row.get('price_change', 0)),  # $45: price_change
+                safe_float(row.get('high_low_ratio', 1), 1),  # $46: high_low_ratio
+                safe_float(row.get('close_to_high', 1), 1),  # $47: close_to_high
+                safe_float(row.get('close_to_low', 1), 1),  # $48: close_to_low
+                safe_float(row.get('volume_price_ratio', 0)),  # $49: volume_price_ratio
+                safe_float(row.get('momentum_5', 0)),  # $50: momentum_5
+                safe_float(row.get('momentum_10', 0)),  # $51: momentum_10
+                safe_float(row.get('momentum_20', 0)),  # $52: momentum_20
+                safe_float(row.get('volatility', 0)),  # $53: volatility
+                safe_float(row.get('volatility_ratio', 1), 1),  # $54: volatility_ratio
+                safe_float(row.get('realized_volatility', 0)),  # $55: realized_volatility
+                safe_float(row.get('volatility_score', 0)),  # $56: volatility_score
+                safe_float(row.get('volume_score', 0.5), 0.5),  # $57: volume_score
+                safe_float(row.get('momentum_score', 0)),  # $58: momentum_score
+                safe_float(row.get('price_momentum', 0)),  # $59: price_momentum
+                int(row.get('market_regime', 1)),  # $60: market_regime
+                safe_float(row.get('trend_strength', 0)),  # $61: trend_strength
             ))
         
         # Insert features into database
@@ -806,9 +837,19 @@ class MultiGranularityCollector(InitialCorpusCollector):
                     returns_1h, returns_24h, returns_7d,
                     volatility_24h,
                     price_change_1h, price_change_24h, price_change_7d,
-                    feature_version, calculated_at, data_source, granularity
+                    feature_version, calculated_at, data_source, granularity,
+                    rsi_7, rsi_21, bb_position,
+                    hour, day_of_week, month, quarter, is_weekend, trading_session,
+                    hour_sin, hour_cos, day_sin, day_cos,
+                    price_change, high_low_ratio, close_to_high, close_to_low, volume_price_ratio,
+                    momentum_5, momentum_10, momentum_20,
+                    volatility, volatility_ratio, realized_volatility,
+                    volatility_score, volume_score, momentum_score, price_momentum,
+                    market_regime, trend_strength
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-                         $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+                         $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
+                         $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46,
+                         $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61)
             """
             
             await conn.executemany(query, feature_records)
