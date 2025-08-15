@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 from google.cloud import storage
 
 from src.data_pipeline.initial_corpus_collector import InitialCorpusCollector
+from src.data_pipeline.enhanced_feature_extractor import EnhancedFeatureExtractor
 from src.ml_analysis.market_data import CoinGeckoClient
 from src.ml_analysis.feature_engineer import FeatureEngineer
 from src.utils.database import get_database_connection, execute_query
@@ -516,20 +517,27 @@ class MultiGranularityCollector(InitialCorpusCollector):
         return pd.DataFrame(features_list)
     
     async def _extract_technical_features(self, ohlcv_data: pd.DataFrame) -> Dict[str, float]:
-        """Extract standard technical indicators using FeatureEngineer"""
+        """Extract ALL technical indicators and training-ready features"""
         try:
-            # Use FeatureEngineer's centralized calculation
-            features = self.feature_engineer.calculate_features_for_corpus(
+            # Get timestamp from the last row for time features
+            timestamp = None
+            if 'timestamp' in ohlcv_data.columns:
+                timestamp = pd.to_datetime(ohlcv_data['timestamp'].iloc[-1])
+            elif isinstance(ohlcv_data.index, pd.DatetimeIndex):
+                timestamp = ohlcv_data.index[-1]
+            
+            # Use enhanced extractor for ALL features models need
+            features = EnhancedFeatureExtractor.extract_all_features(
                 ohlcv_data, 
-                min_periods=True  # Enable adaptive periods for limited data
+                timestamp=timestamp
             )
             
             return features
             
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
-            # Return default features on error
-            return self.feature_engineer._get_default_feature_dict()
+            # Return complete default features
+            return EnhancedFeatureExtractor._get_complete_default_features()
     
     def _extract_timeframe_features(self,
                                    ohlcv_data: pd.DataFrame,
