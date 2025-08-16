@@ -351,6 +351,96 @@ class LSTMPricePredictor(MLAnalyzerBase):
         
         return predictions, uncertainty
     
+    def prepare_training_from_corpus(self, data: pd.DataFrame, 
+                                    sequence_length: Optional[int] = None,
+                                    prediction_horizons: List[int] = [1, 4, 24]) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Prepare training data from unified corpus format
+        
+        Args:
+            data: DataFrame from corpus with all features
+            sequence_length: Length of input sequences (uses self.sequence_length if not provided)
+            prediction_horizons: Hours ahead to predict [1h, 4h, 24h]
+            
+        Returns:
+            X: Input sequences [n_samples, sequence_length, n_features]
+            y: Target values [n_samples, n_targets] 
+            feature_names: List of feature names used
+        """
+        if sequence_length is None:
+            sequence_length = self.sequence_length
+            
+        # Identify metadata columns to exclude
+        metadata_cols = ['id', 'ohlcv_id', 'token_id', 'timestamp', 'feature_version',
+                        'calculated_at', 'data_source', 'granularity', 'created_at', 'updated_at',
+                        'collection_timestamp']
+        
+        # Get all numeric columns except metadata
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        feature_cols = [c for c in numeric_cols if c not in metadata_cols]
+        
+        # Ensure we have essential columns
+        if 'close' not in data.columns:
+            raise ValueError("Missing 'close' price column in corpus data")
+            
+        # Select feature columns - use all available numeric features
+        feature_data = data[feature_cols].copy()
+        
+        # Handle missing values
+        feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # Create sequences and targets
+        sequences = []
+        targets = []
+        
+        max_horizon = max(prediction_horizons)
+        
+        for i in range(sequence_length, len(data) - max_horizon):
+            # Input sequence
+            seq_features = feature_data.iloc[i-sequence_length:i].values
+            
+            # Target prices at different horizons
+            current_price = data['close'].iloc[i-1]
+            target_values = []
+            
+            for horizon in prediction_horizons:
+                if i + horizon - 1 < len(data):
+                    future_price = data['close'].iloc[i + horizon - 1]
+                    # Store actual price (model calculates returns internally if needed)
+                    target_values.append(future_price)
+                else:
+                    target_values.append(data['close'].iloc[-1])
+            
+            sequences.append(seq_features)
+            targets.append(target_values)
+        
+        X = np.array(sequences, dtype=np.float32)
+        y = np.array(targets, dtype=np.float32)
+        
+        # Get feature names
+        feature_names = list(feature_data.columns)
+        
+        # Normalize features if scaler is fitted
+        if self._scaler_fitted:
+            X_reshaped = X.reshape(-1, X.shape[-1])
+            X_normalized = self._scaler.transform(X_reshaped)
+            X = X_normalized.reshape(X.shape)
+        else:
+            # Fit scaler on this data
+            X_reshaped = X.reshape(-1, X.shape[-1])
+            self._scaler.fit(X_reshaped)
+            self._scaler_fitted = True
+            X_normalized = self._scaler.transform(X_reshaped)
+            X = X_normalized.reshape(X.shape)
+        
+        self.logger.info("Corpus training data prepared",
+                        sequences=len(X),
+                        sequence_length=sequence_length,
+                        features=len(feature_names),
+                        horizons=prediction_horizons)
+        
+        return X, y, feature_names
+    
     async def _prepare_training_data(self, data: pd.DataFrame, coin_id: str = "bitcoin") -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """Prepare training data for LSTM using real market data"""
         try:

@@ -699,6 +699,113 @@ class iTransformerPredictor(MLAnalyzerBase):
             self.logger.error("iTransformer model training failed", error=str(e))
             return False
     
+    def prepare_training_from_corpus(self, data: pd.DataFrame,
+                                    sequence_length: Optional[int] = None,
+                                    prediction_horizons: List[int] = [1, 4, 24],
+                                    selected_features: Optional[List[str]] = None) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Prepare training data from unified corpus format for iTransformer
+        
+        Args:
+            data: DataFrame from corpus with all features
+            sequence_length: Length of input sequences (uses self.sequence_length if not provided)
+            prediction_horizons: Hours ahead to predict [1h, 4h, 24h]
+            selected_features: Optional list of features to use as variates (None = auto-select key features)
+            
+        Returns:
+            X: Input sequences [n_samples, sequence_length, n_variates]
+            y: Target values [n_samples, n_targets] as price changes
+            feature_names: List of feature names used as variates
+        """
+        if sequence_length is None:
+            sequence_length = self.sequence_length
+            
+        # iTransformer treats each feature as a separate variate
+        # Select key features for multivariate modeling
+        if selected_features is None:
+            # Default selection of important variates for iTransformer
+            selected_features = [
+                'close', 'volume', 'open', 'high', 'low',  # Core OHLCV
+                'rsi_14', 'rsi_7', 'rsi_21',  # RSI indicators
+                'macd', 'macd_signal',  # MACD
+                'bb_upper', 'bb_lower', 'bb_position',  # Bollinger Bands
+                'momentum_5', 'momentum_10', 'momentum_20',  # Momentum
+                'volatility_score', 'volume_score',  # ML scores
+                'market_regime', 'trend_strength'  # Market classification
+            ]
+        
+        # Filter to available features
+        available_features = [f for f in selected_features if f in data.columns]
+        
+        if not available_features:
+            # Fallback to all numeric features
+            metadata_cols = ['id', 'ohlcv_id', 'token_id', 'timestamp', 'feature_version',
+                           'calculated_at', 'data_source', 'granularity', 'created_at', 'updated_at',
+                           'collection_timestamp']
+            numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+            available_features = [c for c in numeric_cols if c not in metadata_cols][:20]  # Limit to 20 variates
+        
+        # Ensure we have essential columns
+        if 'close' not in data.columns:
+            raise ValueError("Missing 'close' price column in corpus data")
+        
+        # Select feature columns
+        feature_data = data[available_features].copy()
+        
+        # Handle missing values
+        feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # Normalize each variate independently (important for iTransformer)
+        from sklearn.preprocessing import StandardScaler
+        scalers = {}
+        feature_data_normalized = pd.DataFrame(index=feature_data.index)
+        
+        for col in feature_data.columns:
+            scaler = StandardScaler()
+            feature_data_normalized[col] = scaler.fit_transform(feature_data[[col]])
+            scalers[col] = scaler
+        
+        # Create sequences and targets
+        sequences = []
+        targets = []
+        
+        max_horizon = max(prediction_horizons)
+        
+        for i in range(sequence_length, len(data) - max_horizon):
+            # Input sequence - each column is a variate
+            seq_features = feature_data_normalized.iloc[i-sequence_length:i].values
+            
+            # Target values as price changes
+            current_price = data['close'].iloc[i-1]
+            target_values = []
+            
+            for horizon in prediction_horizons:
+                if i + horizon - 1 < len(data) and current_price > 0:
+                    future_price = data['close'].iloc[i + horizon - 1]
+                    price_change = (future_price - current_price) / current_price
+                    target_values.append(price_change)
+                else:
+                    target_values.append(0.0)
+            
+            sequences.append(seq_features)
+            targets.append(target_values)
+        
+        X = np.array(sequences, dtype=np.float32)
+        y = np.array(targets, dtype=np.float32)
+        feature_names = list(feature_data.columns)
+        
+        # Update model config with actual number of variates
+        self.model_config.n_variates = len(feature_names)
+        
+        self.logger.info("iTransformer corpus data prepared",
+                        sequences=len(X),
+                        sequence_length=sequence_length,
+                        n_variates=len(feature_names),
+                        variates=feature_names[:5] + ['...'] if len(feature_names) > 5 else feature_names,
+                        horizons=prediction_horizons)
+        
+        return X, y, feature_names
+    
     def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare multivariate training data for iTransformer

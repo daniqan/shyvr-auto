@@ -658,6 +658,136 @@ class PatchTSTPredictor(MLAnalyzerBase):
             self.logger.error("PatchTST model training failed", error=str(e))
             return False
     
+    def prepare_training_from_corpus(self, data: pd.DataFrame,
+                                    sequence_length: Optional[int] = None,
+                                    prediction_horizons: List[int] = [1, 4, 24],
+                                    n_channels: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Prepare training data from unified corpus format for PatchTST
+        
+        Args:
+            data: DataFrame from corpus with all features
+            sequence_length: Length of input sequences (uses patch_length * 4 if not provided)
+            prediction_horizons: Hours ahead to predict [1h, 4h, 24h]
+            n_channels: Number of channels to use (None = use all features)
+            
+        Returns:
+            X: Input sequences [n_samples, sequence_length, n_channels]
+            y: Target values [n_samples, n_targets] as price changes
+            feature_names: List of feature names used as channels
+        """
+        if sequence_length is None:
+            # PatchTST needs sufficient length for patch creation
+            sequence_length = self.patch_length * 4
+            
+        if n_channels is None:
+            n_channels = self.n_channels
+            
+        # Identify metadata columns to exclude
+        metadata_cols = ['id', 'ohlcv_id', 'token_id', 'timestamp', 'feature_version',
+                        'calculated_at', 'data_source', 'granularity', 'created_at', 'updated_at',
+                        'collection_timestamp']
+        
+        # Get all numeric columns except metadata
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        available_features = [c for c in numeric_cols if c not in metadata_cols]
+        
+        # Ensure we have essential columns
+        if 'close' not in data.columns:
+            raise ValueError("Missing 'close' price column in corpus data")
+        
+        # Select top features based on importance for patches
+        # Prioritize features that capture different aspects of market behavior
+        priority_features = [
+            'close', 'volume', 'open', 'high', 'low',  # Core OHLCV
+            'returns_1h', 'returns_24h', 'returns_7d',  # Returns at different scales
+            'rsi_14', 'rsi_7', 'rsi_21',  # RSI variations
+            'macd', 'macd_signal', 'macd_histogram',  # MACD components
+            'bb_upper', 'bb_lower', 'bb_position',  # Bollinger Bands
+            'atr', 'adx',  # Volatility measures
+            'momentum_5', 'momentum_10', 'momentum_20',  # Momentum
+            'volatility_score', 'volume_score', 'momentum_score',  # ML scores
+            'market_regime', 'trend_strength'  # Market state
+        ]
+        
+        # Select features based on availability and channel limit
+        selected_features = []
+        for feat in priority_features:
+            if feat in available_features and len(selected_features) < n_channels:
+                selected_features.append(feat)
+        
+        # Fill remaining channels with other available features
+        for feat in available_features:
+            if feat not in selected_features and len(selected_features) < n_channels:
+                selected_features.append(feat)
+        
+        # Ensure we have at least one feature
+        if not selected_features:
+            selected_features = available_features[:n_channels]
+        
+        # Select feature columns
+        feature_data = data[selected_features].copy()
+        
+        # Handle missing values
+        feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # Normalize features for patch processing
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        feature_data_normalized = pd.DataFrame(
+            scaler.fit_transform(feature_data),
+            columns=feature_data.columns,
+            index=feature_data.index
+        )
+        
+        # Create sequences and targets
+        sequences = []
+        targets = []
+        
+        max_horizon = max(prediction_horizons)
+        
+        for i in range(sequence_length, len(data) - max_horizon):
+            # Input sequence for patch creation
+            seq_features = feature_data_normalized.iloc[i-sequence_length:i].values
+            
+            # Ensure sequence has correct shape for patches
+            if len(seq_features) < sequence_length:
+                # Pad if necessary
+                padding = np.zeros((sequence_length - len(seq_features), len(selected_features)))
+                seq_features = np.vstack([padding, seq_features])
+            
+            # Target values as price changes
+            current_price = data['close'].iloc[i-1]
+            target_values = []
+            
+            for horizon in prediction_horizons:
+                if i + horizon - 1 < len(data) and current_price > 0:
+                    future_price = data['close'].iloc[i + horizon - 1]
+                    price_change = (future_price - current_price) / current_price
+                    target_values.append(price_change)
+                else:
+                    target_values.append(0.0)
+            
+            sequences.append(seq_features)
+            targets.append(target_values)
+        
+        X = np.array(sequences, dtype=np.float32)
+        y = np.array(targets, dtype=np.float32)
+        feature_names = list(feature_data.columns)
+        
+        # Update model config with actual dimensions
+        self.n_channels = len(feature_names)
+        
+        self.logger.info("PatchTST corpus data prepared",
+                        sequences=len(X),
+                        sequence_length=sequence_length,
+                        n_channels=len(feature_names),
+                        patch_length=self.patch_length,
+                        channels=feature_names[:5] + ['...'] if len(feature_names) > 5 else feature_names,
+                        horizons=prediction_horizons)
+        
+        return X, y, feature_names
+    
     def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare training data for patch-based processing

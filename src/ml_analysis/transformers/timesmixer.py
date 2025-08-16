@@ -830,6 +830,139 @@ class TimesMixerPredictor(MLAnalyzerBase):
             self.logger.error("TimesMixer model training failed", error=str(e))
             return False
     
+    def prepare_training_from_corpus(self, data: pd.DataFrame,
+                                    sequence_length: Optional[int] = None,
+                                    prediction_horizons: List[int] = [1, 4, 24],
+                                    n_features: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Prepare training data from unified corpus format for TimesMixer
+        
+        Args:
+            data: DataFrame from corpus with all features
+            sequence_length: Length of input sequences (uses self.seq_len if not provided)
+            prediction_horizons: Hours ahead to predict [1h, 4h, 24h]
+            n_features: Number of features to use (None = auto-select based on decomposition needs)
+            
+        Returns:
+            X: Input sequences [n_samples, seq_len, n_features]
+            y: Target values [n_samples, n_targets] as price changes
+            feature_names: List of feature names used
+        """
+        if sequence_length is None:
+            sequence_length = self.seq_len
+            
+        if n_features is None:
+            n_features = self.n_features
+            
+        # Identify metadata columns to exclude
+        metadata_cols = ['id', 'ohlcv_id', 'token_id', 'timestamp', 'feature_version',
+                        'calculated_at', 'data_source', 'granularity', 'created_at', 'updated_at',
+                        'collection_timestamp']
+        
+        # Get all numeric columns except metadata
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        available_features = [c for c in numeric_cols if c not in metadata_cols]
+        
+        # Ensure we have essential columns
+        if 'close' not in data.columns:
+            raise ValueError("Missing 'close' price column in corpus data")
+        
+        # Select features optimal for temporal decomposition
+        # TimesMixer benefits from features with different temporal patterns
+        priority_features = [
+            'close', 'volume', 'open', 'high', 'low',  # Core OHLCV
+            # Seasonal/cyclical features
+            'hour', 'day_of_week', 'month', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
+            # Different time scale returns
+            'returns_1h', 'returns_24h', 'returns_7d',
+            # Trend indicators
+            'ema_12', 'ema_26', 'ema_50', 'ema_200',
+            'sma_20', 'sma_50', 'sma_200',
+            # Oscillators with different periods
+            'rsi_14', 'rsi_7', 'rsi_21',
+            # Volatility at different scales
+            'volatility', 'volatility_24h', 'realized_volatility',
+            # MACD for trend
+            'macd', 'macd_signal', 'macd_histogram',
+            # Momentum features
+            'momentum_5', 'momentum_10', 'momentum_20',
+            # Market microstructure
+            'high_low_ratio', 'close_to_high', 'close_to_low',
+            # ML scores
+            'volatility_score', 'volume_score', 'momentum_score',
+            'market_regime', 'trend_strength'
+        ]
+        
+        # Select features based on availability and limit
+        selected_features = []
+        for feat in priority_features:
+            if feat in available_features and len(selected_features) < n_features:
+                selected_features.append(feat)
+        
+        # Fill remaining slots with other available features
+        for feat in available_features:
+            if feat not in selected_features and len(selected_features) < n_features:
+                selected_features.append(feat)
+        
+        # Ensure we have at least some features
+        if not selected_features:
+            selected_features = available_features[:n_features]
+        
+        # Select feature columns
+        feature_data = data[selected_features].copy()
+        
+        # Handle missing values
+        feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # Normalize features for mixing (each feature normalized independently)
+        from sklearn.preprocessing import StandardScaler
+        feature_data_normalized = pd.DataFrame(index=feature_data.index)
+        
+        for col in feature_data.columns:
+            scaler = StandardScaler()
+            feature_data_normalized[col] = scaler.fit_transform(feature_data[[col]])
+        
+        # Create sequences and targets
+        sequences = []
+        targets = []
+        
+        max_horizon = max(prediction_horizons)
+        
+        for i in range(sequence_length, len(data) - max_horizon):
+            # Input sequence for temporal decomposition
+            seq_features = feature_data_normalized.iloc[i-sequence_length:i].values
+            
+            # Target values as price changes
+            current_price = data['close'].iloc[i-1]
+            target_values = []
+            
+            for horizon in prediction_horizons:
+                if i + horizon - 1 < len(data) and current_price > 0:
+                    future_price = data['close'].iloc[i + horizon - 1]
+                    price_change = (future_price - current_price) / current_price
+                    target_values.append(price_change)
+                else:
+                    target_values.append(0.0)
+            
+            sequences.append(seq_features)
+            targets.append(target_values)
+        
+        X = np.array(sequences, dtype=np.float32)
+        y = np.array(targets, dtype=np.float32)
+        feature_names = list(feature_data.columns)
+        
+        # Update model config with actual dimensions
+        self.n_features = len(feature_names)
+        
+        self.logger.info("TimesMixer corpus data prepared",
+                        sequences=len(X),
+                        seq_len=sequence_length,
+                        n_features=len(feature_names),
+                        features=feature_names[:5] + ['...'] if len(feature_names) > 5 else feature_names,
+                        horizons=prediction_horizons)
+        
+        return X, y, feature_names
+    
     def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare training data for decomposable mixing
