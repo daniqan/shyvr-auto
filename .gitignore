@@ -27,6 +27,10 @@ env/
 *.swp
 *.swo
 
+# Internal documentation
+CLAUDE.md
+**/CLAUDE.md
+
 
 # OS files
 .DS_Store
