@@ -97,7 +97,7 @@ run_single_granularity() {
 run_multi_granularity() {
     local PYTHON_ARGS="$@"
     echo -e "${BLUE}📊 Running multi-granularity collection${NC}"
-    SECRET_KEY="$SECRET_KEY" uv run python scripts/collect_multi_granularity_corpus.py $PYTHON_ARGS
+    SECRET_KEY="test_secret_key_for_testing_purpose_only" PYTHONUNBUFFERED=1 uv run python scripts/collect_multi_granularity_corpus.py $PYTHON_ARGS 2>&1
     return $?
 }
 
@@ -110,14 +110,14 @@ case "$MODE" in
     clean)
         echo -e "${YELLOW}🧹 Cleaning ALL corpus data...${NC}"
         echo ""
-        SECRET_KEY="$SECRET_KEY" uv run python scripts/data_collection/clean_corpus_data.py --mode all
+        SECRET_KEY="test_secret_key_for_testing_purpose_only" uv run python scripts/data_collection/clean_corpus_data.py --mode all
         EXIT_CODE=$?
         ;;
         
     clean-multi)
         echo -e "${YELLOW}🧹 Cleaning multi-granularity corpus data...${NC}"
         echo ""
-        SECRET_KEY="$SECRET_KEY" uv run python scripts/data_collection/clean_corpus_data.py --mode multi
+        SECRET_KEY="test_secret_key_for_testing_purpose_only" uv run python scripts/data_collection/clean_corpus_data.py --mode multi
         EXIT_CODE=$?
         ;;
         
