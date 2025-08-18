@@ -47,7 +47,7 @@ from src.data_pipeline.initial_corpus_collector import (
 )
 from src.utils.database import get_database_connection, execute_query
 from src.utils.config import get_config
-from src.enhanced_logging.enhanced_logging import setup_enhanced_logging
+from src.enhanced_logging.enhanced_logging import initialize_logging
 import structlog
 
 # Import GCP utilities

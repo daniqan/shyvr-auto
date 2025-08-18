@@ -37,8 +37,11 @@ async def clean_all_corpus_data() -> int:
     Returns:
         Exit code (0 for success, 1 for error)
     """
+    logger.info("Starting clean_all_corpus_data()")
     try:
+        logger.info("Getting database connection...")
         async with get_database_connection() as conn:
+            logger.info("Database connection established")
             # Clean corpus tables
             tables = [
                 'crypto_ohlcv', 
@@ -52,9 +55,10 @@ async def clean_all_corpus_data() -> int:
             
             total_deleted = 0
             for table in tables:
-                result = await conn.execute(
-                    f"DELETE FROM {table} WHERE data_source = 'initial'"
-                )
+                logger.info(f"Cleaning table {table}...")
+                query = f"DELETE FROM {table} WHERE data_source = 'initial'"
+                logger.debug(f"Executing: {query}")
+                result = await conn.execute(query)
                 
                 # Extract row count from result string (e.g., "DELETE 42")
                 if result and ' ' in result:
@@ -70,6 +74,8 @@ async def clean_all_corpus_data() -> int:
             
     except Exception as e:
         logger.error(f"Failed to clean corpus data: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return 1
 
 

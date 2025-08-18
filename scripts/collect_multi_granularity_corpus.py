@@ -43,9 +43,14 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+# Add debug logging
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
 
 async def main():
     """Main collection function"""
+    logger.info("Starting main() function")
     parser = argparse.ArgumentParser(description='Collect multi-granularity training corpus')
     parser.add_argument(
         '--config',
@@ -93,15 +98,20 @@ async def main():
     )
     
     args = parser.parse_args()
+    logger.info(f"Arguments parsed: config={args.config}, dry_run={args.dry_run}")
     
     # Load secrets
     try:
+        logger.info("Loading system secrets...")
         system_secrets = get_system_secrets()
+        logger.info("System secrets loaded successfully")
         coingecko_api_key = system_secrets.coingecko_pro_api_key
         
         if not coingecko_api_key:
             logger.error("CoinGecko Pro API key not found in secrets")
             return 1
+        else:
+            logger.info("CoinGecko Pro API key found")
             
     except Exception as e:
         logger.error(f"Failed to load secrets: {e}")
@@ -109,11 +119,13 @@ async def main():
     
     # Initialize collector
     try:
+        logger.info(f"Initializing MultiGranularityCollector with config: {args.config}")
         collector = MultiGranularityCollector(
             config_path=args.config,
             rate_limit_delay=2.1,  # Conservative rate limiting
             retry_attempts=3
         )
+        logger.info("MultiGranularityCollector initialized successfully")
         
         # Override tokens if specified
         if args.tokens:
@@ -182,9 +194,13 @@ async def main():
     try:
         # Collect corpus data
         logger.info("Starting multi-granularity corpus collection...")
+        logger.info(f"Tokens to collect: {list(collector.tokens.keys())}")
+        enabled_timeframes = [tf.value for tf, config in collector.timeframes.items() if config.enabled]
+        logger.info(f"Enabled timeframes: {enabled_timeframes}")
         start_time = datetime.now()
         
         corpus_data = await collector.collect_multi_granularity_corpus()
+        logger.info(f"Collection returned {len(corpus_data)} datasets")
         
         # Save checkpoint after successful collection
         with open(checkpoint_file, 'w') as f:
@@ -309,4 +325,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    logger.info("Script started")
+    try:
+        exit_code = asyncio.run(main())
+        logger.info(f"Script completed with exit code: {exit_code}")
+        sys.exit(exit_code)
+    except Exception as e:
+        logger.error(f"Script failed with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
