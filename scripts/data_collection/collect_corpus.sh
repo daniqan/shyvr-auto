@@ -89,7 +89,7 @@ echo ""
 run_single_granularity() {
     local PYTHON_ARGS="$@"
     echo -e "${BLUE}📊 Running single-granularity collection${NC}"
-    uv run python scripts/data_collection/run_initial_corpus_collection.py $PYTHON_ARGS
+    SECRET_KEY="test_secret_key_for_testing_purpose_only" PYTHONUNBUFFERED=1 uv run python scripts/data_collection/run_initial_corpus_collection.py $PYTHON_ARGS 2>&1
     return $?
 }
 
