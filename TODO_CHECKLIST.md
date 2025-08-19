@@ -393,167 +393,236 @@ python scripts/training/train_transformers.py \
 - [x] **Error Recovery**: Checkpoint-based resumable collection
 - [x] **GCS Export**: Complete structured export with metadata and integrity verification
 
-## Phase 4: Continuous Learning Infrastructure (Day 3)
+## Phase 4: Immediate Corpus Execution & Model Training Connection (Days 1-3)
 
-### 4.1 Live Data Collection Service
-- [ ] Create `src/services/live_data_service.py`
-  - [ ] Class: `LiveDataService`
-  - [ ] Method: `start_collection()` - Begin live collection
-  - [ ] Method: `buffer_new_samples()` - Buffer before training
-  - [ ] Method: `batch_for_training()` - Create training batches
-  - [ ] Batch size: 24 hours of data (240 samples for 10 tokens)
-  - [ ] Mark with `data_source='live'`
+### 4.1 Execute Corpus Collection (PRIORITY 1)
+- [ ] Execute existing collection scripts with production data:
+  - [ ] Run: `./scripts/data_collection/collect_corpus.sh clean` - Clean existing test data
+  - [ ] Run: `./scripts/data_collection/collect_corpus.sh production` - 365 days, 10 tokens
+  - [ ] Verify: Database contains ~21,900 OHLCV records with `data_source='initial'`
+  - [ ] Run: `./scripts/data_collection/collect_corpus.sh multi` - Multi-granularity collection
+  - [ ] Verify: Parquet files in `data/corpus/v2.0/` with 65+ features per dataset
+  - [ ] Confirm: GCS export to `gs://shyvr-models-prod/training-data/initial-corpus/v2.0/`
 
-### 4.2 Simulation Mode Data Handler
-- [ ] Create `src/services/simulation_data_handler.py`
-  - [ ] Class: `SimulationDataHandler`
-  - [ ] Method: `capture_simulation_trades()` - Real market data during paper trading
-  - [ ] Method: `validate_data_quality()` - Quality checks on real data
-  - [ ] Method: `prepare_for_training()` - Feature engineering
-  - [ ] Mark with `data_source='simulation'` (real data collected during simulation mode)
-  - [ ] Note: "Simulation data" = real market data collected while in simulation/paper trading mode
+### 4.2 Create Unified Training Pipeline
+- [ ] Create `scripts/training/train_all_models.py`
+  - [ ] Class: `UnifiedTrainingPipeline`
+  - [ ] Method: `load_corpus_data()` - Load parquet files from `data/corpus/v2.0/`
+  - [ ] Method: `prepare_train_val_test_split()` - Time-series aware splitting (80/10/10)
+  - [ ] Method: `train_lstm_model()` - Use `LSTMPricePredictor.prepare_training_from_corpus()`
+  - [ ] Method: `train_transformer_models()` - Train all 5 transformer variants:
+    - [ ] Use `TransformerPredictor.prepare_training_from_corpus()` - 192 timesteps
+    - [ ] Use `iTransformerPredictor.prepare_training_from_corpus()` - 96 timesteps, selected features
+    - [ ] Use `PatchTSTPredictor.prepare_training_from_corpus()` - Patch-based
+    - [ ] Use `TimesMixerPredictor.prepare_training_from_corpus()` - 336 timesteps
+    - [ ] Skip TimesFM (pre-trained, no corpus training needed)
+  - [ ] Method: `train_dqn_agent()` - Integrate corpus features into RL state space
+  - [ ] Method: `save_trained_models()` - Save to `models/` with versioning
+  - [ ] Integration: Use existing `ModelManager` for ensemble coordination
+  - [ ] Integration: Use existing `model_training_history` table for tracking
 
-### 4.3 Incremental Training Manager
-- [ ] Create `src/ml_analysis/incremental_training_manager.py`
-  - [ ] Class: `IncrementalTrainingManager`
-  - [ ] Method: `load_base_model()` - Load from initial training
-  - [ ] Method: `prepare_incremental_batch()` - New data batch
-  - [ ] Method: `update_model_weights()` - Incremental learning
-  - [ ] Method: `validate_performance()` - Check for degradation
-  - [ ] Method: `rollback_if_degraded()` - Safety mechanism
-  - [ ] Method: `save_checkpoint()` - Version control
+### 4.3 Connect DQN to Corpus Data
+- [ ] Update `src/rl_agent/training_pipeline.py`:
+  - [ ] Class: `DQNTrainingPipeline` (existing)
+  - [ ] Method: `load_corpus_for_rl()` - New method to load corpus data
+  - [ ] Method: `create_rl_state_from_corpus()` - Convert corpus features to RL states
+  - [ ] Integration: Modify `_initialize_components()` to use corpus data
+  - [ ] Integration: Update `TradingEnvironment` to use historical corpus for simulation
 
-### 4.4 Model Versioning System
-- [ ] Create `src/ml_analysis/model_versioning.py`
-  - [ ] Class: `ModelVersionManager`
-  - [ ] Track model lineage: initial → incremental updates
-  - [ ] Maintain performance history
-  - [ ] Support rollback to previous versions
-  - [ ] A/B testing between versions
-
-## Phase 5: Training Data Manager with Source Awareness (Day 3)
-
-### 5.1 Enhanced Training Data Manager
-- [ ] Update `src/ml_analysis/training_data_manager.py`
-  - [ ] Class: `TrainingDataManager`
-  - [ ] Method: `load_initial_corpus()` - Load only initial data
-  - [ ] Method: `load_continuous_data()` - Load live/simulation data
-  - [ ] Method: `create_mixed_batches()` - Combine sources for training
-  - [ ] Method: `get_data_by_source()` - Filter by data source
-  - [ ] Method: `track_data_usage()` - Log which data was used
-
-### 5.2 Data Source Configuration
-- [ ] Create `config/data_sources.yaml`
+### 4.4 Training Configuration Management
+- [ ] Create `config/training_config.yaml`
   ```yaml
-  initial_corpus:
-    version: "v1.0"
-    path: "gs://shyvr-models-prod/training-data/initial-corpus/v1.0/"
-    immutable: true
+  corpus:
+    path: "data/corpus/v2.0/"
+    granularities: ["daily", "hourly", "four_hour"]
     
-  continuous_learning:
-    batch_size: 240  # samples
-    update_frequency: "daily"
-    sources:
-      - simulation
-      - live
-    
-  mixing_strategy:
-    initial_weight: 0.7  # 70% initial corpus
-    new_data_weight: 0.3  # 30% new data
+  models:
+    lstm:
+      sequence_length: 50
+      batch_size: 32
+      epochs: 100
+      learning_rate: 0.001
+    transformer:
+      sequence_length: 192
+      batch_size: 16
+      epochs: 50
+    itransformer:
+      sequence_length: 96
+      selected_features: ["close", "volume", "rsi_14", "macd", "bb_position"]
+    patchtst:
+      patch_length: 16
+      stride: 8
+    timesmixer:
+      sequence_length: 336
+      decomposition_layers: 3
+    dqn:
+      replay_buffer_size: 10000
+      batch_size: 64
+      
+  training:
+    split_ratios: [0.8, 0.1, 0.1]  # train/val/test
+    early_stopping_patience: 10
+    save_best_only: true
   ```
 
-## Phase 6: Model Training with Data Lifecycle (Day 4-5)
+## Phase 5: Model Evaluation & Comparison Framework (Days 4-5)
 
-### 6.1 Initial Training Scripts
-- [ ] Create `scripts/training/initial_training.py`
-  - [ ] Use ONLY initial corpus data
-  - [ ] Train all models from scratch
-  - [ ] Save as base model versions
-  - [ ] Record in `model_training_history`
+### 5.1 Create Backtesting System
+- [ ] Create `scripts/evaluation/backtest_models.py`
+  - [ ] Class: `ModelBacktester`
+  - [ ] Method: `load_trained_models()` - Load all trained model versions
+  - [ ] Method: `prepare_test_data()` - Use holdout test set from corpus
+  - [ ] Method: `run_backtests()` - Test each model on historical data
+  - [ ] Method: `calculate_metrics()` - Sharpe ratio, returns, accuracy, MAE, RMSE
+  - [ ] Method: `generate_report()` - Create performance comparison report
+  - [ ] Integration: Use existing `PredictionResult` class for standardized outputs
+  - [ ] Integration: Store results in new `model_evaluation_results` table
 
-### 6.2 Incremental Training Scripts
-- [ ] Create `scripts/training/incremental_training.py`
-  - [ ] Load base models
-  - [ ] Use new data from continuous learning queue
-  - [ ] Apply incremental learning techniques:
-    - Elastic Weight Consolidation (EWC)
-    - Learning rate scheduling
-    - Replay buffer from initial corpus
-  - [ ] Update model versions
+### 5.2 Model Comparison & Selection
+- [ ] Create `src/evaluation/model_comparator.py`
+  - [ ] Class: `ModelComparator`
+  - [ ] Method: `compare_predictions()` - Side-by-side prediction analysis
+  - [ ] Method: `calculate_ensemble_weights()` - Optimize ensemble combination
+  - [ ] Method: `select_best_model()` - Based on configurable criteria
+  - [ ] Method: `generate_confusion_matrix()` - For direction predictions
+  - [ ] Integration: Update `EnsembleWeightManager` with comparison results
+  - [ ] Integration: Use existing `ModelManager.update_model_weights()`
 
-### 6.3 Training Orchestrator
-- [ ] Create `scripts/training/training_orchestrator.py`
-  - [ ] Coordinate initial vs incremental training
-  - [ ] Manage training queue
-  - [ ] Monitor model performance
-  - [ ] Trigger retraining when needed
+### 5.3 Performance Monitoring Dashboard
+- [ ] Update `src/monitoring/training_dashboard.py` (create if not exists)
+  - [ ] Class: `TrainingDashboard`
+  - [ ] Method: `track_training_progress()` - Real-time training metrics
+  - [ ] Method: `compare_model_performance()` - Visual comparison charts
+  - [ ] Method: `show_corpus_usage()` - Data utilization statistics
+  - [ ] Integration: Use existing Prometheus metrics from `MetricsRegistry`
+  - [ ] Integration: Connect to existing Grafana dashboards
 
-## Phase 7: Monitoring & Data Quality (Day 5)
+## Phase 6: Online Learning & Live Integration (Days 6-7)
 
-### 7.1 Data Drift Detection (Integration with Existing System)
-- [ ] Extend existing `src/monitoring/drift_detection.py`:
-  - [ ] Add training data specific drift monitoring
-  - [ ] Use existing `EnhancedDriftDetector` class
-  - [ ] Integrate with `FeatureDriftMonitor` for real-time monitoring
-  - [ ] Connect to existing alerting via `src/monitoring/intelligent_alerting.py`
-  - [ ] Leverage transformer-specific drift from `transformer_drift_detection.py`
+### 6.1 Incremental Training Implementation
+- [ ] Create `src/ml_analysis/incremental_trainer.py`
+  - [ ] Class: `IncrementalTrainer`
+  - [ ] Method: `load_base_models()` - Load models trained on initial corpus
+  - [ ] Method: `process_continuous_queue()` - Use existing `continuous_learning_queue`
+  - [ ] Method: `create_incremental_batch()` - Combine new data with replay buffer
+  - [ ] Method: `update_model_incrementally()` - Fine-tune without catastrophic forgetting
+  - [ ] Method: `validate_performance()` - Compare to baseline performance
+  - [ ] Integration: Use existing `OnlineLearningPipeline.trigger_model_update()`
+  - [ ] Integration: Leverage `EnhancedDriftDetector` for data quality checks
 
-### 7.2 Training Performance Dashboard
-- [ ] Create `src/monitoring/training_dashboard.py`
-  - [ ] Track data source usage
-  - [ ] Monitor model performance by data source
-  - [ ] Visualize incremental learning progress
-  - [ ] Show data lifecycle status
-
-### 7.3 Audit Trail System
-- [ ] Create `src/monitoring/audit_trail.py`
-  - [ ] Log all data movements
-  - [ ] Track model-data associations
-  - [ ] Maintain compliance records
-  - [ ] Generate training reports
-
-## Phase 8: Integration with Existing RLTE Systems
-
-### 8.1 Safety System Integration
-- [ ] Connect with `src/safety/ml_rl_safety_bridge.py`:
-  - [ ] Register training data quality checks with safety monitors
-  - [ ] Enable emergency stops on data corruption
-  - [ ] Integrate with automated recovery systems
-
-### 8.2 Model Registry Integration
+### 6.2 Model Hot-Swapping System
 - [ ] Update `src/ml_analysis/model_manager.py`:
-  - [ ] Track which training corpus version each model used
-  - [ ] Enable model rollback based on data issues
-  - [ ] Support A/B testing with different training data
+  - [ ] Method: `hot_swap_model()` - Replace model without downtime
+  - [ ] Method: `gradual_rollout()` - Percentage-based traffic splitting
+  - [ ] Method: `rollback_on_failure()` - Automatic rollback mechanism
+  - [ ] Integration: Use existing `load_model()` and `save_model()` methods
+  - [ ] Integration: Coordinate with `ModeManager` for safe transitions
 
-### 8.3 Mode System Integration
-- [ ] Integrate with `src/modes/mode_manager.py`:
-  - [ ] Different data labeling per mode (all using real market data):
-    - [ ] Simulation mode: Real data labeled as `data_source='simulation'` (paper trading)
-    - [ ] Production mode: Real data labeled as `data_source='live'` (actual trading)
-    - [ ] Safety mode: Uses only initial corpus for predictions (no new collection)
+### 6.3 Feedback Loop Integration
+- [ ] Update `src/modes/continuous_learning.py` (existing):
+  - [ ] Class: `ContinuousLearningEngine` (existing)
+  - [ ] Method: `track_prediction_accuracy()` - Compare predictions to actual outcomes
+  - [ ] Method: `update_training_weights()` - Adjust based on performance
+  - [ ] Method: `trigger_emergency_retrain()` - On significant degradation
+  - [ ] Integration: Use existing `collect_experience()` method
+  - [ ] Integration: Connect to `FallbackSystemIntegration` for safety
 
-### 8.4 Existing Database Integration
-- [ ] Align with existing schemas in `database/migrations/`:
-  - [ ] Follow naming conventions from existing tables
-  - [ ] Use similar indexing strategies
-  - [ ] Maintain foreign key relationships
+## Phase 7: Advanced Training Features (Days 8-10)
 
-## Phase 9: Archival & Cleanup (Day 5)
+### 7.1 Hyperparameter Optimization
+- [ ] Create `scripts/optimization/hyperparameter_search.py`
+  - [ ] Class: `HyperparameterOptimizer`
+  - [ ] Method: `grid_search()` - Exhaustive parameter search
+  - [ ] Method: `random_search()` - Efficient random sampling
+  - [ ] Method: `bayesian_optimization()` - Smart parameter exploration
+  - [ ] Method: `cross_validate()` - Time-series cross-validation
+  - [ ] Integration: Use corpus data for validation
+  - [ ] Integration: Save best params to `config/optimal_hyperparameters.yaml`
 
-### 9.1 Data Archival Service
-- [ ] Create `src/services/archival_service.py`
-  - [ ] Move trained data to archive
-  - [ ] Maintain data lineage
-  - [ ] Compress old data
-  - [ ] Update indices
+### 7.2 Distributed Training Support
+- [ ] Create `src/training/distributed_trainer.py`
+  - [ ] Class: `DistributedTrainer`
+  - [ ] Method: `setup_multi_gpu()` - Configure PyTorch distributed
+  - [ ] Method: `shard_data()` - Distribute corpus across workers
+  - [ ] Method: `aggregate_gradients()` - Synchronize training
+  - [ ] Integration: Compatible with existing model architectures
+  - [ ] Integration: Use GCS for checkpoint coordination
 
-### 9.2 Cleanup Policies
-- [ ] Create `scripts/cleanup_old_data.py`
-  - [ ] Remove processed simulation data > 6 months
-  - [ ] Archive live data > 12 months
-  - [ ] Never delete initial corpus
-  - [ ] Clean up failed training batches
+### 7.3 Advanced RL Algorithms
+- [ ] Update `src/rl_agent/` directory:
+  - [ ] Create `ppo_agent.py` - Proximal Policy Optimization
+    - [ ] Class: `PPOTradingAgent`
+    - [ ] Method: `compute_advantages()` - GAE calculation
+    - [ ] Method: `update_policy()` - Clipped objective
+  - [ ] Create `sac_agent.py` - Soft Actor-Critic
+    - [ ] Class: `SACTradingAgent`
+    - [ ] Method: `update_critics()` - Twin Q-networks
+    - [ ] Method: `update_actor()` - Entropy regularization
+  - [ ] Update `trading_environment.py`:
+    - [ ] Method: `add_position_sizing()` - Continuous action space
+    - [ ] Method: `multi_asset_support()` - Trade multiple tokens
+  - [ ] Integration: Use same corpus data pipeline as DQN
+
+## Phase 8: Production Safety & Monitoring (Days 11-12)
+
+### 8.1 Training Data Quality Assurance
+- [ ] Update `src/monitoring/drift_detection.py`:
+  - [ ] Class: `EnhancedDriftDetector` (existing)
+  - [ ] Method: `monitor_training_data()` - Check corpus quality
+  - [ ] Method: `detect_corpus_drift()` - Compare new data to initial corpus
+  - [ ] Integration: Connect to existing `IntelligentAlertingSystem`
+  - [ ] Integration: Trigger `FallbackSystemIntegration` on issues
+
+### 8.2 Model Registry & Versioning
+- [ ] Create `src/ml_analysis/model_registry.py`
+  - [ ] Class: `ModelRegistry`
+  - [ ] Method: `register_model()` - Add model with metadata
+  - [ ] Method: `track_lineage()` - Corpus version → Model version mapping
+  - [ ] Method: `compare_versions()` - Performance across versions
+  - [ ] Method: `promote_to_production()` - Staging → Production flow
+  - [ ] Integration: Use existing `model_training_history` table
+  - [ ] Integration: Coordinate with `ModelManager` for loading
+
+### 8.3 A/B Testing Framework
+- [ ] Create `src/evaluation/ab_testing.py`
+  - [ ] Class: `ABTestManager`
+  - [ ] Method: `create_experiment()` - Define test parameters
+  - [ ] Method: `split_traffic()` - Route predictions to models
+  - [ ] Method: `collect_metrics()` - Track performance per variant
+  - [ ] Method: `statistical_significance()` - Determine winner
+  - [ ] Integration: Use existing `ModelManager` for model switching
+  - [ ] Integration: Log results to `model_evaluation_results` table
+
+## Phase 9: Continuous Improvement Pipeline (Days 13-15)
+
+### 9.1 Automated Retraining Triggers
+- [ ] Create `src/training/auto_retrain_manager.py`
+  - [ ] Class: `AutoRetrainManager`
+  - [ ] Method: `monitor_performance()` - Track model degradation
+  - [ ] Method: `check_data_volume()` - Trigger on new data threshold
+  - [ ] Method: `schedule_retrain()` - Queue training job
+  - [ ] Method: `validate_new_model()` - Ensure improvement
+  - [ ] Integration: Use existing `continuous_learning_queue`
+  - [ ] Integration: Coordinate with `OnlineLearningPipeline`
+
+### 9.2 Training Pipeline Orchestration
+- [ ] Create `scripts/orchestration/training_orchestrator.py`
+  - [ ] Class: `TrainingOrchestrator`
+  - [ ] Method: `manage_training_queue()` - Priority-based scheduling
+  - [ ] Method: `allocate_resources()` - GPU/CPU management
+  - [ ] Method: `handle_failures()` - Retry and recovery logic
+  - [ ] Method: `notify_completion()` - Alert on training status
+  - [ ] Integration: Use existing Cloud Run infrastructure
+  - [ ] Integration: Connect to monitoring systems
+
+### 9.3 Model Lifecycle Management
+- [ ] Update `src/data_pipeline/lifecycle_manager.py`:
+  - [ ] Class: `DataLifecycleManager` (existing)
+  - [ ] Method: `archive_old_models()` - Move outdated models to cold storage
+  - [ ] Method: `cleanup_checkpoints()` - Remove intermediate saves
+  - [ ] Method: `maintain_model_catalog()` - Update model inventory
+  - [ ] Integration: Respect existing retention policies
+  - [ ] Integration: Coordinate with GCS lifecycle rules
 
 ## Data Flow Architecture
 
