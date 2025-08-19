@@ -42,8 +42,8 @@ tokens:
     
   # Alternative L1
   - symbol: "SOL"
-    contract_address: null  # Use CoinGecko ID instead
-    network: null
+    contract_address: "0xD31a59c85aE9D8edEFeC411D448f90841571b89c"  # Wrapped SOL on Ethereum
+    network: "eth"
     coingecko_id: "solana"
     category: "alt_l1"
     
