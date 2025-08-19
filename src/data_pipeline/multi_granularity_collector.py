@@ -695,6 +695,17 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 # Skip records without valid timestamps
                 continue
             
+            # Detect precision needed for this token
+            close_price = float(row['close'])
+            if close_price < 0.000001:
+                precision = 12  # Ultra-micro tokens
+            elif close_price < 0.0001:
+                precision = 10  # Micro tokens like PEPE
+            elif close_price < 0.01:
+                precision = 8   # Small value tokens
+            else:
+                precision = 6   # Standard tokens
+            
             record = {
                 'token_id': token_symbol.lower(),
                 'symbol': token_symbol,
@@ -706,7 +717,8 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 'volume': float(row['volume']),
                 'granularity': granularity,  # Add granularity
                 'data_source': 'initial',
-                'collection_timestamp': datetime.now(timezone.utc)
+                'collection_timestamp': datetime.now(timezone.utc),
+                'price_precision': precision
             }
             records.append(record)
         
@@ -716,15 +728,15 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 """
                 INSERT INTO crypto_ohlcv (
                     token_id, symbol, timestamp, open, high, low, close, volume,
-                    granularity, data_source, collection_timestamp
+                    granularity, data_source, collection_timestamp, price_precision
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
                 )
                 ON CONFLICT (id, data_source, timestamp) DO NOTHING
                 """,
                 [(r['token_id'], r['symbol'], r['timestamp'], r['open'], r['high'],
                   r['low'], r['close'], r['volume'], r['granularity'], 
-                  r['data_source'], r['collection_timestamp']) for r in records]
+                  r['data_source'], r['collection_timestamp'], r['price_precision']) for r in records]
             )
             logger.info(f"Stored {len(records)} OHLCV records for {token_symbol} at {granularity}")
     
@@ -781,18 +793,15 @@ class MultiGranularityCollector(InitialCorpusCollector):
             # Convert timestamp to Python datetime for asyncpg
             ts_datetime = ts.to_pydatetime()
             
-            # Helper function to get safe float value with bounds checking
-            def safe_float(value, default=0.0, max_value=1e11):
+            # Helper function to get safe float value
+            # Now using DOUBLE PRECISION in database, no need for clamping
+            def safe_float(value, default=0.0):
                 if pd.isna(value) or (isinstance(value, float) and np.isnan(value)):
                     return default
                 val = float(value)
-                # Check for numeric overflow (database precision 20, scale 8 = max 10^12)
-                if abs(val) > max_value:
-                    logger.warning(f"Value {val} exceeds bounds, clamping to {max_value}")
-                    return max_value if val > 0 else -max_value
-                # Also check for inf
+                # Check for inf and replace with default
                 if np.isinf(val):
-                    logger.warning(f"Value is infinite, using default {default}")
+                    logger.debug(f"Value is infinite, using default {default}")
                     return default
                 return val
             
