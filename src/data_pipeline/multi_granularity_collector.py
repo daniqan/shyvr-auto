@@ -781,11 +781,20 @@ class MultiGranularityCollector(InitialCorpusCollector):
             # Convert timestamp to Python datetime for asyncpg
             ts_datetime = ts.to_pydatetime()
             
-            # Helper function to get safe float value
-            def safe_float(value, default=0.0):
+            # Helper function to get safe float value with bounds checking
+            def safe_float(value, default=0.0, max_value=1e11):
                 if pd.isna(value) or (isinstance(value, float) and np.isnan(value)):
                     return default
-                return float(value)
+                val = float(value)
+                # Check for numeric overflow (database precision 20, scale 8 = max 10^12)
+                if abs(val) > max_value:
+                    logger.warning(f"Value {val} exceeds bounds, clamping to {max_value}")
+                    return max_value if val > 0 else -max_value
+                # Also check for inf
+                if np.isinf(val):
+                    logger.warning(f"Value is infinite, using default {default}")
+                    return default
+                return val
             
             # Build feature record with ALL training-ready columns
             feature_records.append((

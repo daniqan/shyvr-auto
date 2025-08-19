@@ -104,7 +104,7 @@ timeframes:
 # Collection strategy
 collection_strategy:
   # Use parallel collection for different timeframes
-  parallel_collection: false  # Disabled due to hanging issues with large datasets
+  parallel_collection: true  # Re-enabled with timeout protection
   max_concurrent_requests: 3
   task_timeout: 300  # 5 minute timeout per task
   
