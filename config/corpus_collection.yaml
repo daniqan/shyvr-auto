@@ -104,8 +104,9 @@ timeframes:
 # Collection strategy
 collection_strategy:
   # Use parallel collection for different timeframes
-  parallel_collection: true
+  parallel_collection: false  # Disabled due to hanging issues with large datasets
   max_concurrent_requests: 3
+  task_timeout: 300  # 5 minute timeout per task
   
   # Rate limiting (CoinGecko Pro)
   rate_limit_per_minute: 30
@@ -117,7 +118,7 @@ collection_strategy:
   max_candles_per_request: 1000
   
   # Error handling
-  skip_on_error: false
+  skip_on_error: true  # Continue on errors to collect partial data
   save_partial_on_error: true
   checkpoint_interval: 100  # Save progress every 100 candles
 

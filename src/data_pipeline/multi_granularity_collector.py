@@ -201,15 +201,23 @@ class MultiGranularityCollector(InitialCorpusCollector):
         """
         corpus_data = {}
         
+        logger.info("Starting corpus collection", strategy="parallel" if self.collection_strategy.get('parallel_collection', False) else "sequential")
+        
         # Determine collection strategy
         if self.collection_strategy.get('parallel_collection', False):
+            logger.info("Using parallel collection strategy")
             corpus_data = await self._collect_parallel()
         else:
+            logger.info("Using sequential collection strategy")
             corpus_data = await self._collect_sequential()
+        
+        logger.info(f"Collection phase complete, got {len(corpus_data)} datasets")
         
         # Add cross-timeframe features if enabled
         if self.feature_extraction.get('enable_multi_scale_features', False):
+            logger.info("Adding multi-scale features...")
             corpus_data = await self._add_multi_scale_features(corpus_data)
+            logger.info("Multi-scale features added")
         
         logger.info(
             "Multi-granularity corpus collection completed",
@@ -241,17 +249,39 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 tasks.append(task)
                 task_keys.append(key)
         
-        # Execute all tasks
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"Starting parallel collection of {len(tasks)} tasks")
+        
+        # Execute all tasks with timeout
+        timeout = self.collection_strategy.get('task_timeout', 300)  # 5 minute timeout per task
+        results = []
+        
+        try:
+            # Use asyncio.wait_for with individual timeouts
+            for i, (task, key) in enumerate(zip(tasks, task_keys)):
+                logger.info(f"Executing task {i+1}/{len(tasks)}: {key}")
+                try:
+                    result = await asyncio.wait_for(task, timeout=timeout)
+                    results.append(result)
+                    logger.info(f"Completed task {i+1}/{len(tasks)}: {key}")
+                except asyncio.TimeoutError:
+                    logger.error(f"Task {key} timed out after {timeout} seconds")
+                    results.append(TimeoutError(f"Task {key} timed out"))
+                except Exception as e:
+                    logger.error(f"Task {key} failed: {e}")
+                    results.append(e)
+        except Exception as e:
+            logger.error(f"Critical error in parallel collection: {e}")
+            raise
         
         # Combine results
         corpus_data = {}
         for key, result in zip(task_keys, results):
             if isinstance(result, Exception):
-                logger.error(f"Failed to collect {key}", error=str(result))
+                logger.error(f"Skipping {key} due to error: {result}")
                 continue
             corpus_data[key] = result
         
+        logger.info(f"Parallel collection completed: {len(corpus_data)}/{len(tasks)} successful")
         return corpus_data
     
     async def _collect_with_semaphore(self, 
@@ -862,10 +892,14 @@ class MultiGranularityCollector(InitialCorpusCollector):
         Args:
             corpus_data: Dictionary of DataFrames with OHLCV and features
         """
+        logger.info(f"Starting database storage for {len(corpus_data)} datasets")
         total_records = 0
         
+        logger.info("Getting database connection...")
         async with get_database_connection() as conn:
+            logger.info("Database connection established")
             for key, df in corpus_data.items():
+                logger.info(f"Storing {key} with {len(df)} records")
                 token_symbol = key.split('_')[0]
                 granularity = '_'.join(key.split('_')[1:])
                 

@@ -396,13 +396,19 @@ python scripts/training/train_transformers.py \
 ## Phase 4: Immediate Corpus Execution & Model Training Connection (Days 1-3)
 
 ### 4.1 Execute Corpus Collection (PRIORITY 1)
-- [ ] Execute existing collection scripts with production data:
-  - [ ] Run: `./scripts/data_collection/collect_corpus.sh clean` - Clean existing test data
-  - [ ] Run: `./scripts/data_collection/collect_corpus.sh production` - 365 days, 10 tokens
+- [x] Execute existing collection scripts with production data:
+  - [x] Run: `./scripts/data_collection/collect_corpus.sh clean` - Clean existing test data ✅ COMPLETED
+  - [ ] Run: `./scripts/data_collection/collect_corpus.sh production` - 365 days, 10 tokens 
+    - ⚠️ ISSUE: Script collects data but fails to store to database
+    - ⚠️ ISSUE: EnhancedCorpusCollector hangs after API calls complete
   - [ ] Verify: Database contains ~21,900 OHLCV records with `data_source='initial'`
   - [ ] Run: `./scripts/data_collection/collect_corpus.sh multi` - Multi-granularity collection
+    - ⚠️ ISSUE: Collection completes API calls but doesn't save data
+    - ⚠️ ISSUE: Process terminates before database storage
   - [ ] Verify: Parquet files in `data/corpus/v2.0/` with 65+ features per dataset
   - [ ] Confirm: GCS export to `gs://shyvr-models-prod/training-data/initial-corpus/v2.0/`
+  
+  **CRITICAL ISSUE**: The corpus collection scripts successfully fetch data from APIs but fail during the storage phase. Need to debug and fix the storage pipeline before proceeding.
 
 ### 4.2 Create Unified Training Pipeline
 - [ ] Create `scripts/training/train_all_models.py`
