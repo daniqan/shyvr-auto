@@ -49,7 +49,7 @@ async def test_single_token_pagination():
         return False
     
     # Initialize CoinGecko client
-    coingecko_client = CoinGeckoClient(api_key=api_key, use_pro=True)
+    coingecko_client = CoinGeckoClient(api_key=api_key)
     
     # Initialize paginated collector
     paginated_collector = PaginatedDataCollector(
@@ -121,7 +121,7 @@ async def test_multiple_timeframes():
         return False
     
     # Initialize CoinGecko client
-    coingecko_client = CoinGeckoClient(api_key=api_key, use_pro=True)
+    coingecko_client = CoinGeckoClient(api_key=api_key)
     
     # Initialize paginated collector
     paginated_collector = PaginatedDataCollector(

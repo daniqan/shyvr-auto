@@ -355,9 +355,21 @@ class CollectionProgress:
         else:
             logger.info("No checkpoint found, starting fresh")
     
-    def save_checkpoint(self, token: str, timeframe: str, chunk_manager: ChunkManager, data_collected: pd.DataFrame = None):
+    def save_checkpoint(self, token: str, timeframe: str, chunk_manager: ChunkManager = None, data_collected: pd.DataFrame = None):
         """Save progress for recovery"""
         key = f"{token}_{timeframe}"
+        
+        # If chunk_manager is None (clearing checkpoint), just save basic info
+        if chunk_manager is None:
+            if key in self.progress_data:
+                del self.progress_data[key]
+            # Write updated checkpoint file
+            try:
+                with open(self.checkpoint_file, 'w') as f:
+                    json.dump(self.progress_data, f, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to save checkpoint: {e}")
+            return
         
         self.progress_data[key] = {
             'token': token,
@@ -412,7 +424,12 @@ class CollectionProgress:
                         data_file.unlink()
                 
                 del self.progress_data[key]
-                self.save_checkpoint(token, timeframe, None)
+                # Save updated checkpoint file
+                try:
+                    with open(self.checkpoint_file, 'w') as f:
+                        json.dump(self.progress_data, f, indent=2)
+                except Exception as e:
+                    logger.error(f"Failed to save checkpoint after clearing: {e}")
                 logger.info(f"Cleared checkpoint for {key}")
         else:
             # Clear all checkpoints
