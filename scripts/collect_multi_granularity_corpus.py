@@ -96,6 +96,11 @@ async def main():
         default='checkpoints',
         help='Directory for saving collection checkpoints'
     )
+    parser.add_argument(
+        '--enable-pagination',
+        action='store_true',
+        help='Enable dynamic pagination for full data collection (365 days)'
+    )
     
     args = parser.parse_args()
     logger.info(f"Arguments parsed: config={args.config}, dry_run={args.dry_run}")
@@ -147,6 +152,23 @@ async def main():
         
         # Set parallel collection
         collector.collection_strategy['parallel_collection'] = args.parallel
+        
+        # Enable dynamic pagination if requested
+        if args.enable_pagination:
+            logger.info("Enabling dynamic pagination for full data collection")
+            # Update pagination settings in config
+            if 'pagination' not in collector.config:
+                collector.config['pagination'] = {}
+            collector.config['pagination']['enabled'] = True
+            collector.config['pagination']['strategy'] = {
+                'direction': 'backward',
+                'overlap_periods': 1,
+                'max_retries': 3,
+                'retry_delay': 2,
+                'fill_gaps': True
+            }
+            # Force reinitialization of paginated collector with new settings
+            collector.paginated_collector = None
         
     except Exception as e:
         logger.error(f"Failed to initialize collector: {e}")

@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 from google.cloud import storage
 
 from src.data_pipeline.initial_corpus_collector import InitialCorpusCollector
+from src.data_pipeline.paginated_collector import PaginatedDataCollector
 from src.ml_analysis.market_data import CoinGeckoClient
 from src.ml_analysis.feature_engineer import FeatureEngineer
 from src.utils.database import get_database_connection, execute_query
@@ -93,6 +94,10 @@ class MultiGranularityCollector(InitialCorpusCollector):
         
         # Initialize feature engineer with stablecoin support
         self.feature_engineer = FeatureEngineer(enable_live_data=False)
+        
+        # Initialize paginated collector for robust data collection
+        pagination_config = self.config.get('pagination', {})
+        self.paginated_collector = None  # Will be initialized when needed
         
         logger.info(
             "Multi-granularity collector initialized",
@@ -367,30 +372,54 @@ class MultiGranularityCollector(InitialCorpusCollector):
     async def _collect_contract_ohlcv(self,
                                      token: TokenConfig,
                                      timeframe: TimeframeConfig) -> pd.DataFrame:
-        """Collect OHLCV using contract address endpoint"""
+        """Collect OHLCV using contract address endpoint with dynamic pagination"""
         
-        # Calculate date range
-        end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(days=timeframe.days_back)
+        # Initialize paginated collector if not already done
+        if self.paginated_collector is None:
+            pagination_config = self.config.get('pagination', {
+                'api_limits': {
+                    'daily': {'max_candles': 180, 'optimal_chunk_days': 150},
+                    'hourly': {'max_candles': 1000, 'optimal_chunk_hours': 900},
+                    'four_hour': {'max_candles': 1000, 'optimal_chunk_periods': 900}
+                },
+                'strategy': {
+                    'direction': 'backward',
+                    'overlap_periods': 1,
+                    'max_retries': 3,
+                    'retry_delay': 2,
+                    'fill_gaps': True
+                },
+                'validation': {
+                    'min_completeness': 0.85,
+                    'gap_tolerance_hours': 48,
+                    'deduplication': True
+                }
+            })
+            self.paginated_collector = PaginatedDataCollector(
+                coingecko_client=self.coingecko_client,
+                pagination_config=pagination_config,
+                checkpoint_dir="checkpoints/corpus_collection"
+            )
         
-        # Map our timeframe interval to CoinGecko API timeframe
-        # CoinGecko supports: 'day', 'hour', 'minute', 'second'
-        if timeframe.interval == 'day':
-            api_timeframe = 'day'
-        elif timeframe.interval == 'hour':
-            api_timeframe = 'hour'
+        # Map our timeframe to the paginated collector format
+        if timeframe.name == 'daily':
+            collector_timeframe = 'daily'
+        elif timeframe.name == 'hourly':
+            collector_timeframe = 'hourly'
+        elif timeframe.name == 'four_hour':
+            collector_timeframe = 'four_hour'
         else:
-            # For 4-hour or 15-minute, we fetch hourly and aggregate
-            api_timeframe = 'hour'
+            # Default to hourly for unknown timeframes
+            collector_timeframe = 'hourly'
         
-        # Use the contract OHLCV method with pagination
-        df = await self.coingecko_client._get_contract_ohlcv_with_pagination(
+        # Use paginated collector for robust data collection
+        df = await self.paginated_collector.collect_with_pagination(
             contract_address=token.contract_address,
             network=token.network,
+            token_symbol=token.symbol,
+            timeframe=collector_timeframe,
             days=timeframe.days_back,
-            from_date=start_date,
-            to_date=end_date,
-            timeframe=api_timeframe  # Pass the explicit timeframe
+            resume=True  # Enable checkpoint resume
         )
         
         # Aggregate if needed for non-native timeframes

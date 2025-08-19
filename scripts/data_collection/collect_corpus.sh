@@ -7,14 +7,15 @@
 #   ./scripts/data_collection/collect_corpus.sh [mode] [options]
 #
 # Modes:
-#   clean         - Clean ALL existing corpus data
-#   clean-multi   - Clean multi-granularity data only
-#   test          - Test run (2 tokens, 7 days, single granularity)
-#   test-multi    - Test multi-granularity (2 tokens, multiple timeframes)
-#   production    - Production run (10 tokens, 365 days, single granularity)
-#   multi         - Full multi-granularity production run (7 tokens, multiple timeframes)
-#   multi-dry     - Dry run for multi-granularity collection
-#   custom        - Custom configuration (pass additional arguments)
+#   clean           - Clean ALL existing corpus data
+#   clean-multi     - Clean multi-granularity data only
+#   test            - Test run (2 tokens, 7 days, single granularity)
+#   test-multi      - Test multi-granularity (2 tokens, multiple timeframes)
+#   production      - Production run (10 tokens, 365 days, single granularity)
+#   multi           - Full multi-granularity production run (7 tokens, multiple timeframes)
+#   production-multi- Production multi-granularity with full pagination (365 days daily data)
+#   multi-dry       - Dry run for multi-granularity collection
+#   custom          - Custom configuration (pass additional arguments)
 #
 # Examples:
 #   # Clean existing data
@@ -179,6 +180,34 @@ case "$MODE" in
         EXIT_CODE=$?
         ;;
         
+    production-multi)
+        echo -e "${YELLOW}⚠️  Production multi-granularity with full pagination${NC}"
+        echo "   Tokens: WETH, WBTC, USDC, LINK, UNI, SOL, PEPE"
+        echo "   Timeframes:"
+        echo "     • Daily: 365 days (with pagination for full year)"
+        echo "     • 4-hour: 180 days"
+        echo "     • Hourly: 90 days"
+        echo -e "${GREEN}   ✨ Features:${NC}"
+        echo "     • Dynamic pagination for full data collection"
+        echo "     • Checkpoint/resume capability"
+        echo "     • Gap detection and filling"
+        echo "     • Data validation"
+        echo -e "${YELLOW}   Estimated time: 3-4 hours${NC}"
+        echo -e "${YELLOW}   Expected data: ~50,000+ candles${NC}"
+        echo ""
+        read -p "Continue? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+        
+        # Run with production config and pagination enabled
+        CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection.yaml"
+        run_multi_granularity --config "$CONFIG_FILE" --enable-pagination
+        EXIT_CODE=$?
+        ;;
+        
     multi-dry)
         echo -e "${BLUE}📋 Multi-granularity dry run${NC}"
         CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection.yaml"
@@ -203,20 +232,21 @@ case "$MODE" in
         echo -e "${RED}❌ Invalid mode: $MODE${NC}"
         echo ""
         echo "Available modes:"
-        echo "  clean       - Clean ALL existing corpus data"
-        echo "  clean-multi - Clean multi-granularity data only"
-        echo "  test        - Test run (single granularity)"
-        echo "  test-multi  - Test multi-granularity"
-        echo "  production  - Production run (single granularity)"
-        echo "  multi       - Multi-granularity production"
-        echo "  multi-dry   - Multi-granularity dry run"
-        echo "  custom      - Custom configuration"
+        echo "  clean           - Clean ALL existing corpus data"
+        echo "  clean-multi     - Clean multi-granularity data only"
+        echo "  test            - Test run (single granularity)"
+        echo "  test-multi      - Test multi-granularity"
+        echo "  production      - Production run (single granularity)"
+        echo "  multi           - Multi-granularity production"
+        echo "  production-multi- Production multi with full pagination"
+        echo "  multi-dry       - Multi-granularity dry run"
+        echo "  custom          - Custom configuration"
         echo ""
         echo "Examples:"
         echo "  ./collect_corpus.sh clean"
         echo "  ./collect_corpus.sh clean-multi"
         echo "  ./collect_corpus.sh test-multi"
-        echo "  ./collect_corpus.sh multi-dry"
+        echo "  ./collect_corpus.sh production-multi"
         echo "  ./collect_corpus.sh multi"
         exit 1
         ;;
