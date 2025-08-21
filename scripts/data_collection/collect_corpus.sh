@@ -192,6 +192,7 @@ case "$MODE" in
         echo "     • Checkpoint/resume capability"
         echo "     • Gap detection and filling"
         echo "     • Data validation"
+        echo "     • Export to GCS as parquet files (v2.0)"
         echo -e "${YELLOW}   Estimated time: 3-4 hours${NC}"
         echo -e "${YELLOW}   Expected data: ~50,000+ candles${NC}"
         echo ""
@@ -202,9 +203,9 @@ case "$MODE" in
             exit 0
         fi
         
-        # Run with production config and pagination enabled
+        # Run with production config, pagination enabled, and GCS export
         CONFIG_FILE="$PROJECT_ROOT/config/corpus_collection.yaml"
-        run_multi_granularity --config "$CONFIG_FILE" --enable-pagination
+        run_multi_granularity --config "$CONFIG_FILE" --enable-pagination --export-to-gcs
         EXIT_CODE=$?
         ;;
         
