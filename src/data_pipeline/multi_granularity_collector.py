@@ -993,9 +993,12 @@ class MultiGranularityCollector(InitialCorpusCollector):
         if local_dir is None:
             local_dir = Path("data/corpus/v2.0")
         
-        local_dir.mkdir(parents=True, exist_ok=True)
+        corpus_dir = local_dir / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
         parquet_paths = {}
         
+        # Group data by timeframe
+        timeframe_data = {}
         for key, df in corpus_data.items():
             # Parse key to get token and timeframe
             parts = key.rsplit('_', 1)
@@ -1005,16 +1008,30 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 token = key
                 timeframe = "unknown"
             
-            # Create subdirectory for timeframe
-            timeframe_dir = local_dir / timeframe
-            timeframe_dir.mkdir(exist_ok=True)
+            # Add symbol column if not present
+            if 'symbol' not in df.columns:
+                df['symbol'] = token
             
-            # Generate filename
-            filename = f"{token}_{timeframe}.parquet"
-            filepath = timeframe_dir / filename
+            # Group by timeframe
+            if timeframe not in timeframe_data:
+                timeframe_data[timeframe] = []
+            timeframe_data[timeframe].append(df)
+        
+        # Save each timeframe as a single parquet file
+        for timeframe, dfs in timeframe_data.items():
+            # Combine all DataFrames for this timeframe
+            combined_df = pd.concat(dfs, ignore_index=True)
+            
+            # Sort by timestamp and symbol
+            if 'timestamp' in combined_df.columns:
+                combined_df = combined_df.sort_values(['timestamp', 'symbol'])
+            
+            # Generate filename with corpus_ prefix
+            filename = f"corpus_{timeframe}.parquet"
+            filepath = corpus_dir / filename
             
             # Write to Parquet with compression
-            table = pa.Table.from_pandas(df)
+            table = pa.Table.from_pandas(combined_df)
             pq.write_table(
                 table, 
                 filepath,
@@ -1024,11 +1041,11 @@ class MultiGranularityCollector(InitialCorpusCollector):
                 allow_truncated_timestamps=True
             )
             
-            parquet_paths[key] = filepath
+            parquet_paths[f"corpus_{timeframe}"] = filepath
             logger.info(
-                f"Exported {key} to Parquet",
+                f"Exported corpus_{timeframe} to Parquet",
                 path=str(filepath),
-                rows=len(df),
+                rows=len(combined_df),
                 size_mb=filepath.stat().st_size / 1024 / 1024
             )
         
@@ -1068,16 +1085,10 @@ class MultiGranularityCollector(InitialCorpusCollector):
             total_size = 0
             
             for key, local_path in local_paths.items():
-                # Parse key to get token and timeframe
-                parts = key.rsplit('_', 1)
-                if len(parts) == 2:
-                    token, timeframe = parts
-                else:
-                    token = key
-                    timeframe = "unknown"
-                
-                # Create GCS path
-                gcs_path = f"{gcs_prefix}/{timeframe}/{token}_{timeframe}.parquet"
+                # key is now "corpus_{timeframe}" format
+                # Create GCS path matching the file name
+                filename = local_path.name  # corpus_daily.parquet, corpus_hourly.parquet, etc.
+                gcs_path = f"{gcs_prefix}/corpus/{filename}"
                 blob = bucket.blob(gcs_path)
                 
                 # Upload file
