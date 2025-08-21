@@ -56,7 +56,7 @@ class TestGCSCorpusExport:
             
             # Sort by timestamp
             df = df.sort_values('timestamp')
-            data[f"{timeframe.replace('_', '')}_corpus"] = df
+            data[f"corpus_{timeframe.replace('_', '')}"] = df
             
         return data
     
