@@ -92,6 +92,10 @@ class MultiGranularityCollector(InitialCorpusCollector):
         self.collection_strategy = self.config.get('collection_strategy', {})
         self.feature_extraction = self.config.get('feature_extraction', {})
         
+        # Set corpus metadata attributes
+        self.corpus_version = "v2.0"
+        self.collection_name = f"multi_granularity_{datetime.now().strftime('%Y%m%d')}"
+        
         # Initialize feature engineer with stablecoin support
         self.feature_engineer = FeatureEngineer(enable_live_data=False)
         
@@ -1034,85 +1038,106 @@ class MultiGranularityCollector(InitialCorpusCollector):
         self,
         corpus_data: Dict[str, pd.DataFrame],
         bucket_name: str = "shyvr-models-prod",
-        gcs_prefix: str = "training-data/initial-corpus/v2.0"
-    ) -> Dict[str, str]:
+        gcs_prefix: str = None
+    ) -> Dict[str, Any]:
         """
         Export corpus data to Google Cloud Storage as Parquet files
         
         Args:
             corpus_data: Dictionary of DataFrames with OHLCV and features
             bucket_name: GCS bucket name
-            gcs_prefix: Prefix for GCS paths
+            gcs_prefix: Prefix for GCS paths (auto-generated if None)
             
         Returns:
-            Dictionary mapping dataset keys to GCS paths
+            Dictionary with success status, GCS paths, and metadata
         """
-        # First export to local Parquet files
-        local_paths = await self.export_to_parquet(corpus_data)
+        try:
+            # Generate version-based prefix if not provided
+            if gcs_prefix is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                gcs_prefix = f"training-data/initial-corpus/initial_v2.0_{timestamp}"
+            
+            # First export to local Parquet files
+            local_paths = await self.export_to_parquet(corpus_data)
+            
+            # Upload to GCS
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            
+            gcs_paths = {}
+            total_size = 0
+            
+            for key, local_path in local_paths.items():
+                # Parse key to get token and timeframe
+                parts = key.rsplit('_', 1)
+                if len(parts) == 2:
+                    token, timeframe = parts
+                else:
+                    token = key
+                    timeframe = "unknown"
+                
+                # Create GCS path
+                gcs_path = f"{gcs_prefix}/{timeframe}/{token}_{timeframe}.parquet"
+                blob = bucket.blob(gcs_path)
+                
+                # Upload file
+                blob.upload_from_filename(str(local_path))
+                
+                gcs_paths[key] = f"gs://{bucket_name}/{gcs_path}"
+                file_size = local_path.stat().st_size
+                total_size += file_size
+                
+                logger.info(
+                    f"Uploaded {key} to GCS",
+                    gcs_path=gcs_paths[key],
+                    size_mb=file_size / 1024 / 1024
+                )
+            
+            # Create metadata file
+            metadata = {
+                "corpus_version": self.corpus_version,
+                "collection_name": self.collection_name,
+                "collected_at": datetime.now(timezone.utc).isoformat(),
+                "tokens": list(self.tokens.keys()),
+                "timeframes": [tf.value for tf, config in self.timeframes.items() if config.enabled],
+                "total_datasets": len(corpus_data),
+                "total_records": sum(len(df) for df in corpus_data.values()),
+                "total_size_mb": total_size / 1024 / 1024,
+                "gcs_paths": gcs_paths
+            }
+            
+            # Save metadata
+            metadata_path = Path("data/corpus/v2.0/metadata.json")
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            import json
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Upload metadata to GCS
+            metadata_blob = bucket.blob(f"{gcs_prefix}/metadata.json")
+            metadata_blob.upload_from_filename(str(metadata_path))
         
-        # Upload to GCS
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(bucket_name)
-        
-        gcs_paths = {}
-        total_size = 0
-        
-        for key, local_path in local_paths.items():
-            # Parse key to get token and timeframe
-            parts = key.rsplit('_', 1)
-            if len(parts) == 2:
-                token, timeframe = parts
-            else:
-                token = key
-                timeframe = "unknown"
-            
-            # Create GCS path
-            gcs_path = f"{gcs_prefix}/{timeframe}/{token}_{timeframe}.parquet"
-            blob = bucket.blob(gcs_path)
-            
-            # Upload file
-            blob.upload_from_filename(str(local_path))
-            
-            gcs_paths[key] = f"gs://{bucket_name}/{gcs_path}"
-            file_size = local_path.stat().st_size
-            total_size += file_size
-            
             logger.info(
-                f"Uploaded {key} to GCS",
-                gcs_path=gcs_paths[key],
-                size_mb=file_size / 1024 / 1024
+                "Corpus export to GCS completed",
+                total_datasets=len(gcs_paths),
+                total_size_mb=total_size / 1024 / 1024,
+                metadata_path=f"gs://{bucket_name}/{gcs_prefix}/metadata.json"
             )
-        
-        # Create metadata file
-        metadata = {
-            "corpus_version": self.corpus_version,
-            "collection_name": self.collection_name,
-            "collected_at": datetime.now(timezone.utc).isoformat(),
-            "tokens": list(self.tokens.keys()),
-            "timeframes": [tf.value for tf, config in self.timeframes.items() if config.enabled],
-            "total_datasets": len(corpus_data),
-            "total_records": sum(len(df) for df in corpus_data.values()),
-            "total_size_mb": total_size / 1024 / 1024,
-            "gcs_paths": gcs_paths
-        }
-        
-        # Save metadata
-        metadata_path = Path("data/corpus/v2.0/metadata.json")
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        import json
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Upload metadata to GCS
-        metadata_blob = bucket.blob(f"{gcs_prefix}/metadata.json")
-        metadata_blob.upload_from_filename(str(metadata_path))
-        
-        logger.info(
-            "Corpus export to GCS completed",
-            total_datasets=len(gcs_paths),
-            total_size_mb=total_size / 1024 / 1024,
-            metadata_path=f"gs://{bucket_name}/{gcs_prefix}/metadata.json"
-        )
-        
-        return gcs_paths
+            
+            # Return success result
+            return {
+                'success': True,
+                'gcs_path': f"gs://{bucket_name}/{gcs_prefix}",
+                'gcs_paths': gcs_paths,
+                'metadata_path': f"gs://{bucket_name}/{gcs_prefix}/metadata.json",
+                'total_size_mb': total_size / 1024 / 1024,
+                'total_records': sum(len(df) for df in corpus_data.values())
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to export corpus to GCS: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
