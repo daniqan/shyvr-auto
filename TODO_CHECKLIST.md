@@ -413,10 +413,23 @@ python scripts/training/train_transformers.py \
   
   **SUCCESS**: Production-multi mode with dynamic pagination successfully collected full year+ of data, exceeding all targets.
 
-### 4.2 Create Unified Training Pipeline
+### 4.2 Create GCS Corpus Loader
+- [ ] Create `src/data_pipeline/gcs_corpus_loader.py`
+  - [ ] Class: `GCSCorpusLoader`
+  - [ ] Method: `__init__(bucket_name, cache_dir="/tmp/corpus_cache")`
+  - [ ] Method: `list_available_corpus_versions()` - List all corpus versions in GCS
+  - [ ] Method: `get_latest_corpus_version()` - Get most recent corpus version path
+  - [ ] Method: `download_and_cache_parquet(gcs_path, local_path)` - Download with caching
+  - [ ] Method: `load_corpus_from_gcs(gcs_prefix, timeframe, token=None)` - Main loading method
+  - [ ] Method: `clear_old_cache(ttl_hours=24)` - Clean up old cached files
+  - [ ] Error handling: Retry logic for network failures
+  - [ ] Authentication: Use Application Default Credentials
+
+### 4.3 Create Unified Training Pipeline
 - [ ] Create `scripts/training/train_all_models.py`
   - [ ] Class: `UnifiedTrainingPipeline`
-  - [ ] Method: `load_corpus_data()` - Load parquet files from `data/corpus/v2.0/`
+  - [ ] Initialize: `GCSCorpusLoader` instance
+  - [ ] Method: `load_corpus_data()` - Load parquet files from GCS using GCSCorpusLoader
   - [ ] Method: `prepare_train_val_test_split()` - Time-series aware splitting (80/10/10)
   - [ ] Method: `train_lstm_model()` - Use `LSTMPricePredictor.prepare_training_from_corpus()`
   - [ ] Method: `train_transformer_models()` - Train all 5 transformer variants:
@@ -426,24 +439,29 @@ python scripts/training/train_transformers.py \
     - [ ] Use `TimesMixerPredictor.prepare_training_from_corpus()` - 336 timesteps
     - [ ] Skip TimesFM (pre-trained, no corpus training needed)
   - [ ] Method: `train_dqn_agent()` - Integrate corpus features into RL state space
-  - [ ] Method: `save_trained_models()` - Save to `models/` with versioning
+  - [ ] Method: `save_trained_models()` - Save to GCS `shyvr-models-prod/trained-models/`
   - [ ] Integration: Use existing `ModelManager` for ensemble coordination
   - [ ] Integration: Use existing `model_training_history` table for tracking
 
-### 4.3 Connect DQN to Corpus Data
+### 4.4 Connect DQN to Corpus Data
 - [ ] Update `src/rl_agent/training_pipeline.py`:
   - [ ] Class: `DQNTrainingPipeline` (existing)
-  - [ ] Method: `load_corpus_for_rl()` - New method to load corpus data
+  - [ ] Add: `GCSCorpusLoader` instance
+  - [ ] Method: `load_corpus_for_rl()` - Load corpus from GCS
   - [ ] Method: `create_rl_state_from_corpus()` - Convert corpus features to RL states
-  - [ ] Integration: Modify `_initialize_components()` to use corpus data
+  - [ ] Integration: Modify `_initialize_components()` to use GCS corpus data
   - [ ] Integration: Update `TradingEnvironment` to use historical corpus for simulation
 
-### 4.4 Training Configuration Management
+### 4.5 Training Configuration Management
 - [ ] Create `config/training_config.yaml`
   ```yaml
   corpus:
-    path: "data/corpus/v2.0/"
-    granularities: ["daily", "hourly", "four_hour"]
+    bucket: "shyvr-models-prod"
+    prefix: "training-data/initial-corpus"
+    version: "latest"  # or specific: "initial_v2.0_20250821_153449"
+    cache_dir: "/tmp/corpus_cache"
+    cache_ttl_hours: 24
+    granularities: ["daily", "hourly", "hour"]
     
   models:
     lstm:
@@ -473,6 +491,25 @@ python scripts/training/train_transformers.py \
     early_stopping_patience: 10
     save_best_only: true
   ```
+
+### 4.6 Test GCS Corpus Loading
+- [ ] Create `tests/integration/data_pipeline/test_gcs_corpus_loader.py`
+  - [ ] Test: Load corpus from actual GCS bucket (no mocks)
+  - [ ] Test: Cache functionality with TTL
+  - [ ] Test: Token filtering from combined parquet
+  - [ ] Test: Version listing and latest version detection
+  - [ ] Test: Network failure retry logic
+  - [ ] Test: Authentication with Application Default Credentials
+  - [ ] Test: Memory efficiency with large parquet files
+
+### 4.7 Integration Testing
+- [ ] Create `tests/integration/training/test_unified_training_pipeline.py`
+  - [ ] Test: Full pipeline with one model (LSTM) from GCS
+  - [ ] Test: Train/val/test split correctness
+  - [ ] Test: Model saving to GCS after training
+  - [ ] Test: DQN integration with corpus data
+  - [ ] Performance: Measure GCS download vs cache hit times
+  - [ ] Verify: All models can process GCS-loaded DataFrames
 
 ## Phase 5: Model Evaluation & Comparison Framework (Days 4-5)
 
