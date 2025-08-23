@@ -248,10 +248,14 @@ async def main():
             logger.info("Exporting corpus to Google Cloud Storage as Parquet files...")
             
             try:
+                # Generate timestamp-based folder name following v1.0 convention
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                gcs_prefix = f"training-data/initial-corpus/initial_{collector.corpus_version}_{timestamp}"
+                
                 gcs_paths = await collector.export_to_gcs(
                     corpus_data=corpus_data,
                     bucket_name="shyvr-models-prod",
-                    gcs_prefix=f"training-data/initial-corpus/{collector.corpus_version}"
+                    gcs_prefix=gcs_prefix
                 )
                 
                 logger.info(
