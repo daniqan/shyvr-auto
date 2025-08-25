@@ -413,17 +413,23 @@ python scripts/training/train_transformers.py \
   
   **SUCCESS**: Production-multi mode with dynamic pagination successfully collected full year+ of data, exceeding all targets.
 
-### 4.2 Create GCS Corpus Loader
-- [ ] Create `src/data_pipeline/gcs_corpus_loader.py`
-  - [ ] Class: `GCSCorpusLoader`
-  - [ ] Method: `__init__(bucket_name, cache_dir="/tmp/corpus_cache")`
-  - [ ] Method: `list_available_corpus_versions()` - List all corpus versions in GCS
-  - [ ] Method: `get_latest_corpus_version()` - Get most recent corpus version path
-  - [ ] Method: `download_and_cache_parquet(gcs_path, local_path)` - Download with caching
-  - [ ] Method: `load_corpus_from_gcs(gcs_prefix, timeframe, token=None)` - Main loading method
-  - [ ] Method: `clear_old_cache(ttl_hours=24)` - Clean up old cached files
-  - [ ] Error handling: Retry logic for network failures
-  - [ ] Authentication: Use Application Default Credentials
+### 4.2 Create GCS Corpus Loader - ✅ COMPLETED
+- [x] Create `src/data_pipeline/gcs_corpus_loader.py` (COMPLETED)
+  - [x] Class: `GCSCorpusLoader` (COMPLETED)
+  - [x] Method: `__init__(bucket_name, cache_dir="/tmp/corpus_cache")` (COMPLETED)
+  - [x] Method: `list_available_corpus_versions()` - List all corpus versions in GCS (COMPLETED)
+  - [x] Method: `get_latest_corpus_version()` - Get most recent corpus version path (COMPLETED)
+  - [x] Method: `download_and_cache_parquet(gcs_path, local_path)` - Download with caching (COMPLETED)
+  - [x] Method: `load_corpus_from_gcs(gcs_prefix, timeframe, token=None)` - Main loading method (COMPLETED)
+  - [x] Method: `clear_old_cache(ttl_hours=24)` - Clean up old cached files (COMPLETED)
+  - [x] Error handling: Retry logic for network failures (COMPLETED)
+  - [x] Authentication: Use Application Default Credentials (COMPLETED)
+  - [x] TDD Tests: `tests/integration/data_pipeline/test_gcs_corpus_loader.py` (COMPLETED)
+    - [x] Real GCS integration tests (no mocks) (COMPLETED)
+    - [x] Tests for all corpus timeframes (daily, hourly, hour) (COMPLETED)
+    - [x] Token filtering and version detection tests (COMPLETED)
+    - [x] Cache TTL and performance tests (COMPLETED)
+  - [x] Production Ready: Successfully loads 3,829 daily records with 95 features (COMPLETED)
 
 ### 4.3 Create Unified Training Pipeline
 - [ ] Create `scripts/training/train_all_models.py`
