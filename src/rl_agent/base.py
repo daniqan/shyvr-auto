@@ -68,6 +68,9 @@ class MarketState:
     fear_greed_index: Optional[float] = None
     timestamp: datetime = field(default_factory=datetime.now)
     
+    # Corpus features from historical data (GCS integration)
+    corpus_features: Optional[Dict[str, float]] = None
+    
     def to_vector(self) -> np.ndarray:
         """Convert market state to feature vector for neural network"""
         features = [
@@ -104,6 +107,15 @@ class MarketState:
             self.prediction_confidence if self.prediction_confidence else 0.0,
             self._ml_direction_encoding()
         ]
+        
+        # Add corpus features if available
+        if self.corpus_features:
+            # Sort features by key for consistent ordering
+            sorted_features = sorted(self.corpus_features.items())
+            for feature_name, feature_value in sorted_features:
+                # Normalize and clip extreme values
+                normalized_value = np.tanh(float(feature_value) / 1000.0) if feature_value else 0.0
+                features.append(normalized_value)
         
         return np.array(features, dtype=np.float32)
     
@@ -142,6 +154,19 @@ class MarketState:
     def get_enhanced_feature_size(cls) -> int:
         """Get the size of ML-enhanced feature vector with Transformer features"""
         return 34  # Base features (19) + ML features (6) + Transformer features (9)
+    
+    @classmethod
+    def get_corpus_enhanced_feature_size(cls, num_corpus_features: int = 20) -> int:
+        """Get the size of feature vector with corpus features"""
+        return cls.get_feature_size() + num_corpus_features  # Base features + corpus features
+    
+    def get_current_feature_size(self) -> int:
+        """Get the current feature size including any corpus features"""
+        base_size = self.get_feature_size()
+        if self.corpus_features:
+            corpus_size = len(self.corpus_features)
+            return base_size + corpus_size
+        return base_size
 
 
 @dataclass
