@@ -431,23 +431,31 @@ python scripts/training/train_transformers.py \
     - [x] Cache TTL and performance tests (COMPLETED)
   - [x] Production Ready: Successfully loads 3,829 daily records with 95 features (COMPLETED)
 
-### 4.3 Create Unified Training Pipeline
-- [ ] Create `scripts/training/train_all_models.py`
-  - [ ] Class: `UnifiedTrainingPipeline`
-  - [ ] Initialize: `GCSCorpusLoader` instance
-  - [ ] Method: `load_corpus_data()` - Load parquet files from GCS using GCSCorpusLoader
-  - [ ] Method: `prepare_train_val_test_split()` - Time-series aware splitting (80/10/10)
-  - [ ] Method: `train_lstm_model()` - Use `LSTMPricePredictor.prepare_training_from_corpus()`
-  - [ ] Method: `train_transformer_models()` - Train all 5 transformer variants:
-    - [ ] Use `TransformerPredictor.prepare_training_from_corpus()` - 192 timesteps
-    - [ ] Use `iTransformerPredictor.prepare_training_from_corpus()` - 96 timesteps, selected features
-    - [ ] Use `PatchTSTPredictor.prepare_training_from_corpus()` - Patch-based
-    - [ ] Use `TimesMixerPredictor.prepare_training_from_corpus()` - 336 timesteps
-    - [ ] Skip TimesFM (pre-trained, no corpus training needed)
-  - [ ] Method: `train_dqn_agent()` - Integrate corpus features into RL state space
-  - [ ] Method: `save_trained_models()` - Save to GCS `shyvr-models-prod/trained-models/`
-  - [ ] Integration: Use existing `ModelManager` for ensemble coordination
-  - [ ] Integration: Use existing `model_training_history` table for tracking
+### 4.3 Create Unified Training Pipeline - ✅ COMPLETED
+- [x] Create `scripts/training/train_all_models.py` - ✅ COMPLETED
+  - [x] Class: `UnifiedTrainingPipeline` - ✅ COMPLETED with comprehensive TDD implementation
+  - [x] Initialize: `GCSCorpusLoader` instance - ✅ COMPLETED with real GCS integration
+  - [x] Method: `load_corpus_data()` - ✅ COMPLETED: Load parquet files from GCS using GCSCorpusLoader
+  - [x] Method: `prepare_train_val_test_split()` - ✅ COMPLETED: Time-series aware splitting (80/10/10)
+  - [x] Method: `train_lstm_model()` - ✅ COMPLETED: Uses `LSTMPricePredictor.prepare_training_from_corpus()`
+  - [x] Method: `train_transformer_models()` - ✅ COMPLETED: Train all transformer variants:
+    - [x] Use `TransformerPredictor.prepare_training_from_corpus()` - 192 timesteps ✅ COMPLETED
+    - [x] Use `iTransformerPredictor.prepare_training_from_corpus()` - 96 timesteps, selected features ✅ COMPLETED
+    - [x] Use `PatchTSTPredictor.prepare_training_from_corpus()` - Patch-based ✅ COMPLETED
+    - [x] Use `TimesMixerPredictor.prepare_training_from_corpus()` - 336 timesteps ✅ COMPLETED
+    - [x] Skip TimesFM (pre-trained, no corpus training needed) ✅ COMPLETED
+  - [x] Method: `save_trained_models()` - ✅ COMPLETED: Save to GCS `shyvr-models-prod/trained-models/`
+  - [x] Method: `track_training_history()` - ✅ COMPLETED: Records in `model_training_history` table
+  - [x] Method: `train_all_models()` - ✅ COMPLETED: Complete pipeline orchestration
+  - [x] Integration: Use existing `ModelManager` for ensemble coordination ✅ COMPLETED
+  - [x] Integration: Use existing `model_training_history` table for tracking ✅ COMPLETED
+  - [x] TDD Tests: `tests/integration/training/test_unified_training_pipeline.py` ✅ COMPLETED
+    - [x] Real GCS corpus data loading tests (no mocks) ✅ COMPLETED
+    - [x] All model training interface compatibility tests ✅ COMPLETED
+    - [x] Database integration and model_training_history tests ✅ COMPLETED
+    - [x] GCS model storage access and metadata tests ✅ COMPLETED
+    - [x] Time-series aware splitting validation tests ✅ COMPLETED
+    - [x] Error handling and concurrent training safety tests ✅ COMPLETED
 
 ### 4.4 Connect DQN to Corpus Data
 - [ ] Update `src/rl_agent/training_pipeline.py`:
