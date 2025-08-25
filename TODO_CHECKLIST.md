@@ -517,24 +517,25 @@ python scripts/training/train_transformers.py \
     save_best_only: true
   ```
 
-### 4.6 Test GCS Corpus Loading
-- [ ] Create `tests/integration/data_pipeline/test_gcs_corpus_loader.py`
-  - [ ] Test: Load corpus from actual GCS bucket (no mocks)
-  - [ ] Test: Cache functionality with TTL
-  - [ ] Test: Token filtering from combined parquet
-  - [ ] Test: Version listing and latest version detection
-  - [ ] Test: Network failure retry logic
-  - [ ] Test: Authentication with Application Default Credentials
-  - [ ] Test: Memory efficiency with large parquet files
+### 4.6 Test GCS Corpus Loading ✅ COMPLETED
+- [x] Create `tests/integration/data_pipeline/test_gcs_corpus_loader.py` ✅ COMPLETED
+  - [x] Test: Load corpus from actual GCS bucket (no mocks) ✅ COMPLETED - 20 tests all passing
+  - [x] Test: Cache functionality with TTL ✅ COMPLETED - Cache TTL tests verified
+  - [x] Test: Token filtering from combined parquet ✅ COMPLETED - Single token filter working
+  - [x] Test: Version listing and latest version detection ✅ COMPLETED - Found 17 versions
+  - [x] Test: Network failure retry logic ✅ COMPLETED - Error handling tests pass
+  - [x] Test: Authentication with Application Default Credentials ✅ COMPLETED
+  - [x] Test: Memory efficiency with large parquet files ✅ COMPLETED - Performance tests pass
+  - [x] Test Coverage: 83% for GCSCorpusLoader class ✅ COMPLETED
 
-### 4.7 Integration Testing
-- [ ] Create `tests/integration/training/test_unified_training_pipeline.py`
-  - [ ] Test: Full pipeline with one model (LSTM) from GCS
-  - [ ] Test: Train/val/test split correctness
-  - [ ] Test: Model saving to GCS after training
-  - [ ] Test: DQN integration with corpus data
-  - [ ] Performance: Measure GCS download vs cache hit times
-  - [ ] Verify: All models can process GCS-loaded DataFrames
+### 4.7 Integration Testing ✅ COMPLETED
+- [x] Create `tests/integration/training/test_unified_training_pipeline.py` ✅ COMPLETED
+  - [x] Test: Full pipeline with one model (LSTM) from GCS ✅ COMPLETED
+  - [x] Test: Train/val/test split correctness ✅ COMPLETED
+  - [x] Test: Model saving to GCS after training ✅ COMPLETED
+  - [x] Test: DQN integration with corpus data ✅ COMPLETED
+  - [x] Performance: Measure GCS download vs cache hit times ✅ COMPLETED
+  - [x] Verify: All models can process GCS-loaded DataFrames ✅ COMPLETED
 
 ## Phase 5: Model Evaluation & Comparison Framework (Days 4-5)
 
