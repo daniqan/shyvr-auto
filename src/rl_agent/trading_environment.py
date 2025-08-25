@@ -329,6 +329,11 @@ class TradingEnvironment:
         self.current_prices = {}
         self.price_history = {}
         
+        # Corpus features integration
+        self.corpus_features = {}
+        self.current_corpus_features = {}
+        self._has_corpus_features = False
+        
         # Performance tracking
         self.episode_rewards = []
         self.last_trading_result: Optional[TradingResult] = None
@@ -338,8 +343,9 @@ class TradingEnvironment:
         
         self.logger = structlog.get_logger().bind(component="TradingEnvironment")
         
-        # Initialize price data
+        # Initialize price data and corpus features
         self._initialize_price_data()
+        self._initialize_corpus_features()
     
     def _initialize_price_data(self):
         """Initialize price data for all tokens"""
@@ -354,6 +360,78 @@ class TradingEnvironment:
                 # Use token's default price if no historical data
                 self.current_prices[token.address] = token.price_usd or 1.0
                 self.portfolio.update_token_price(token.address, self.current_prices[token.address])
+    
+    def _initialize_corpus_features(self):
+        """Initialize corpus features for all tokens if available"""
+        try:
+            for token in self.tokens:
+                if token.address in self.historical_data:
+                    token_data = self.historical_data[token.address]
+                    
+                    # Check if corpus features are available
+                    if 'features' in token_data:
+                        features = token_data['features']
+                        
+                        if isinstance(features, np.ndarray) and features.size > 0:
+                            self.corpus_features[token.address] = features
+                            self._has_corpus_features = True
+                            
+                            self.logger.debug(f"Loaded corpus features for {token.symbol}", 
+                                            feature_shape=features.shape)
+                        else:
+                            self.logger.debug(f"No corpus features available for {token.symbol}")
+                    else:
+                        self.logger.debug(f"No feature data in historical data for {token.symbol}")
+                        
+            if self._has_corpus_features:
+                self.logger.info("Corpus features initialized", 
+                               tokens_with_features=len(self.corpus_features))
+            else:
+                self.logger.info("No corpus features available in historical data")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize corpus features: {e}")
+            self._has_corpus_features = False
+    
+    def get_enhanced_state(self, base_state: MarketState) -> MarketState:
+        """
+        Enhance a MarketState with corpus features if available
+        
+        Args:
+            base_state: Base MarketState object
+            
+        Returns:
+            Enhanced MarketState with corpus features
+        """
+        try:
+            if not self._has_corpus_features:
+                return base_state
+            
+            # Get current corpus features for the token
+            token_address = base_state.token.address
+            if token_address in self.corpus_features:
+                corpus_features_array = self.corpus_features[token_address]
+                
+                # Get features for current time step
+                if self.current_step < len(corpus_features_array):
+                    current_features = corpus_features_array[self.current_step]
+                    
+                    # Convert to dictionary for easier access
+                    feature_dict = {}
+                    for i, feature_value in enumerate(current_features):
+                        feature_dict[f'corpus_feature_{i}'] = float(feature_value)
+                    
+                    # Add corpus features to the state
+                    enhanced_state = base_state
+                    enhanced_state.corpus_features = feature_dict
+                    
+                    return enhanced_state
+            
+            return base_state
+            
+        except Exception as e:
+            self.logger.error(f"Failed to enhance state with corpus features: {e}")
+            return base_state
     
     def reset(self) -> MarketState:
         """Reset the environment for a new episode"""
@@ -449,8 +527,16 @@ class TradingEnvironment:
             'unrealized_pnl': self.portfolio.unrealized_pnl,
             'realized_pnl': self.portfolio.realized_pnl,
             'max_drawdown': self.portfolio.max_drawdown,
-            'episode_step': self.current_step
+            'episode_step': self.current_step,
+            'corpus_features_used': self._has_corpus_features,
+            'corpus_features_available': len(self.corpus_features) > 0
         }
+        
+        # Add corpus features info if available
+        if self._has_corpus_features and token.address in self.corpus_features:
+            corpus_features_array = self.corpus_features[token.address]
+            if self.current_step < len(corpus_features_array):
+                info['current_corpus_features_count'] = len(corpus_features_array[self.current_step])
         
         # Add reward-specific info
         info.update(reward_info)
