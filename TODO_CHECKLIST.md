@@ -457,14 +457,19 @@ python scripts/training/train_transformers.py \
     - [x] Time-series aware splitting validation tests ✅ COMPLETED
     - [x] Error handling and concurrent training safety tests ✅ COMPLETED
 
-### 4.4 Connect DQN to Corpus Data
-- [ ] Update `src/rl_agent/training_pipeline.py`:
-  - [ ] Class: `DQNTrainingPipeline` (existing)
-  - [ ] Add: `GCSCorpusLoader` instance
-  - [ ] Method: `load_corpus_for_rl()` - Load corpus from GCS
-  - [ ] Method: `create_rl_state_from_corpus()` - Convert corpus features to RL states
-  - [ ] Integration: Modify `_initialize_components()` to use GCS corpus data
-  - [ ] Integration: Update `TradingEnvironment` to use historical corpus for simulation
+### 4.4 Connect DQN to Corpus Data ✅ **COMPLETED**
+- [x] Update `src/rl_agent/training_pipeline.py`:
+  - [x] Class: `DQNTrainingPipeline` (existing)
+  - [x] Add: `GCSCorpusLoader` instance
+  - [x] Method: `load_corpus_for_rl()` - Load corpus from GCS
+  - [x] Method: `create_rl_state_from_corpus()` - Convert corpus features to RL states
+  - [x] Integration: Modify `_initialize_components()` to use GCS corpus data
+  - [x] Integration: Update `TradingEnvironment` to use historical corpus for simulation
+- [x] Create integration tests in `tests/integration/rl_agent/test_dqn_corpus_integration.py`
+- [x] Enhance `MarketState` to support corpus features
+- [x] Add corpus feature extraction and normalization
+- [x] Update RL state space to incorporate corpus features dynamically
+- [x] Create `CorpusToMarketStateConverter` utility class
 
 ### 4.5 Training Configuration Management
 - [ ] Create `config/training_config.yaml`
