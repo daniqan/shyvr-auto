@@ -93,7 +93,7 @@ async def sample_corpus_data(gcs_corpus_loader):
         # Load latest daily corpus data
         df = await gcs_corpus_loader.load_corpus_from_gcs(
             timeframe="daily",
-            token="BTC"  # Filter for BTC only to reduce test data size
+            token="WBTC"  # Filter for WBTC only to reduce test data size
         )
         
         # Take a sample for faster testing
