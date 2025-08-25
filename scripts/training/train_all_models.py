@@ -50,6 +50,7 @@ from src.ml_analysis.transformers.patchtst import PatchTSTPredictor
 from src.ml_analysis.transformers.timesmixer import TimesMixerPredictor
 from src.ml_analysis.model_manager import ModelManager
 from src.ml_analysis.base import ModelType
+from src.ml_analysis.training_report_generator import TrainingReportGenerator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -120,6 +121,13 @@ class UnifiedTrainingPipeline:
         # Training session metadata
         self.session_id = str(uuid.uuid4())
         self.session_timestamp = datetime.now()
+        
+        # Initialize TrainingReportGenerator
+        self.report_generator = TrainingReportGenerator({
+            'output_dir': f'{cache_dir}/reports',
+            'gcs_bucket': model_save_bucket,
+            'gcs_prefix': model_save_prefix
+        })
         
         logger.info(
             "UnifiedTrainingPipeline initialized",
@@ -598,14 +606,29 @@ class UnifiedTrainingPipeline:
             all_results = {'lstm': lstm_results}
             all_results.update(transformer_results)
             
-            # Note: Model saving and history tracking would require model instances
-            # This is a simplified version focusing on the training pipeline structure
+            # Generate comprehensive training report
+            logger.info("Generating training report...")
+            try:
+                report_results = await self.report_generator.generate_reports_for_training_session(
+                    training_metrics=all_results,
+                    pipeline=self
+                )
+                
+                logger.info(f"Training report generated: {report_results.get('pdf_report')}")
+                if report_results.get('gcs_upload_path'):
+                    logger.info(f"Report uploaded to GCS: {report_results.get('gcs_upload_path')}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to generate training report: {e}")
+                # Continue without failing the pipeline
+                report_results = {}
             
             logger.info(f"Unified training pipeline completed successfully")
             
             return {
                 'session_id': self.session_id,
                 'training_results': all_results,
+                'report_results': report_results,
                 'data_stats': {
                     'total_samples': len(data),
                     'train_samples': len(train_data),
@@ -646,6 +669,15 @@ async def main():
         print(f"Session ID: {results['session_id']}")
         print(f"Models trained: {list(results['training_results'].keys())}")
         print(f"Data samples: {results['data_stats']['total_samples']}")
+        
+        # Print report information if available
+        if results.get('report_results'):
+            report_info = results['report_results']
+            print(f"Training report: {report_info.get('pdf_report', 'Not generated')}")
+            if report_info.get('gcs_upload_path'):
+                print(f"Report uploaded to: {report_info['gcs_upload_path']}")
+            else:
+                print("Report not uploaded to GCS")
         
     except Exception as e:
         logger.error(f"Training script failed: {e}")
