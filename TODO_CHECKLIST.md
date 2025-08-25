@@ -471,8 +471,14 @@ python scripts/training/train_transformers.py \
 - [x] Update RL state space to incorporate corpus features dynamically
 - [x] Create `CorpusToMarketStateConverter` utility class
 
-### 4.5 Training Configuration Management
-- [ ] Create `config/training_config.yaml`
+### 4.5 Training Configuration Management ✅
+- [x] Create `config/training_config.yaml` ✅
+- [x] Create `src/utils/training_config.py` with environment variable support ✅
+- [x] Create comprehensive integration tests `tests/integration/config/test_training_config.py` ✅
+- [x] Support GCS corpus settings with bucket and prefix configuration ✅
+- [x] Include model-specific hyperparameters for LSTM, Transformer variants, and DQN ✅
+- [x] Environment-specific configuration overrides (development/staging/production) ✅
+- [x] Configuration validation and type conversion ✅
   ```yaml
   corpus:
     bucket: "shyvr-models-prod"
