@@ -13,14 +13,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
+import pandas as pd
 import structlog
 
-from .base import RLTrainingError, AgentConfig, TradeAction
+from .base import RLTrainingError, AgentConfig, TradeAction, MarketState
 from .dqn_agent import DQNTradingAgent
 from .trading_environment import TradingEnvironment, EnvironmentConfig
 from .experience_replay import create_replay_buffer, ReplayBufferConfig
 from .reward_engineering import create_reward_calculator, RewardConfig
 from ..utils.database import get_database_connection
+
+# Corpus data integration
+try:
+    from ..data_pipeline.gcs_corpus_loader import GCSCorpusLoader
+    CORPUS_AVAILABLE = True
+except ImportError:
+    GCSCorpusLoader = None
+    CORPUS_AVAILABLE = False
 
 logger = structlog.get_logger()
 
@@ -85,6 +94,19 @@ class TrainingConfig:
         'analytics_enabled': False,
         'cache_size': 1000
     })
+    
+    # GCS Corpus integration options
+    use_corpus_data: bool = True
+    corpus_config: Dict[str, Any] = field(default_factory=lambda: {
+        'bucket_name': 'shyvr-models-prod',
+        'cache_dir': '/tmp/corpus_cache',
+        'cache_ttl_hours': 24,
+        'version': 'latest',  # 'latest' or specific version like 'initial_v1.0_20250808_172452'
+        'timeframe': 'daily',  # 'daily', 'hourly', or 'hour'
+        'lookback_days': 365,  # Days of historical data for RL training
+        'enhance_features': True,  # Add corpus features to RL state
+        'min_data_points': 30  # Minimum data points required per token
+    })
 
 
 class TrainingPipelineError(RLTrainingError):
@@ -144,6 +166,16 @@ class DQNTrainingPipeline:
         self.historical_data = historical_data
         self.metrics = TrainingMetrics()
         
+        # Corpus data integration
+        self.corpus_loader = None
+        self.corpus_data = {}
+        self.corpus_features = {}
+        self._corpus_integration_successful = False
+        
+        # Initialize corpus loader if enabled and available
+        if self.config.use_corpus_data and CORPUS_AVAILABLE:
+            self._initialize_corpus_components()
+        
         # Initialize all required components
         self._initialize_components()
         
@@ -164,7 +196,9 @@ class DQNTrainingPipeline:
         self.logger.info("Training pipeline initialized",
                         num_episodes=config.num_episodes,
                         max_steps=config.max_steps_per_episode,
-                        learning_rate=config.learning_rate)
+                        learning_rate=config.learning_rate,
+                        corpus_enabled=self.config.use_corpus_data and CORPUS_AVAILABLE,
+                        corpus_integration_successful=self._corpus_integration_successful)
     
     def _initialize_components(self):
         """Initialize all RL components"""
@@ -231,6 +265,27 @@ class DQNTrainingPipeline:
             # Disable database features on failure
             self.config.use_database_experiences = False
             self.config.database_config['enabled'] = False
+    
+    def _initialize_corpus_components(self):
+        """Initialize GCS corpus data integration components"""
+        try:
+            self.logger.info("Initializing corpus data integration components")
+            
+            # Initialize GCS corpus loader
+            self.corpus_loader = GCSCorpusLoader(
+                bucket_name=self.config.corpus_config.get('bucket_name', 'shyvr-models-prod'),
+                cache_dir=self.config.corpus_config.get('cache_dir', '/tmp/corpus_cache'),
+                cache_ttl_hours=self.config.corpus_config.get('cache_ttl_hours', 24)
+            )
+            
+            # Load corpus data for tokens (async operation will be called later)
+            self.logger.info("Corpus loader initialized successfully")
+            
+        except Exception as e:
+            self.logger.error("Failed to initialize corpus components", error=str(e))
+            # Disable corpus features on failure
+            self.config.use_corpus_data = False
+            self.corpus_loader = None
     
     async def initialize_database_metrics_tracking(self):
         """Initialize database-specific metrics tracking"""
@@ -622,6 +677,223 @@ class DQNTrainingPipeline:
             self.logger.error("Failed to generate experience analytics", error=str(e))
             return {}
     
+    async def load_corpus_for_rl(self, tokens: Optional[List] = None, 
+                                timeframe: str = 'daily',
+                                lookback_days: int = 365) -> Dict[str, Dict[str, Any]]:
+        """
+        Load corpus data from GCS for RL training
+        
+        Args:
+            tokens: List of tokens to load data for (defaults to self.tokens)
+            timeframe: Data timeframe ('daily', 'hourly', 'hour')
+            lookback_days: Days of historical data to load
+            
+        Returns:
+            Dict mapping token addresses to corpus data with prices, features, etc.
+        """
+        if not self.corpus_loader:
+            self.logger.warning("Corpus loader not initialized, using fallback data")
+            return {}
+        
+        tokens = tokens or self.tokens
+        corpus_data = {}
+        
+        try:
+            # Load corpus data from GCS
+            timeframe = self.config.corpus_config.get('timeframe', timeframe)
+            
+            for token in tokens:
+                try:
+                    self.logger.info(f"Loading corpus data for {token.symbol}")
+                    
+                    # Load corpus DataFrame for this token
+                    df = await self.corpus_loader.load_corpus_from_gcs(
+                        gcs_prefix=None,  # Use latest version
+                        timeframe=timeframe,
+                        token=token.symbol
+                    )
+                    
+                    if len(df) == 0:
+                        self.logger.warning(f"No corpus data found for {token.symbol}")
+                        continue
+                    
+                    # Limit to lookback period and ensure minimum data points
+                    min_data_points = self.config.corpus_config.get('min_data_points', 30)
+                    if len(df) < min_data_points:
+                        self.logger.warning(f"Insufficient data for {token.symbol}: {len(df)} < {min_data_points}")
+                        continue
+                    
+                    # Take most recent data within lookback period
+                    df = df.tail(lookback_days * (24 if timeframe == 'hourly' else 1)).copy()
+                    
+                    # Extract essential data for RL environment
+                    corpus_data[token.address] = {
+                        'prices': df.get('close', df.get('price', [])).tolist(),
+                        'volumes': df.get('volume', []).tolist(),
+                        'timestamps': df.get('timestamp', []).tolist(),
+                        'market_caps': df.get('market_cap', []).tolist(),
+                        'features': self._extract_corpus_features(df),
+                        'token_symbol': token.symbol,
+                        'data_points': len(df),
+                        'timeframe': timeframe
+                    }
+                    
+                    self.logger.info(f"Loaded {len(df)} data points for {token.symbol}")
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to load corpus data for {token.symbol}: {e}")
+                    continue
+            
+            if corpus_data:
+                self._corpus_integration_successful = True
+                self.logger.info(f"Successfully loaded corpus data for {len(corpus_data)} tokens")
+            else:
+                self.logger.warning("No corpus data loaded for any tokens")
+            
+            return corpus_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load corpus data: {e}")
+            return {}
+    
+    def _extract_corpus_features(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Extract numerical features from corpus DataFrame for RL state enhancement
+        
+        Args:
+            df: Corpus DataFrame
+            
+        Returns:
+            NumPy array of feature values (rows=time, cols=features)
+        """
+        try:
+            # Select numeric columns that could be useful for RL
+            feature_columns = []
+            
+            # Price and volume features
+            for col in ['open', 'high', 'low', 'close', 'volume', 'market_cap']:
+                if col in df.columns:
+                    feature_columns.append(col)
+            
+            # Technical indicators (if present in corpus)
+            for col in ['rsi', 'macd', 'bb_upper', 'bb_lower', 'sma_20', 'ema_12', 'ema_26']:
+                if col in df.columns:
+                    feature_columns.append(col)
+            
+            # Additional features (social sentiment, on-chain metrics, etc.)
+            for col in df.columns:
+                if col not in feature_columns and col not in ['timestamp', 'symbol', 'token_symbol']:
+                    if df[col].dtype in ['int64', 'float64', 'int32', 'float32']:
+                        feature_columns.append(col)
+            
+            # Extract feature matrix
+            if feature_columns:
+                features = df[feature_columns].select_dtypes(include=[np.number]).values
+                
+                # Handle NaN values
+                features = np.nan_to_num(features, nan=0.0, posinf=1e6, neginf=-1e6)
+                
+                self.logger.debug(f"Extracted {features.shape[1]} features from corpus: {feature_columns}")
+                return features
+            else:
+                self.logger.warning("No numeric features found in corpus data")
+                return np.array([])
+                
+        except Exception as e:
+            self.logger.error(f"Failed to extract corpus features: {e}")
+            return np.array([])
+    
+    async def create_rl_state_from_corpus(self, corpus_data: pd.DataFrame, 
+                                         token_symbol: str,
+                                         lookback_window: int = 10) -> List[MarketState]:
+        """
+        Convert corpus DataFrame to MarketState objects for RL training
+        
+        Args:
+            corpus_data: Corpus DataFrame for a specific token
+            token_symbol: Symbol of the token
+            lookback_window: Number of historical data points to use for each state
+            
+        Returns:
+            List of MarketState objects
+        """
+        try:
+            # Find matching token
+            token = next((t for t in self.tokens if t.symbol.upper() == token_symbol.upper()), None)
+            if not token:
+                self.logger.error(f"Token {token_symbol} not found in token list")
+                return []
+            
+            states = []
+            
+            # Create MarketState for each row (after lookback window)
+            for i in range(lookback_window, len(corpus_data)):
+                try:
+                    row = corpus_data.iloc[i]
+                    
+                    # Extract basic market data
+                    price = float(row.get('close', row.get('price', token.price_usd or 1.0)))
+                    volume = float(row.get('volume', row.get('volume_24h', token.volume_24h or 1000000)))
+                    market_cap = float(row.get('market_cap', token.market_cap or price * 1000000))
+                    
+                    # Calculate price change (if possible)
+                    price_change_24h = 0.0
+                    if i > 0:
+                        prev_price = float(corpus_data.iloc[i-1].get('close', price))
+                        if prev_price > 0:
+                            price_change_24h = ((price - prev_price) / prev_price) * 100
+                    
+                    # Calculate technical indicators from corpus
+                    rsi = float(row.get('rsi', 50.0))  # Default neutral RSI
+                    macd = float(row.get('macd', 0.0))
+                    
+                    # Create MarketState
+                    timestamp = pd.to_datetime(row.get('timestamp', datetime.now()))
+                    
+                    state = MarketState(
+                        token=token,
+                        price_usd=price,
+                        price_change_24h=price_change_24h,
+                        volume_24h=volume,
+                        market_cap=market_cap,
+                        rsi=rsi,
+                        macd=macd,
+                        current_position=0.0,  # Will be set by environment
+                        portfolio_value=10000.0,  # Will be set by environment
+                        cash_balance=10000.0,  # Will be set by environment
+                        portfolio_drawdown=0.0,  # Will be set by environment
+                        daily_pnl=0.0,  # Will be set by environment
+                        timestamp=timestamp
+                    )
+                    
+                    # Add corpus features if enhanced features are enabled
+                    if self.config.corpus_config.get('enhance_features', True):
+                        # Extract additional features from this row
+                        feature_dict = {}
+                        for col in corpus_data.columns:
+                            if col not in ['timestamp', 'symbol', 'token_symbol'] and corpus_data[col].dtype in ['int64', 'float64']:
+                                try:
+                                    feature_dict[col] = float(row[col])
+                                except:
+                                    continue
+                        
+                        # Store corpus features for later use
+                        if hasattr(state, 'corpus_features'):
+                            state.corpus_features = feature_dict
+                    
+                    states.append(state)
+                    
+                except Exception as e:
+                    self.logger.warning(f"Failed to create state for row {i}: {e}")
+                    continue
+            
+            self.logger.info(f"Created {len(states)} RL states from corpus data for {token_symbol}")
+            return states
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create RL states from corpus: {e}")
+            return []
+    
     def run_episode(self, episode_num: int) -> Dict[str, Any]:
         """Run a single training episode with complete RL training loop"""
         episode_start_time = time.time()
@@ -812,7 +1084,9 @@ class DQNTrainingPipeline:
             'final_portfolio_value': float(final_portfolio_value),
             'num_trades': num_trades,
             'win_rate': float(win_rate),
-            'loss': float(episode_loss / max(num_steps // 4, 1))  # Average loss per training step
+            'loss': float(episode_loss / max(num_steps // 4, 1)),  # Average loss per training step
+            'corpus_features_used': self._corpus_integration_successful,  # Indicate corpus integration status
+            'corpus_enabled': self.config.use_corpus_data and CORPUS_AVAILABLE
         }
     
     def train(self) -> Dict[str, Any]:
@@ -852,7 +1126,8 @@ class DQNTrainingPipeline:
                     'episodes_completed': self.metrics.episodes_completed,
                     'training_time': time.time() - start_time,
                     'final_metrics': self.metrics.get_statistics(),
-                    'early_stopping_reason': 'performance_threshold_reached'
+                    'early_stopping_reason': 'performance_threshold_reached',
+                    'corpus_integration_successful': self._corpus_integration_successful
                 }
             
             # Save checkpoint
@@ -864,7 +1139,8 @@ class DQNTrainingPipeline:
         return {
             'episodes_completed': self.metrics.episodes_completed,
             'training_time': training_time,
-            'final_metrics': self.metrics.get_statistics()
+            'final_metrics': self.metrics.get_statistics(),
+            'corpus_integration_successful': self._corpus_integration_successful
         }
     
     def should_stop_early(self) -> bool:
@@ -1413,3 +1689,95 @@ class HyperparameterSearch:
                         total_possible=len(self._generate_parameter_combinations()))
         
         return self.best_params
+
+
+class CorpusToMarketStateConverter:
+    """
+    Utility class for converting corpus data to MarketState objects
+    Used by integration tests and other components that need to convert
+    corpus DataFrame rows to RL-compatible MarketState objects.
+    """
+    
+    def __init__(self):
+        self.logger = structlog.get_logger().bind(component="CorpusToMarketStateConverter")
+    
+    def convert_corpus_to_market_state(self, corpus_row: pd.Series, token) -> MarketState:
+        """
+        Convert a single corpus DataFrame row to a MarketState object
+        
+        Args:
+            corpus_row: Single row from corpus DataFrame (pd.Series)
+            token: DiscoveredToken object to associate with the state
+            
+        Returns:
+            MarketState object with data from corpus row
+        """
+        try:
+            # Extract basic market data from corpus row
+            price = float(corpus_row.get('close', corpus_row.get('price', token.price_usd or 1.0)))
+            volume = float(corpus_row.get('volume', corpus_row.get('volume_24h', token.volume_24h or 1000000)))
+            market_cap = float(corpus_row.get('market_cap', token.market_cap or price * 1000000))
+            
+            # Calculate price change if available
+            price_change_24h = float(corpus_row.get('price_change_24h', 0.0))
+            
+            # Extract technical indicators from corpus (with defaults)
+            rsi = float(corpus_row.get('rsi', 50.0))  # Neutral RSI
+            macd = float(corpus_row.get('macd', 0.0))
+            
+            # Parse timestamp
+            timestamp = corpus_row.get('timestamp', datetime.now())
+            if isinstance(timestamp, str):
+                timestamp = pd.to_datetime(timestamp)
+            elif not isinstance(timestamp, datetime):
+                timestamp = datetime.now()
+            
+            # Create MarketState
+            state = MarketState(
+                token=token,
+                price_usd=price,
+                price_change_24h=price_change_24h,
+                volume_24h=volume,
+                market_cap=market_cap,
+                rsi=rsi,
+                macd=macd,
+                current_position=0.0,  # Will be set by environment
+                portfolio_value=10000.0,  # Will be set by environment  
+                cash_balance=10000.0,  # Will be set by environment
+                portfolio_drawdown=0.0,  # Will be set by environment
+                daily_pnl=0.0,  # Will be set by environment
+                timestamp=timestamp
+            )
+            
+            # Add corpus features as extended attributes
+            corpus_features = {}
+            for col_name, value in corpus_row.items():
+                # Skip basic columns already used
+                if col_name not in ['timestamp', 'symbol', 'token_symbol', 'close', 'price', 'volume', 'market_cap']:
+                    if pd.api.types.is_numeric_dtype(type(value)) and not pd.isna(value):
+                        corpus_features[col_name] = float(value)
+            
+            # Store corpus features if any
+            if corpus_features:
+                state.corpus_features = corpus_features
+            
+            return state
+            
+        except Exception as e:
+            self.logger.error(f"Failed to convert corpus row to MarketState: {e}")
+            # Return a basic state with fallback values
+            return MarketState(
+                token=token,
+                price_usd=token.price_usd or 1.0,
+                price_change_24h=0.0,
+                volume_24h=token.volume_24h or 1000000,
+                market_cap=token.market_cap or 1000000000,
+                rsi=50.0,
+                macd=0.0,
+                current_position=0.0,
+                portfolio_value=10000.0,
+                cash_balance=10000.0, 
+                portfolio_drawdown=0.0,
+                daily_pnl=0.0,
+                timestamp=datetime.now()
+            )
