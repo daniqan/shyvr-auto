@@ -1,0 +1,394 @@
+# Training Configuration for Shyvr RLTE
+# Comprehensive training parameters for all supported models
+# Built following existing configuration patterns in config.yaml
+
+# GCS Corpus Loading Configuration
+corpus:
+  bucket: "shyvr-models-prod"
+  prefix: "training-data/initial-corpus"
+  version: "latest"  # or specific: "initial_v2.0_20250821_153449"
+  cache_dir: "${TRAINING_CORPUS_CACHE_DIR:/tmp/corpus_cache}"
+  cache_ttl_hours: ${TRAINING_CORPUS_CACHE_TTL:24}
+  granularities: ["daily", "hourly", "four_hour"]
+  
+  # Data loading settings
+  loading:
+    parallel_loading: true
+    max_workers: ${TRAINING_MAX_WORKERS:4}
+    chunk_size: ${TRAINING_CHUNK_SIZE:10000}
+    memory_limit_gb: ${TRAINING_MEMORY_LIMIT:8}
+  
+  # Data preprocessing
+  preprocessing:
+    remove_outliers: true
+    outlier_std_threshold: 3.0
+    fill_missing: true
+    missing_strategy: "forward_fill"
+    normalize_features: true
+    normalization_method: "robust"  # robust, standard, minmax
+
+# Model-Specific Hyperparameters
+models:
+  # LSTM Model Configuration
+  lstm:
+    # Architecture parameters
+    hidden_size: ${LSTM_HIDDEN_SIZE:128}
+    num_layers: ${LSTM_NUM_LAYERS:2}
+    dropout: ${LSTM_DROPOUT:0.2}
+    bidirectional: ${LSTM_BIDIRECTIONAL:false}
+    
+    # Training parameters
+    sequence_length: ${LSTM_SEQUENCE_LENGTH:50}
+    batch_size: ${LSTM_BATCH_SIZE:32}
+    epochs: ${LSTM_EPOCHS:100}
+    learning_rate: ${LSTM_LEARNING_RATE:0.001}
+    weight_decay: ${LSTM_WEIGHT_DECAY:0.01}
+    
+    # Advanced settings
+    gradient_clipping: ${LSTM_GRADIENT_CLIPPING:1.0}
+    scheduler: "ReduceLROnPlateau"
+    scheduler_patience: 10
+    scheduler_factor: 0.5
+    
+  # Transformer Model Configuration
+  transformer:
+    # Architecture parameters
+    d_model: ${TRANSFORMER_D_MODEL:128}
+    nhead: ${TRANSFORMER_NHEAD:8}
+    num_encoder_layers: ${TRANSFORMER_NUM_LAYERS:6}
+    dim_feedforward: ${TRANSFORMER_DIM_FF:512}
+    dropout: ${TRANSFORMER_DROPOUT:0.1}
+    activation: "gelu"
+    
+    # Training parameters
+    sequence_length: ${TRANSFORMER_SEQUENCE_LENGTH:192}
+    batch_size: ${TRANSFORMER_BATCH_SIZE:16}
+    epochs: ${TRANSFORMER_EPOCHS:50}
+    learning_rate: ${TRANSFORMER_LEARNING_RATE:0.0001}
+    weight_decay: ${TRANSFORMER_WEIGHT_DECAY:0.01}
+    
+    # Advanced settings
+    warmup_steps: ${TRANSFORMER_WARMUP_STEPS:1000}
+    max_position_embeddings: ${TRANSFORMER_MAX_POS:2048}
+    layer_norm_eps: 1e-12
+    
+  # iTransformer Model Configuration
+  itransformer:
+    # Architecture parameters
+    d_model: ${ITRANSFORMER_D_MODEL:128}
+    nhead: ${ITRANSFORMER_NHEAD:8}
+    num_layers: ${ITRANSFORMER_NUM_LAYERS:4}
+    dim_feedforward: ${ITRANSFORMER_DIM_FF:512}
+    dropout: ${ITRANSFORMER_DROPOUT:0.1}
+    
+    # iTransformer-specific settings
+    invert_time_attention: true
+    multivariate_projection: true
+    individual_normalization: true
+    
+    # Training parameters
+    sequence_length: ${ITRANSFORMER_SEQUENCE_LENGTH:96}
+    batch_size: ${ITRANSFORMER_BATCH_SIZE:24}
+    epochs: ${ITRANSFORMER_EPOCHS:75}
+    learning_rate: ${ITRANSFORMER_LEARNING_RATE:0.0005}
+    
+    # Feature selection for multivariate projection
+    selected_features: ["close", "volume", "rsi_14", "macd", "bb_position", "atr", "volume_sma", "price_change_1h"]
+    max_features: ${ITRANSFORMER_MAX_FEATURES:20}
+    
+  # PatchTST Model Configuration
+  patchtst:
+    # Architecture parameters
+    d_model: ${PATCHTST_D_MODEL:128}
+    nhead: ${PATCHTST_NHEAD:8}
+    num_layers: ${PATCHTST_NUM_LAYERS:3}
+    dim_feedforward: ${PATCHTST_DIM_FF:256}
+    dropout: ${PATCHTST_DROPOUT:0.1}
+    
+    # Patch-specific parameters
+    patch_length: ${PATCHTST_PATCH_LENGTH:16}
+    stride: ${PATCHTST_STRIDE:8}
+    padding: "same"
+    
+    # Training parameters
+    sequence_length: ${PATCHTST_SEQUENCE_LENGTH:336}  # Should be divisible by patch_length
+    batch_size: ${PATCHTST_BATCH_SIZE:32}
+    epochs: ${PATCHTST_EPOCHS:60}
+    learning_rate: ${PATCHTST_LEARNING_RATE:0.0001}
+    
+    # Advanced settings
+    channel_independence: true
+    revin_normalization: true
+    
+  # TimesMixer Model Configuration
+  timesmixer:
+    # Architecture parameters
+    d_model: ${TIMESMIXER_D_MODEL:256}
+    seq_len: ${TIMESMIXER_SEQ_LEN:336}
+    pred_len: ${TIMESMIXER_PRED_LEN:96}
+    
+    # TimesMixer-specific parameters
+    decomposition_layers: ${TIMESMIXER_DECOMP_LAYERS:3}
+    top_k: ${TIMESMIXER_TOP_K:5}
+    d_ff: ${TIMESMIXER_D_FF:512}
+    
+    # Training parameters
+    sequence_length: ${TIMESMIXER_SEQUENCE_LENGTH:336}
+    batch_size: ${TIMESMIXER_BATCH_SIZE:16}
+    epochs: ${TIMESMIXER_EPOCHS:80}
+    learning_rate: ${TIMESMIXER_LEARNING_RATE:0.0005}
+    
+    # Advanced settings
+    moving_avg_kernel: [3, 5, 7]
+    dropout: ${TIMESMIXER_DROPOUT:0.1}
+    
+  # DQN Agent Configuration (for RL training)
+  dqn:
+    # Network architecture
+    hidden_layers: [256, 256, 128]
+    activation: "relu"
+    dueling_network: ${DQN_DUELING:true}
+    double_dqn: ${DQN_DOUBLE:true}
+    
+    # Training parameters
+    replay_buffer_size: ${DQN_BUFFER_SIZE:100000}
+    batch_size: ${DQN_BATCH_SIZE:64}
+    learning_rate: ${DQN_LEARNING_RATE:0.0001}
+    gamma: ${DQN_GAMMA:0.99}
+    
+    # Exploration parameters
+    epsilon_start: ${DQN_EPSILON_START:1.0}
+    epsilon_end: ${DQN_EPSILON_END:0.01}
+    epsilon_decay: ${DQN_EPSILON_DECAY:0.995}
+    
+    # Update frequencies
+    target_update_freq: ${DQN_TARGET_UPDATE:1000}
+    learning_starts: ${DQN_LEARNING_STARTS:10000}
+    
+    # Advanced settings
+    prioritized_replay: ${DQN_PRIORITIZED:true}
+    priority_alpha: 0.6
+    priority_beta: 0.4
+    priority_beta_decay: 0.999
+
+# General Training Configuration
+training:
+  # Data splits (time-series aware)
+  split_ratios: [0.8, 0.1, 0.1]  # train/validation/test
+  split_method: "temporal"  # temporal, random
+  
+  # Cross-validation settings (optional)
+  cross_validation:
+    enabled: ${TRAINING_CV_ENABLED:false}
+    n_splits: ${TRAINING_CV_SPLITS:5}
+    method: "time_series"  # time_series, blocking
+  
+  # Early stopping
+  early_stopping_patience: ${TRAINING_EARLY_STOPPING:15}
+  early_stopping_min_delta: ${TRAINING_MIN_DELTA:0.001}
+  restore_best_weights: true
+  save_best_only: true
+  
+  # Model checkpointing
+  checkpointing:
+    enabled: true
+    save_frequency: "epoch"  # epoch, batch, best
+    max_checkpoints_to_keep: ${TRAINING_MAX_CHECKPOINTS:5}
+    checkpoint_dir: "${TRAINING_CHECKPOINT_DIR:/tmp/training_checkpoints}"
+  
+  # Training monitoring
+  monitoring:
+    log_frequency: ${TRAINING_LOG_FREQ:100}  # batches
+    validation_frequency: ${TRAINING_VAL_FREQ:1}  # epochs
+    metrics_tracking: ["loss", "mse", "mae", "mape", "accuracy"]
+    
+    # Advanced monitoring
+    gradient_monitoring: ${TRAINING_GRADIENT_MONITORING:false}
+    activation_monitoring: ${TRAINING_ACTIVATION_MONITORING:false}
+    weight_histograms: ${TRAINING_WEIGHT_HISTOGRAMS:false}
+  
+  # Distributed training (future)
+  distributed:
+    enabled: ${TRAINING_DISTRIBUTED:false}
+    strategy: "ddp"  # ddp, horovod
+    world_size: ${TRAINING_WORLD_SIZE:1}
+  
+  # Mixed precision training
+  mixed_precision:
+    enabled: ${TRAINING_MIXED_PRECISION:true}
+    opt_level: "O1"  # O1, O2, O3
+    loss_scale: "dynamic"
+  
+  # Resource management
+  resources:
+    max_memory_gb: ${TRAINING_MAX_MEMORY:16}
+    max_cpu_cores: ${TRAINING_MAX_CORES:8}
+    gpu_memory_fraction: ${TRAINING_GPU_MEMORY_FRACTION:0.9}
+    
+# Model Ensemble Configuration
+ensemble:
+  # Ensemble method
+  method: "${ENSEMBLE_METHOD:weighted_average}"  # weighted_average, stacking, voting
+  
+  # Model weights (for weighted_average method)
+  weights:
+    lstm: ${ENSEMBLE_WEIGHT_LSTM:0.25}
+    transformer: ${ENSEMBLE_WEIGHT_TRANSFORMER:0.30}
+    itransformer: ${ENSEMBLE_WEIGHT_ITRANSFORMER:0.20}
+    patchtst: ${ENSEMBLE_WEIGHT_PATCHTST:0.15}
+    timesmixer: ${ENSEMBLE_WEIGHT_TIMESMIXER:0.10}
+  
+  # Dynamic weight adjustment
+  dynamic_weighting:
+    enabled: ${ENSEMBLE_DYNAMIC_WEIGHTS:false}
+    adjustment_frequency: "daily"
+    performance_window: 30  # days
+    min_weight: 0.05
+    max_weight: 0.50
+  
+  # Ensemble validation
+  validation:
+    cross_model_correlation_threshold: 0.95
+    diversity_metric: "prediction_variance"
+    min_models_required: 3
+
+# Model Saving and Loading Configuration
+model_persistence:
+  # Save locations
+  save_format: "pytorch"  # pytorch, onnx, torchscript
+  gcs_bucket: "shyvr-models-prod"
+  gcs_prefix: "trained-models"
+  local_cache_dir: "${MODEL_CACHE_DIR:/tmp/model_cache}"
+  
+  # Versioning
+  versioning:
+    strategy: "timestamp"  # timestamp, hash, semantic
+    include_hyperparameters: true
+    include_training_metrics: true
+    include_data_version: true
+  
+  # Compression and optimization
+  compression:
+    enabled: ${MODEL_COMPRESSION:true}
+    method: "gzip"  # gzip, lzma
+    quantization: ${MODEL_QUANTIZATION:false}
+    quantization_bits: 8
+  
+  # Model validation on load
+  validation:
+    validate_on_load: true
+    checksum_verification: true
+    architecture_compatibility: true
+
+# Feature Engineering Configuration
+feature_engineering:
+  # Feature selection
+  selection:
+    enabled: ${FEATURE_SELECTION_ENABLED:true}
+    method: "mutual_information"  # mutual_information, correlation, rfe
+    max_features: ${MAX_FEATURES:50}
+    min_importance_threshold: ${MIN_FEATURE_IMPORTANCE:0.001}
+  
+  # Feature scaling
+  scaling:
+    method: "robust"  # standard, minmax, robust, quantile
+    feature_range: [-1, 1]  # for minmax scaling
+    quantile_range: [0.25, 0.75]  # for quantile scaling
+  
+  # Temporal features
+  temporal_features:
+    enabled: true
+    include_seasonality: true
+    include_trends: true
+    include_cyclical: true
+    window_sizes: [7, 14, 30, 60]
+  
+  # Technical indicators (inherit from main config.yaml)
+  technical_indicators:
+    rsi_periods: [14, 21]
+    macd_periods: [12, 26, 9]
+    bollinger_periods: [20]
+    sma_periods: [10, 20, 50]
+    ema_periods: [12, 26]
+
+# Training Pipeline Configuration
+pipeline:
+  # Parallel training
+  parallel_model_training: ${PIPELINE_PARALLEL_TRAINING:false}
+  max_concurrent_models: ${PIPELINE_MAX_CONCURRENT:2}
+  
+  # Training order (for sequential training)
+  training_order: ["lstm", "transformer", "itransformer", "patchtst", "timesmixer"]
+  
+  # Error handling
+  error_handling:
+    continue_on_model_failure: ${PIPELINE_CONTINUE_ON_ERROR:true}
+    max_retries: ${PIPELINE_MAX_RETRIES:3}
+    retry_delay_seconds: ${PIPELINE_RETRY_DELAY:60}
+  
+  # Resource allocation
+  resource_allocation:
+    memory_per_model_gb: ${PIPELINE_MEMORY_PER_MODEL:4}
+    gpu_allocation: "sequential"  # sequential, parallel
+    
+# Performance Tracking Configuration  
+performance_tracking:
+  # Database tracking
+  database:
+    enabled: true
+    table_name: "model_training_history"
+    track_hyperparameters: true
+    track_training_curves: true
+    track_resource_usage: true
+  
+  # Metrics to track
+  metrics:
+    training_metrics: ["loss", "mse", "mae", "mape"]
+    validation_metrics: ["val_loss", "val_mse", "val_mae", "val_mape"]
+    custom_metrics: ["sharpe_ratio", "max_drawdown", "profit_factor"]
+  
+  # Experiment tracking (optional MLflow integration)
+  experiment_tracking:
+    enabled: ${EXPERIMENT_TRACKING_ENABLED:false}
+    backend: "mlflow"  # mlflow, wandb
+    experiment_name: "rlte_training"
+    
+# Environment-Specific Overrides
+environments:
+  development:
+    # Faster training for development
+    models:
+      lstm:
+        epochs: 5
+        batch_size: 16
+      transformer:
+        epochs: 3
+        batch_size: 8
+    corpus:
+      cache_ttl_hours: 1
+      granularities: ["hourly"]  # Only hourly for faster development
+    
+  staging:
+    # Medium-scale training for staging
+    models:
+      lstm:
+        epochs: 20
+        batch_size: 24
+      transformer:
+        epochs: 15
+        batch_size: 12
+    corpus:
+      cache_ttl_hours: 12
+      granularities: ["daily", "hourly"]
+    
+  production:
+    # Full-scale production training
+    # Uses default values from main sections above
+    corpus:
+      cache_ttl_hours: 24
+      granularities: ["daily", "hourly", "four_hour"]
+    performance_tracking:
+      database:
+        enabled: true
+      experiment_tracking:
+        enabled: true
