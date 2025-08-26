@@ -1,400 +1,314 @@
-# Shyvr RLTE Validation Scripts
-
-This directory contains comprehensive system validation scripts for ensuring deployment readiness of the Shyvr RLTE system.
+# RLTE Scripts Directory
 
 ## Overview
 
-The validation system consists of multiple specialized scripts that verify different aspects of the system:
+The scripts directory contains all operational scripts for the RLTE (Reinforcement Learning Trading Engine) system. These scripts manage the complete lifecycle from data collection through model training to production deployment.
 
-1. **Pre-deployment validation** - Overall system readiness
-2. **Database validation** - Database connectivity and schema
-3. **ML/RL model validation** - Machine learning and reinforcement learning components
-4. **API endpoint validation** - API health and functionality
-5. **Secret validation** - Secret availability and security
-6. **Post-deployment smoke tests** - Deployment verification
-7. **Orchestration** - Automated execution of all validations
+## Directory Structure
 
-## Quick Start
+```
+scripts/
+├── data_collection/      # Corpus data collection scripts
+├── training/             # Model training pipelines
+├── deployment/          # Production deployment automation
+├── validation/          # System validation and testing
+├── monitoring/          # Performance and health monitoring
+└── database/            # Database migrations and management
+```
 
-### Run All Validations (Recommended)
+## 🚀 Quick Start
 
+### 1. Initial Setup
 ```bash
-# Run all validations with default settings
+# Initialize database
+psql -h localhost -U postgres -d shyvr_rlte -f scripts/init_db.sql
+
+# Set up environment
+export ENVIRONMENT=development
+export SECRET_KEY="your-secret-key-here"
+source .env
+```
+
+### 2. Collect Training Data
+```bash
+# Collect initial corpus (365 days of historical data)
+./scripts/data_collection/collect_initial_corpus.sh production-multi
+
+# Collect multi-granularity data
+python scripts/collect_multi_granularity_corpus.py --mode production-multi
+```
+
+### 3. Train Models
+```bash
+# Train all models using corpus data
+python scripts/training/train_all_models.py
+
+# Or train specific models
+python scripts/training/train_all_models.py --models lstm,transformer
+```
+
+### 4. Deploy to Production
+```bash
+# Deploy to staging first
+python scripts/deploy_to_staging.py
+
+# Run validation
 ./scripts/run_all_validations.sh
 
-# Run with custom project ID and base URL
-./scripts/run_all_validations.sh "your-project-id" "https://your-service-url"
-
-# Skip API validation if service is not running
-./scripts/run_all_validations.sh "your-project-id" "http://localhost:8080" true
+# Deploy to production
+./scripts/build-container.sh
+gcloud run deploy --image gcr.io/shvyr-ai-bots/shyvr-rlte:latest
 ```
 
-### Individual Validation Scripts
+## 📊 End-to-End Workflows
 
+### Development Workflow
+
+```mermaid
+graph LR
+    A[Local Data Collection] --> B[Generate Corpus]
+    B --> C[Train Models]
+    C --> D[Evaluate Performance]
+    D --> E[Local Testing]
+    E --> F[Commit Changes]
+```
+
+1. **Data Collection Phase**
+   ```bash
+   # Collect test data (30 days)
+   ./scripts/data_collection/collect_initial_corpus.sh test --days 30
+   
+   # Process into corpus
+   python scripts/data_collection/process_corpus.py
+   ```
+
+2. **Model Development**
+   ```bash
+   # Train with small dataset
+   python scripts/training/train_all_models.py --mode development
+   
+   # View training reports
+   open /tmp/training_reports/latest_report.pdf
+   ```
+
+3. **Testing**
+   ```bash
+   # Run unit tests
+   python scripts/run_tests.py --unit
+   
+   # Run integration tests
+   python scripts/run_integration_tests.py
+   ```
+
+### Production Workflow
+
+```mermaid
+graph TD
+    A[Scheduled Collection] --> B[Multi-Granularity Corpus]
+    B --> C[GCS Upload]
+    C --> D[Unified Training Pipeline]
+    D --> E[Model Validation]
+    E --> F[A/B Testing]
+    F --> G[Production Deployment]
+    G --> H[Performance Monitoring]
+```
+
+1. **Automated Data Pipeline**
+   ```bash
+   # Run daily at 00:00 UTC via cron
+   0 0 * * * /path/to/scripts/data_collection/collect_corpus.sh production-daily
+   ```
+
+2. **Model Training & Evaluation**
+   ```bash
+   # Weekly model retraining
+   python scripts/training/train_all_models.py \
+     --corpus-version latest \
+     --upload-to-gcs \
+     --generate-report
+   ```
+
+3. **Deployment Pipeline**
+   ```bash
+   # Pre-deployment validation
+   python scripts/pre_deployment_validation.py
+   
+   # Deploy with blue-green strategy
+   ./scripts/deployment/blue_green_deploy.sh
+   
+   # Post-deployment smoke tests
+   python scripts/post_deployment_smoke_tests.py
+   ```
+
+## 📁 Script Categories
+
+### Data Collection (`data_collection/`)
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `collect_initial_corpus.sh` | Historical data collection | `./collect_initial_corpus.sh production-multi` |
+| `collect_corpus.sh` | Incremental collection | `./collect_corpus.sh daily` |
+| `process_corpus.py` | Feature engineering | `python process_corpus.py` |
+| `export_to_gcs.py` | Upload to cloud storage | `python export_to_gcs.py` |
+
+### Training (`training/`)
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `train_all_models.py` | Unified training pipeline | `python train_all_models.py` |
+| `evaluate_models.py` | Model evaluation | `python evaluate_models.py` |
+| `generate_reports.py` | Training reports | `python generate_reports.py` |
+
+### Validation Scripts
+
+| Script | Purpose | When to Run |
+|--------|---------|-------------|
+| `run_all_validations.sh` | Complete system check | Before deployment |
+| `validate_api_endpoints.py` | API health check | After deployment |
+| `validate_database_schema.py` | Schema verification | After migrations |
+| `validate_ml_rl_models.py` | Model performance | After training |
+
+### Monitoring Scripts
+
+| Script | Purpose | Frequency |
+|--------|---------|-----------|
+| `production_health_check.py` | System health | Every 5 minutes |
+| `benchmark_production_system.py` | Performance metrics | Daily |
+| `setup_gcp_monitoring.py` | Cloud monitoring | Once (setup) |
+| `setup_grafana_gcp.py` | Dashboard setup | Once (setup) |
+
+### Database Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `init_db.sql` | Initial schema | `psql -f init_db.sql` |
+| `run_migration.py` | Schema updates | `python run_migration.py` |
+| `optimize_database_performance.py` | Performance tuning | `python optimize_database_performance.py` |
+
+## 🔧 Configuration
+
+### Environment Variables
 ```bash
-# Pre-deployment comprehensive validation
-python -m scripts.pre_deployment_validation
+# Required
+ENVIRONMENT=production|staging|development
+SECRET_KEY=<32+ character secret>
+DATABASE_URL=postgresql://user:pass@host/db
 
-# Database schema and connectivity
-python -m scripts.validate_database_schema --project-id shvyr-ai-bots
+# GCP
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+GCS_BUCKET=shyvr-models-prod
 
-# ML/RL model verification
-python -m scripts.validate_ml_rl_models
-
-# Secret availability and security
-python -m scripts.validate_secrets_comprehensive --project-id shvyr-ai-bots
-
-# API endpoint health checks
-python -m scripts.validate_api_endpoints --base-url http://localhost:8080
-
-# Post-deployment smoke tests
-python -m scripts.post_deployment_smoke_tests --base-url https://your-production-url
+# API Keys
+HELIUS_API_KEY=<your-key>
+LUNARCRUSH_API_KEY=<your-key>
+COINGECKO_API_KEY=<your-key>
 ```
 
-## Validation Scripts Detail
+### Configuration Files
+- `config/config.yaml` - Main configuration
+- `config/training_config.yaml` - Training parameters
+- `config/deployment.yaml` - Deployment settings
 
-### 1. Pre-deployment Validation (`pre_deployment_validation.py`)
-
-Comprehensive system-wide validation covering:
-- Environment and configuration validation
-- Python dependencies verification
-- Database readiness check
-- Secret availability verification
-- ML/RL component initialization
-- API structure validation
-- Monitoring system setup
-
-**Usage:**
-```bash
-python -m scripts.pre_deployment_validation [--output-file report.json]
-```
-
-**Exit Codes:**
-- `0`: All validations passed, system ready
-- `1`: Critical validations failed, deployment blocked
-
-### 2. Database Schema Validation (`validate_database_schema.py`)
-
-Validates database connectivity, schema structure, and performance:
-- Connection establishment and credentials
-- Table existence and column structure
-- Index and constraint validation
-- Data integrity checks
-- Performance benchmarking
-- RL-specific database features
-
-**Usage:**
-```bash
-python -m scripts.validate_database_schema \
-    --project-id shvyr-ai-bots \
-    [--output-file report.json]
-```
-
-### 3. ML/RL Model Validation (`validate_ml_rl_models.py`)
-
-Verifies machine learning and reinforcement learning components:
-- ML/RL dependency verification
-- Model manager functionality
-- Feature engineering pipeline
-- RL agent initialization
-- Experience replay system
-- Trading environment validation
-- Model persistence testing
-
-**Usage:**
-```bash
-python -m scripts.validate_ml_rl_models [--output-file report.json]
-```
-
-### 4. API Endpoint Validation (`validate_api_endpoints.py`)
-
-Tests API endpoints, authentication, and performance:
-- Basic endpoint connectivity
-- Health endpoint detailed validation
-- Dashboard API functionality
-- Static asset serving
-- Authentication system testing
-- WebSocket endpoint detection
-- Performance characteristics
-- Error handling validation
-- Security header checks
-
-**Usage:**
-```bash
-python -m scripts.validate_api_endpoints \
-    --base-url http://localhost:8080 \
-    [--timeout 30] \
-    [--output-file report.json]
-```
-
-### 5. Secret Validation (`validate_secrets_comprehensive.py`)
-
-Comprehensive secret availability and security validation:
-- Secret Manager client initialization
-- Critical secret availability (database, Telegram, etc.)
-- API key validation
-- Trading key security assessment
-- Secret format and strength validation
-- Performance and versioning checks
-- Security report generation
-
-**Usage:**
-```bash
-python -m scripts.validate_secrets_comprehensive \
-    --project-id shvyr-ai-bots \
-    [--output-file report.json]
-```
-
-### 6. Post-deployment Smoke Tests (`post_deployment_smoke_tests.py`)
-
-Verifies deployed system functionality:
-- Basic connectivity testing
-- Health endpoint validation
-- API functionality verification
-- Static asset availability
-- Authentication system testing
-- Database connectivity through API
-- ML/RL system availability
-- Performance characteristics
-- Error handling validation
-- Security measures verification
-
-**Usage:**
-```bash
-python -m scripts.post_deployment_smoke_tests \
-    --base-url https://your-production-url \
-    [--timeout 30] \
-    [--output-file report.json]
-```
-
-### 7. Validation Orchestration (`run_all_validations.py`)
-
-Automated orchestration of all validation scripts:
-- Sequential execution of validation scripts
-- Timeout management and error handling
-- Result aggregation and analysis
-- Deployment readiness determination
-- Comprehensive reporting
-- Recommendation generation
-
-**Usage:**
-```bash
-python -m scripts.run_all_validations \
-    [--project-id shvyr-ai-bots] \
-    [--base-url http://localhost:8080] \
-    [--skip-api-validation] \
-    [--output-file report.json]
-```
-
-## Output and Reports
-
-### Report Files
-
-All validation scripts generate detailed JSON reports in the `reports/` directory:
-
-```
-reports/
-├── pre_deployment_validation_YYYYMMDD_HHMMSS.json
-├── database_validation_YYYYMMDD_HHMMSS.json
-├── ml_rl_model_validation_YYYYMMDD_HHMMSS.json
-├── api_validation_YYYYMMDD_HHMMSS.json
-├── secret_validation_YYYYMMDD_HHMMSS.json
-├── smoke_test_YYYYMMDD_HHMMSS.json
-└── validation_orchestration_YYYYMMDD_HHMMSS.json
-```
-
-### Report Structure
-
-Each report contains:
-- **Summary**: Overall results and statistics
-- **Results by Category**: Detailed test results organized by component
-- **Critical Failures**: High-priority issues blocking deployment
-- **Performance Metrics**: Execution times and response times
-- **Recommendations**: Action items and next steps
-
-### Example Report Analysis
-
-```json
-{
-  "validation_complete": true,
-  "deployment_ready": true,
-  "summary": {
-    "total_tests": 45,
-    "passed_tests": 43,
-    "failed_tests": 2,
-    "success_rate_percent": 95.6
-  },
-  "critical_failures": [],
-  "recommendations": [
-    "🎉 All validation steps passed! System is ready for deployment."
-  ]
-}
-```
-
-## Integration with CI/CD
-
-### GitHub Actions Example
-
-```yaml
-name: Pre-deployment Validation
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run validations
-        run: ./scripts/run_all_validations.sh
-        env:
-          GOOGLE_CLOUD_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
-      - name: Upload reports
-        uses: actions/upload-artifact@v3
-        with:
-          name: validation-reports
-          path: reports/
-```
-
-### Cloud Build Integration
-
-```yaml
-steps:
-  - name: 'python:3.9'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        pip install -r requirements.txt
-        ./scripts/run_all_validations.sh ${PROJECT_ID}
-    env:
-      - 'PROJECT_ID=${PROJECT_ID}'
-```
-
-## Troubleshooting
+## 🐛 Troubleshooting
 
 ### Common Issues
 
-1. **Database Connection Failures**
-   - Verify Cloud SQL proxy is running
-   - Check database credentials in Secret Manager
-   - Ensure network connectivity
+1. **Database Connection Failed**
+   ```bash
+   # Check Cloud SQL proxy
+   ps aux | grep cloud_sql_proxy
+   
+   # Restart if needed
+   ~/cloud-sql-proxy --port=5433 shvyr-ai-bots:us-central1:shyvr-rlte-db-prod &
+   ```
 
-2. **Secret Access Denied**
-   - Verify service account has Secret Manager access
-   - Check IAM permissions
-   - Confirm project ID is correct
+2. **GCS Authentication Error**
+   ```bash
+   # Set credentials
+   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+   
+   # Verify access
+   gsutil ls gs://shyvr-models-prod/
+   ```
 
-3. **ML/RL Model Loading Issues**
-   - Verify PyTorch and dependencies are installed
-   - Check available memory for model loading
-   - Ensure model files are accessible
+3. **Memory Issues During Training**
+   ```bash
+   # Reduce batch size
+   python train_all_models.py --batch-size 16
+   
+   # Use subset of data
+   python train_all_models.py --sample-size 10000
+   ```
 
-4. **API Validation Failures**
-   - Confirm service is running and accessible
-   - Check firewall and network configuration
-   - Verify authentication requirements
+4. **API Rate Limits**
+   ```bash
+   # Use cached data
+   export USE_CACHED_DATA=true
+   
+   # Reduce request rate
+   export API_RATE_LIMIT=10  # requests per minute
+   ```
 
-### Debug Mode
+## 📈 Performance Benchmarks
 
-Enable verbose logging by setting environment variable:
-```bash
-export LOG_LEVEL=DEBUG
-python -m scripts.pre_deployment_validation
+| Operation | Expected Time | Resource Usage |
+|-----------|--------------|----------------|
+| Initial corpus (365 days) | 2-3 hours | 8GB RAM, 50GB disk |
+| Multi-granularity processing | 30-45 mins | 16GB RAM |
+| Full model training | 4-6 hours | GPU recommended, 32GB RAM |
+| Production deployment | 10-15 mins | Minimal |
+| Health check | < 5 seconds | < 100MB RAM |
+
+## 🔒 Security Considerations
+
+- Never commit `.env` files or credentials
+- Use Secret Manager for production secrets
+- Rotate API keys regularly
+- Enable audit logging for all operations
+- Use service accounts with minimal permissions
+
+## 📚 Related Documentation
+
+- [Data Collection Guide](data_collection/README.md)
+- [Training Pipeline](training/README.md)
+- [Deployment Procedures](deployment/README.md)
+- [API Documentation](../docs/api/README.md)
+- [Model Architecture](../src/ml_analysis/README.md)
+
+## 🚦 CI/CD Integration
+
+Scripts are integrated with GitHub Actions:
+
+```yaml
+# .github/workflows/train.yml
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: python scripts/training/train_all_models.py
 ```
 
-### Manual Testing
+## 📊 Monitoring Dashboard
 
-For debugging specific components:
-```bash
-# Test database connection manually
-python3 -c "
-import asyncio
-from scripts.validate_database_schema import DatabaseValidator
-validator = DatabaseValidator()
-result = asyncio.run(validator.get_database_connection())
-print(result)
-"
+Access production metrics at:
+- Grafana: https://monitoring.shyvr.ai
+- GCP Console: https://console.cloud.google.com/monitoring
+- Custom Dashboard: https://dashboard.shyvr.ai
 
-# Test secret access manually
-python3 -c "
-import asyncio
-from scripts.validate_secrets_comprehensive import ComprehensiveSecretValidator
-validator = ComprehensiveSecretValidator()
-result = asyncio.run(validator.get_secret_value('DB_PASSWORD'))
-print(result[0])  # Success/failure
-"
-```
+## 🤝 Contributing
 
-## Performance Considerations
+1. Create feature branch
+2. Run validation scripts
+3. Ensure tests pass
+4. Update documentation
+5. Submit PR with micro-commits
 
-### Execution Times
+## 📝 License
 
-Typical execution times for validation scripts:
-- **Pre-deployment**: 2-5 minutes
-- **Database**: 1-3 minutes
-- **ML/RL Models**: 2-4 minutes
-- **API Endpoints**: 1-3 minutes
-- **Secrets**: 1-2 minutes
-- **Smoke Tests**: 2-5 minutes
-
-### Optimization Tips
-
-1. **Parallel Execution**: Run non-dependent validations in parallel
-2. **Caching**: Cache ML model loading for repeated runs
-3. **Selective Validation**: Skip API validation if service not running
-4. **Timeout Tuning**: Adjust timeouts based on environment performance
-
-## Security Considerations
-
-### Secret Handling
-
-- Scripts never log secret values
-- Reports contain only metadata about secrets
-- Access logs are generated for audit purposes
-- Minimum required permissions principle
-
-### Network Security
-
-- API validation uses read-only operations
-- No destructive operations performed
-- Respects rate limits and authentication
-- HTTPS validation for production URLs
-
-## Maintenance
-
-### Regular Updates
-
-- Review validation criteria quarterly
-- Update dependency checks as new packages added
-- Adjust performance thresholds based on infrastructure changes
-- Update secret validation as new secrets added
-
-### Version Compatibility
-
-Scripts are compatible with:
-- Python 3.9+
-- FastAPI 0.68+
-- PostgreSQL 12+
-- Google Cloud SDK latest
-
-## Support
-
-For issues with validation scripts:
-1. Check logs in `reports/` directory
-2. Review troubleshooting section above
-3. Consult deployment checklist in `docs/DEPLOYMENT_READINESS_CHECKLIST.md`
-4. Contact development team with specific error messages and report files
-
----
-
-**Last Updated**: 2025-01-30
-**Script Version**: 1.0
+Proprietary - Shyvr AI 2024
