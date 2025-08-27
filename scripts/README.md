@@ -23,7 +23,6 @@ scripts/
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `init_db.sql` | Database schema initialization | `psql -f init_db.sql` |
-| `upgrade_activity_logging.sql` | Activity logging schema upgrade | `psql -f upgrade_activity_logging.sql` |
 | `run_migration.py` | Database migration runner | `python run_migration.py` |
 | `run_production_migrations.py` | Production migration runner | `python run_production_migrations.py` |
 | `optimize_database_performance.py` | Database performance optimization | `python optimize_database_performance.py` |
@@ -34,10 +33,7 @@ scripts/
 |--------|---------|-------|
 | `collect_multi_granularity_corpus.py` | Multi-timeframe corpus collection | `python collect_multi_granularity_corpus.py --config config.yaml` |
 | `collect_initial_corpus.py` | Single-timeframe corpus collection | `python collect_initial_corpus.py --production` |
-| `collect_pepe_only.py` | PEPE token specific collection | `python collect_pepe_only.py` |
 | `direct_corpus_collection.py` | Direct collection without pipeline | `python direct_corpus_collection.py` |
-| `store_remaining_corpus.py` | Store remaining corpus data | `python store_remaining_corpus.py` |
-| `investigate_data_gaps.py` | Identify and analyze data gaps | `python investigate_data_gaps.py` |
 | `analyze_experience_growth.py` | RL experience data analysis | `python analyze_experience_growth.py` |
 
 ### 🧠 Model Training
@@ -87,15 +83,17 @@ scripts/
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `test_collection_setup.py` | Data collection setup testing | `python test_collection_setup.py` |
-| `test_multi_granularity.py` | Multi-granularity collection testing | `python test_multi_granularity.py` |
-| `test_pagination.py` | Pagination system testing | `python test_pagination.py` |
-| `test_production_performance.py` | Production performance testing | `python test_production_performance.py` |
-| `test_sol_collection.py` | Solana collection testing | `python test_sol_collection.py` |
 | `run_tests.py` | General test runner | `python run_tests.py` |
 | `run_integration_tests.py` | Integration test suite | `python run_integration_tests.py` |
 | `run_transformer_integration_tests.py` | Transformer integration tests | `python run_transformer_integration_tests.py` |
 | `run_performance_tests.py` | Performance test suite | `python run_performance_tests.py` |
+
+**Note**: Collection and performance test scripts have been moved to the `tests/` directory:
+- `test_collection_setup.py` → `tests/integration/test_collection_setup.py`
+- `test_multi_granularity.py` → `tests/integration/test_multi_granularity.py`
+- `test_pagination.py` → `tests/integration/test_pagination.py`
+- `test_sol_collection.py` → `tests/integration/test_sol_collection.py`
+- `test_production_performance.py` → `tests/performance/test_production_performance.py`
 
 ### 🔧 Utility Scripts
 
@@ -110,10 +108,14 @@ scripts/
 ### data_collection/
 Contains specialized data collection scripts and utilities:
 - `collect_corpus.sh` - Unified corpus collection runner
+- `collect_initial_corpus.sh` - Initial corpus collection shell script
+- `run_initial_corpus_collection.py` - Initial corpus collection runner
+- `run_parallel_corpus_collection.py` - Parallel corpus collection
 - `check_corpus_features.py` - Feature validation
 - `clean_corpus_data.py` - Data cleanup utilities
 - `export_corpus_to_gcs.py` - GCS export functionality
 - `verify_corpus_data.py` - Data verification tools
+- `test_coingecko_granularity.py` - CoinGecko API granularity testing
 
 ### training/
 Contains model training scripts and configurations:
@@ -295,6 +297,17 @@ Most scripts expect Cloud SQL Proxy running on port 5433:
 3. Follow micro-commit structure
 4. Update documentation for new scripts
 5. Ensure all tests pass before PR submission
+
+---
+
+## 📝 Recent Updates
+
+### Script Cleanup (August 2025)
+- **Removed obsolete scripts**: `collect_pepe_only.py`, `store_remaining_corpus.py`, `investigate_data_gaps.py`, `upgrade_activity_logging.sql`, and scripts from `data_collection/` subdirectory that were no longer needed
+- **Moved test scripts** to `tests/` directory for better organization:
+  - Collection tests moved to `tests/integration/`
+  - Performance tests moved to `tests/performance/`
+- **Updated data_collection/** subdirectory to reflect current scripts
 
 ---
 
