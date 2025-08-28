@@ -256,7 +256,7 @@ class UnifiedTrainingPipeline:
                 'dropout': 0.2,
                 'learning_rate': 0.001,
                 'batch_size': 32,
-                'num_epochs': 50  # Reasonable number of epochs
+                'num_epochs': 10  # Reduced for testing
             }
             
             if config:
@@ -431,7 +431,9 @@ class UnifiedTrainingPipeline:
                 'n_heads': 8,
                 'n_layers': 4,
                 'dropout': 0.1,
-                'num_epochs': 50
+                'num_epochs': 10,  # Reduced for testing
+                'batch_size': 32,
+                'learning_rate': 0.001
             },
             'itransformer': {
                 'sequence_length': 96,
@@ -439,7 +441,9 @@ class UnifiedTrainingPipeline:
                 'd_model': 256,
                 'n_heads': 8,
                 'n_layers': 3,
-                'num_epochs': 40
+                'num_epochs': 10,  # Reduced for testing
+                'batch_size': 32,
+                'learning_rate': 0.001
             },
             'patchtst': {
                 'patch_length': 16,
@@ -447,13 +451,17 @@ class UnifiedTrainingPipeline:
                 'd_model': 128,
                 'n_heads': 4,
                 'n_layers': 3,
-                'num_epochs': 30
+                'num_epochs': 10,  # Reduced for testing
+                'batch_size': 32,
+                'learning_rate': 0.001
             },
             'timesmixer': {
                 'seq_len': 336,
                 'd_model': 128,
                 'top_k': 5,
-                'num_epochs': 40
+                'num_epochs': 10,  # Reduced for testing
+                'batch_size': 32,
+                'learning_rate': 0.001
             }
         }
         
@@ -476,25 +484,221 @@ class UnifiedTrainingPipeline:
                 model_class = model_classes[model_name]
                 config = model_configs[model_name]
                 
-                # Initialize model
-                model = model_class(config)
+                # Initialize model (prevent auto-initialization for transformer)
+                if model_name == 'transformer':
+                    # For transformer, we need to set input_dim before model initialization
+                    model = model_class(config)
+                    # The model is auto-initialized in __init__, so we need to recreate it
+                    model.model = None  # Clear the auto-initialized model
+                else:
+                    model = model_class(config)
                 
                 # Prepare training data
                 X, y, feature_names = model.prepare_training_from_corpus(training_data)
                 
                 logger.info(f"{model_name} training data: X{X.shape}, y{y.shape}, {len(feature_names)} features")
                 
-                # Start training
-                training_start_time = datetime.now()
-                success = await model.train_model(training_data, coin_id="corpus_mixed")
-                training_end_time = datetime.now()
+                # Normalize the data
+                from sklearn.preprocessing import StandardScaler
+                X_scaler = StandardScaler()
+                y_scaler = StandardScaler()
                 
-                if not success:
-                    raise ModelTrainingError(f"{model_name} model training failed")
+                # Reshape for scaling
+                X_reshaped = X.reshape(-1, X.shape[-1])
+                X_scaled = X_scaler.fit_transform(X_reshaped).reshape(X.shape)
+                y_scaled = y_scaler.fit_transform(y)
+                
+                # Direct training implementation using prepared data
+                import torch
+                import torch.nn as nn
+                import torch.optim as optim
+                from torch.utils.data import DataLoader, TensorDataset
+                
+                # Initialize neural network based on model type
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                
+                # Get the actual model network
+                if hasattr(model, '_initialize_model'):
+                    # Initialize the model if it has this method
+                    model._initialize_model()
+                elif not hasattr(model, 'model') or model.model is None:
+                    # Try to initialize through the model's own initialization
+                    if model_name == 'transformer':
+                        from src.ml_analysis.transformers.transformer_predictor import TransformerNetwork
+                        from src.ml_analysis.transformers.base import TransformerConfig
+                        transformer_config = TransformerConfig(
+                            d_model=config.get('d_model', 256),
+                            n_heads=config.get('n_heads', 8),
+                            n_layers=config.get('n_layers', 4),
+                            d_ff=config.get('d_ff', 1024),
+                            max_seq_length=config.get('sequence_length', 192),
+                            dropout=config.get('dropout', 0.1)
+                        )
+                        transformer_config.input_dim = X.shape[2]  # Set actual input dimension
+                        transformer_config.output_dim = 3  # 3 prediction horizons
+                        model.model = TransformerNetwork(transformer_config).to(device)
+                    elif model_name == 'itransformer':
+                        from src.ml_analysis.transformers.itransformer import iTransformerNetwork, InvertedAttentionConfig
+                        itrans_config = InvertedAttentionConfig(
+                            d_model=config.get('d_model', 256),
+                            n_heads=config.get('n_heads', 8),
+                            n_layers=config.get('n_layers', 3),
+                            n_variates=X.shape[2],  # Number of features
+                            max_seq_length=config.get('sequence_length', 96)
+                        )
+                        model.model = iTransformerNetwork(itrans_config).to(device)
+                    elif model_name == 'patchtst':
+                        from src.ml_analysis.transformers.patchtst import PatchTSTNetwork, PatchTSTConfig
+                        patch_config = PatchTSTConfig(
+                            patch_length=config.get('patch_length', 16),
+                            stride=config.get('stride', 8),
+                            d_model=config.get('d_model', 128),
+                            n_heads=config.get('n_heads', 4),
+                            n_layers=config.get('n_layers', 3),
+                            n_channels=X.shape[2],  # Number of features
+                            seq_len=config.get('sequence_length', 64)
+                        )
+                        model.model = PatchTSTNetwork(patch_config).to(device)
+                    elif model_name == 'timesmixer':
+                        from src.ml_analysis.transformers.timesmixer import TimesMixerNetwork, TimesMixerConfig
+                        mixer_config = TimesMixerConfig(
+                            seq_len=min(X.shape[1], config.get('seq_len', 336)),  # Use actual sequence length
+                            d_model=config.get('d_model', 128),
+                            n_features=X.shape[2],  # Number of features
+                            top_k=config.get('top_k', 5)
+                        )
+                        model.model = TimesMixerNetwork(mixer_config).to(device)
+                        model.n_features = X.shape[2]  # Store n_features on the model as well
+                
+                # Store model components
+                model._device = device
+                model._feature_names = feature_names
+                model._X_scaler = X_scaler
+                model._y_scaler = y_scaler
+                
+                # Prepare data loaders
+                train_dataset = TensorDataset(
+                    torch.FloatTensor(X_scaled).to(device),
+                    torch.FloatTensor(y_scaled).to(device)
+                )
+                batch_size = config.get('batch_size', 32)
+                train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+                
+                # Initialize optimizer and loss function
+                learning_rate = config.get('learning_rate', 0.001)
+                optimizer = optim.Adam(model.model.parameters(), lr=learning_rate)
+                criterion = nn.MSELoss()
+                
+                # Training loop
+                training_start_time = datetime.now()
+                model.model.train()
+                num_epochs = config.get('num_epochs', 30)
+                training_losses = []
+                
+                for epoch in range(num_epochs):
+                    epoch_loss = 0.0
+                    num_batches = 0
+                    
+                    for batch_X, batch_y in train_loader:
+                        optimizer.zero_grad()
+                        
+                        # Forward pass based on model type
+                        outputs = model.model(batch_X)
+                        
+                        # Handle different output formats
+                        if isinstance(outputs, dict):
+                            # Some models return dict with 'predictions' key
+                            if 'predictions' in outputs:
+                                predictions = outputs['predictions']
+                            # iTransformer might return 'output' key
+                            elif 'output' in outputs:
+                                predictions = outputs['output']
+                            # Transformer returns price_1h, price_4h, price_24h
+                            elif 'price_1h' in outputs:
+                                predictions = torch.stack([
+                                    outputs['price_1h'].squeeze(-1) if outputs['price_1h'].dim() > 1 else outputs['price_1h'],
+                                    outputs['price_4h'].squeeze(-1) if outputs['price_4h'].dim() > 1 else outputs['price_4h'],
+                                    outputs['price_24h'].squeeze(-1) if outputs['price_24h'].dim() > 1 else outputs['price_24h']
+                                ], dim=-1)
+                            else:
+                                # If dict but no recognized keys, try to find tensor values
+                                tensor_values = [v for v in outputs.values() if isinstance(v, torch.Tensor)]
+                                predictions = tensor_values[0] if tensor_values else outputs
+                        elif isinstance(outputs, tuple):
+                            # Some models return (predictions, attention_weights) or similar
+                            predictions = outputs[0]
+                        else:
+                            # Direct tensor output
+                            predictions = outputs
+                        
+                        # Calculate loss
+                        loss = criterion(predictions, batch_y)
+                        
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(model.model.parameters(), max_norm=1.0)
+                        optimizer.step()
+                        
+                        epoch_loss += loss.item()
+                        num_batches += 1
+                    
+                    avg_loss = epoch_loss / num_batches if num_batches > 0 else float('inf')
+                    training_losses.append(avg_loss)
+                    
+                    if (epoch + 1) % max(1, num_epochs // 10) == 0:
+                        logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}")
+                
+                # Calculate accuracy metric
+                model.model.eval()
+                with torch.no_grad():
+                    all_X = torch.FloatTensor(X_scaled).to(device)
+                    
+                    # Forward pass for evaluation
+                    outputs = model.model(all_X)
+                    
+                    # Handle different output formats
+                    if isinstance(outputs, dict):
+                        if 'predictions' in outputs:
+                            all_predictions = outputs['predictions']
+                        elif 'output' in outputs:
+                            all_predictions = outputs['output']
+                        elif 'price_1h' in outputs:
+                            all_predictions = torch.stack([
+                                outputs['price_1h'].squeeze(-1) if outputs['price_1h'].dim() > 1 else outputs['price_1h'],
+                                outputs['price_4h'].squeeze(-1) if outputs['price_4h'].dim() > 1 else outputs['price_4h'],
+                                outputs['price_24h'].squeeze(-1) if outputs['price_24h'].dim() > 1 else outputs['price_24h']
+                            ], dim=-1)
+                        else:
+                            tensor_values = [v for v in outputs.values() if isinstance(v, torch.Tensor)]
+                            all_predictions = tensor_values[0] if tensor_values else outputs
+                    elif isinstance(outputs, tuple):
+                        all_predictions = outputs[0]
+                    else:
+                        all_predictions = outputs
+                    
+                    y_tensor = torch.FloatTensor(y_scaled).to(device)
+                    mse = criterion(all_predictions, y_tensor)
+                    
+                    # R2 score calculation
+                    y_mean = torch.mean(y_tensor)
+                    ss_tot = torch.sum((y_tensor - y_mean) ** 2)
+                    ss_res = torch.sum((y_tensor - all_predictions) ** 2)
+                    
+                    if ss_tot > 0:
+                        r2_score = 1 - (ss_res / ss_tot)
+                        model_accuracy = max(0.0, min(1.0, r2_score.item()))
+                    else:
+                        model_accuracy = max(0.0, 1.0 - min(1.0, mse.item()))
+                    
+                    logger.info(f"{model_name} evaluation - MSE: {mse.item():.6f}, R2: {r2_score.item() if ss_tot > 0 else 'N/A'}, Accuracy: {model_accuracy:.4f}")
+                
+                model._is_trained = True
+                model._model_accuracy = model_accuracy
+                training_end_time = datetime.now()
+                success = True
                 
                 # Calculate training metrics
                 training_duration = (training_end_time - training_start_time).total_seconds()
-                model_accuracy = getattr(model, '_get_model_accuracy', lambda: 0.0)()
+                model_accuracy = model._model_accuracy if hasattr(model, '_model_accuracy') else 0.0
                 
                 results[model_name] = {
                     'success': success,
@@ -763,7 +967,7 @@ async def main():
             corpus_version=None,  # Use latest
             timeframe="daily",
             token="WBTC",  # Train on Wrapped Bitcoin data (corpus uses WBTC not BTC)
-            models=['lstm']  # Train only LSTM for testing
+            models=['lstm', 'transformer', 'itransformer', 'patchtst', 'timesmixer']  # Train all models
         )
         
         print(f"Training completed successfully!")
