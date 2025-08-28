@@ -125,10 +125,8 @@ class TrainingReportGenerator:
         self._setup_plotting_style()
         
         logger.info(
-            "TrainingReportGenerator initialized",
-            output_dir=str(self.output_dir),
-            gcs_bucket=self.config.get('gcs_bucket'),
-            style=self.config.get('style')
+            f"TrainingReportGenerator initialized - output_dir: {self.output_dir}, "
+            f"gcs_bucket: {self.config.get('gcs_bucket')}, style: {self.config.get('style')}"
         )
     
     def _get_default_config(self) -> Dict[str, Any]:

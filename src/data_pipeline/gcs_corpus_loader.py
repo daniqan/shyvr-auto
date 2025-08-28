@@ -63,10 +63,8 @@ class GCSCorpusLoader:
         self.bucket = self.gcs_client.bucket(bucket_name)
         
         logger.info(
-            "GCS Corpus Loader initialized",
-            bucket=bucket_name,
-            cache_dir=cache_dir,
-            cache_ttl_hours=cache_ttl_hours
+            f"GCS Corpus Loader initialized - bucket: {bucket_name}, "
+            f"cache_dir: {cache_dir}, cache_ttl_hours: {cache_ttl_hours}"
         )
     
     async def list_available_corpus_versions(self) -> List[str]:
@@ -216,10 +214,8 @@ class GCSCorpusLoader:
             logger.info(f"Loading parquet file: {local_path}")
             df = pd.read_parquet(local_path)
             
-            logger.info(f"Loaded corpus data", 
-                       rows=len(df), 
-                       columns=len(df.columns),
-                       timeframe=timeframe)
+            logger.info(f"Loaded corpus data - rows: {len(df)}, "
+                       f"columns: {len(df.columns)}, timeframe: {timeframe}")
             
             # Filter by token if specified
             if token is not None:
@@ -237,9 +233,8 @@ class GCSCorpusLoader:
                     mask = df[filter_column].str.upper() == token.upper()
                     df = df[mask].copy()
                     
-                    logger.info(f"Filtered data for token {token}", 
-                               rows=len(df), 
-                               filter_column=filter_column)
+                    logger.info(f"Filtered data for token {token} - "
+                               f"rows: {len(df)}, filter_column: {filter_column}")
                 else:
                     logger.warning(f"No token column found for filtering. Available columns: {list(df.columns)}")
             

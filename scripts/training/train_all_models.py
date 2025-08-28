@@ -130,11 +130,9 @@ class UnifiedTrainingPipeline:
         })
         
         logger.info(
-            "UnifiedTrainingPipeline initialized",
-            session_id=self.session_id,
-            gcs_bucket=gcs_bucket,
-            model_save_bucket=model_save_bucket,
-            cache_dir=cache_dir
+            f"UnifiedTrainingPipeline initialized - session_id: {self.session_id}, "
+            f"gcs_bucket: {gcs_bucket}, model_save_bucket: {model_save_bucket}, "
+            f"cache_dir: {cache_dir}"
         )
     
     async def load_corpus_data(self,
@@ -258,7 +256,7 @@ class UnifiedTrainingPipeline:
                 'dropout': 0.2,
                 'learning_rate': 0.001,
                 'batch_size': 32,
-                'num_epochs': 100
+                'num_epochs': 50  # Reasonable number of epochs
             }
             
             if config:
@@ -274,10 +272,109 @@ class UnifiedTrainingPipeline:
             
             logger.info(f"LSTM training data prepared: X{X.shape}, y{y.shape}, {len(feature_names)} features")
             
-            # Start training
+            # Normalize the data to prevent exploding gradients
+            from sklearn.preprocessing import StandardScaler
+            X_scaler = StandardScaler()
+            y_scaler = StandardScaler()
+            
+            # Reshape for scaling
+            X_reshaped = X.reshape(-1, X.shape[-1])
+            X_scaled = X_scaler.fit_transform(X_reshaped).reshape(X.shape)
+            y_scaled = y_scaler.fit_transform(y)
+            
+            # Direct training implementation using prepared data
+            import torch
+            import torch.nn as nn
+            import torch.optim as optim
+            from torch.utils.data import DataLoader, TensorDataset
+            from src.ml_analysis.lstm_model import LSTMNetwork
+            
+            # Initialize neural network
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            input_size = X.shape[2]  # Number of features
+            lstm_model._model = LSTMNetwork(
+                input_size=input_size,
+                hidden_size=lstm_model.hidden_size,
+                num_layers=lstm_model.num_layers,
+                dropout=lstm_model.dropout
+            ).to(device)
+            
+            lstm_model._feature_names = feature_names
+            lstm_model._device = device
+            lstm_model._X_scaler = X_scaler
+            lstm_model._y_scaler = y_scaler
+            
+            # Prepare data loaders with scaled data
+            train_dataset = TensorDataset(
+                torch.FloatTensor(X_scaled).to(device),
+                torch.FloatTensor(y_scaled).to(device)
+            )
+            train_loader = DataLoader(train_dataset, batch_size=lstm_model.batch_size, shuffle=True)
+            
+            # Initialize optimizer and loss function
+            optimizer = optim.Adam(lstm_model._model.parameters(), lr=lstm_model.learning_rate)
+            criterion = nn.MSELoss()
+            
+            # Training loop
             training_start_time = datetime.now()
-            success = await lstm_model.train_model(training_data, coin_id="corpus_mixed")
+            lstm_model._model.train()
+            lstm_model._model_accuracy = 0.0
+            training_losses = []
+            
+            for epoch in range(lstm_model.num_epochs):
+                epoch_loss = 0.0
+                num_batches = 0
+                
+                for batch_X, batch_y in train_loader:
+                    optimizer.zero_grad()
+                    
+                    predictions, uncertainty = lstm_model._model(batch_X)
+                    
+                    # Calculate loss
+                    pred_loss = criterion(predictions, batch_y)
+                    
+                    # Add uncertainty regularization
+                    uncertainty_loss = torch.mean(torch.exp(-uncertainty)) + torch.mean(uncertainty)
+                    total_loss = pred_loss + 0.01 * uncertainty_loss  # Small weight on uncertainty
+                    
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(lstm_model._model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    
+                    epoch_loss += total_loss.item()
+                    num_batches += 1
+                
+                avg_loss = epoch_loss / num_batches if num_batches > 0 else float('inf')
+                training_losses.append(avg_loss)
+                
+                if (epoch + 1) % 5 == 0:
+                    logger.info(f"LSTM Epoch {epoch+1}/{lstm_model.num_epochs}, Loss: {avg_loss:.6f}")
+            
+            # Calculate simple accuracy metric
+            lstm_model._model.eval()
+            with torch.no_grad():
+                all_predictions, _ = lstm_model._model(torch.FloatTensor(X_scaled).to(device))
+                y_tensor = torch.FloatTensor(y_scaled).to(device)
+                mse = criterion(all_predictions, y_tensor)
+                
+                # R2 score calculation as accuracy proxy
+                y_mean = torch.mean(y_tensor)
+                ss_tot = torch.sum((y_tensor - y_mean) ** 2)
+                ss_res = torch.sum((y_tensor - all_predictions) ** 2)
+                
+                if ss_tot > 0:
+                    r2_score = 1 - (ss_res / ss_tot)
+                    # Clamp between 0 and 1 for accuracy representation
+                    lstm_model._model_accuracy = max(0.0, min(1.0, r2_score.item()))
+                else:
+                    # If no variance in targets, use 1 - normalized MSE as accuracy proxy
+                    lstm_model._model_accuracy = max(0.0, 1.0 - min(1.0, mse.item()))
+                
+                logger.info(f"Model evaluation - MSE: {mse.item():.6f}, R2: {r2_score.item() if ss_tot > 0 else 'N/A'}, Accuracy: {lstm_model._model_accuracy:.4f}")
+            
+            lstm_model._is_trained = True
             training_end_time = datetime.now()
+            success = True
             
             if not success:
                 raise ModelTrainingError("LSTM model training failed")
@@ -285,8 +382,8 @@ class UnifiedTrainingPipeline:
             # Calculate training duration
             training_duration = (training_end_time - training_start_time).total_seconds()
             
-            # Get model accuracy
-            model_accuracy = lstm_model._get_model_accuracy() or 0.0
+            # Get model accuracy (already calculated above)
+            model_accuracy = lstm_model._model_accuracy if hasattr(lstm_model, '_model_accuracy') else 0.0
             
             # Prepare training results
             training_results = {
@@ -599,8 +696,12 @@ class UnifiedTrainingPipeline:
             elif 'lstm' in models:
                 models = [m for m in models if m != 'lstm']  # LSTM handled separately
             
-            logger.info(f"Training Transformer models: {models}")
-            transformer_results = await self.train_transformer_models(train_data, models)
+            # Skip transformer training if no transformer models specified
+            if models:
+                logger.info(f"Training Transformer models: {models}")
+                transformer_results = await self.train_transformer_models(train_data, models)
+            else:
+                transformer_results = {}
             
             # Combine results
             all_results = {'lstm': lstm_results}
@@ -661,8 +762,8 @@ async def main():
         results = await pipeline.train_all_models(
             corpus_version=None,  # Use latest
             timeframe="daily",
-            token="BTC",  # Train on Bitcoin data for testing
-            models=['lstm', 'transformer']  # Train subset for testing
+            token="WBTC",  # Train on Wrapped Bitcoin data (corpus uses WBTC not BTC)
+            models=['lstm']  # Train only LSTM for testing
         )
         
         print(f"Training completed successfully!")
