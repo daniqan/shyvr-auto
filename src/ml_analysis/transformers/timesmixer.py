@@ -158,14 +158,14 @@ class PastDecomposableMixing(nn.Module):
         
         # Time domain mixing
         if use_time_mixing:
-            self.time_mixing = nn.ModuleList([
+            self.time_mixers = nn.ModuleList([
                 nn.Linear(seq_len, seq_len) for _ in range(top_k)
             ])
             self.time_mixing_weights = nn.Linear(d_model, top_k)
         
         # Feature domain mixing
         if use_feature_mixing:
-            self.feature_mixing = nn.ModuleList([
+            self.feature_mixers = nn.ModuleList([
                 nn.Linear(d_model, d_model) for _ in range(top_k)
             ])
             self.feature_mixing_weights = nn.Linear(seq_len, top_k)
@@ -194,7 +194,7 @@ class PastDecomposableMixing(nn.Module):
         
         # Apply different time mixing operations
         mixed_outputs = []
-        for i, mixer in enumerate(self.time_mixing):
+        for i, mixer in enumerate(self.time_mixers):
             # Apply mixing across time dimension
             x_transposed = x.transpose(1, 2)  # [batch_size, d_model, seq_len]
             mixed = mixer(x_transposed).transpose(1, 2)  # Back to [batch_size, seq_len, d_model]
@@ -222,7 +222,7 @@ class PastDecomposableMixing(nn.Module):
         
         # Apply different feature mixing operations
         mixed_outputs = []
-        for i, mixer in enumerate(self.feature_mixing):
+        for i, mixer in enumerate(self.feature_mixers):
             mixed = mixer(x)  # [batch_size, seq_len, d_model]
             mixed_outputs.append(mixed)
         
