@@ -427,13 +427,13 @@ class UnifiedTrainingPipeline:
         model_configs = {
             'transformer': {
                 'sequence_length': 192,
-                'd_model': 384,  # Reduced from 512 to 384 (still larger than baseline)
-                'n_heads': 12,  # Reduced from 16 to 12 
-                'n_layers': 6,  # Reduced from 8 to 6
-                'dropout': 0.2,  # Reduced from 0.3 to 0.2
-                'num_epochs': 100,  # Increased from 50 to 100
-                'batch_size': 32,  # Back to 32 from 64
-                'learning_rate': 0.001  # Back to baseline learning rate
+                'd_model': 256,  # Keep at moderate size
+                'n_heads': 8,  # Keep balanced
+                'n_layers': 4,  # Keep manageable
+                'dropout': 0.15,  # Slightly increased from baseline
+                'num_epochs': 100,  # More training epochs
+                'batch_size': 16,  # Smaller batch size for better gradients  
+                'learning_rate': 0.0005  # Lower learning rate for stability
             },
             'itransformer': {
                 'sequence_length': 96,
@@ -589,10 +589,8 @@ class UnifiedTrainingPipeline:
                 optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.01)  # Reduced weight decay
                 criterion = nn.MSELoss()
                 
-                # Add learning rate scheduler with warmup
-                warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=10)
-                plateau_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.7, patience=8)
-                scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, plateau_scheduler], milestones=[10])
+                # Add cosine annealing scheduler for better convergence
+                scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
                 
                 # Training loop
                 training_start_time = datetime.now()
@@ -657,11 +655,8 @@ class UnifiedTrainingPipeline:
                     if (epoch + 1) % max(1, num_epochs // 10) == 0:
                         logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
                     
-                    # Step scheduler - different approach for SequentialLR
-                    if epoch < 10:
-                        scheduler.step()  # Warmup phase - step without loss
-                    else:
-                        plateau_scheduler.step(avg_loss)  # Plateau phase - step with loss
+                    # Step cosine annealing scheduler
+                    scheduler.step()
                     
                     # Early stopping check
                     if avg_loss < best_loss:
