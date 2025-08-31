@@ -564,6 +564,7 @@ class TimesMixerPredictor(MLAnalyzerBase):
         # Feature engineering
         self.seq_len = self.model_config.seq_len
         self.pred_len = self.model_config.pred_len
+        self.n_features = 20  # Default number of features for corpus training
         self.required_features = self._get_required_features()
         
         logger.info("TimesMixerPredictor initialized",
