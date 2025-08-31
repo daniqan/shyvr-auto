@@ -427,13 +427,13 @@ class UnifiedTrainingPipeline:
         model_configs = {
             'transformer': {
                 'sequence_length': 192,
-                'd_model': 256,
-                'n_heads': 8,
-                'n_layers': 4,
-                'dropout': 0.1,
-                'num_epochs': 10,  # Reduced for testing
-                'batch_size': 32,
-                'learning_rate': 0.001
+                'd_model': 512,  # Increased from 256 to 512
+                'n_heads': 16,  # Increased from 8 to 16
+                'n_layers': 8,  # Increased from 4 to 8
+                'dropout': 0.3,  # Increased from 0.1 to 0.3 for better regularization
+                'num_epochs': 50,  # Increased from 10 to 50
+                'batch_size': 64,  # Increased from 32 to 64
+                'learning_rate': 0.005  # Increased from 0.001 to 0.005
             },
             'itransformer': {
                 'sequence_length': 96,
@@ -586,14 +586,22 @@ class UnifiedTrainingPipeline:
                 
                 # Initialize optimizer and loss function
                 learning_rate = config.get('learning_rate', 0.001)
-                optimizer = optim.Adam(model.model.parameters(), lr=learning_rate)
+                optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.05)  # Increased weight decay
                 criterion = nn.MSELoss()
+                
+                # Add learning rate scheduler
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
                 
                 # Training loop
                 training_start_time = datetime.now()
                 model.model.train()
                 num_epochs = config.get('num_epochs', 30)
                 training_losses = []
+                
+                # Early stopping variables
+                best_loss = float('inf')
+                patience = 10
+                patience_counter = 0
                 
                 for epoch in range(num_epochs):
                     epoch_loss = 0.0
@@ -645,7 +653,21 @@ class UnifiedTrainingPipeline:
                     training_losses.append(avg_loss)
                     
                     if (epoch + 1) % max(1, num_epochs // 10) == 0:
-                        logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}")
+                        logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
+                    
+                    # Step scheduler with average loss
+                    scheduler.step(avg_loss)
+                    
+                    # Early stopping check
+                    if avg_loss < best_loss:
+                        best_loss = avg_loss
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+                        
+                    if patience_counter >= patience:
+                        logger.info(f"{model_name} Early stopping at epoch {epoch+1}")
+                        break
                 
                 # Calculate accuracy metric
                 model.model.eval()
