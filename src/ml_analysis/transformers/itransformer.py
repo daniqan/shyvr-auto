@@ -306,10 +306,17 @@ class iTransformerNetwork(TransformerBase):
         batch_size, seq_len, n_variates = x.shape
         
         if n_variates != self.config.n_variates:
-            raise ValueError(f"Expected {self.config.n_variates} variates, got {n_variates}")
+            raise ValueError(f"Input tensor has {n_variates} variates but model expects {self.config.n_variates}. "
+                           f"Model may need to be recreated with correct n_variates configuration.")
         
         if seq_len == 0:
             raise ValueError("Empty sequence not supported")
+        
+        # Validate variate embedding dimensions match input
+        expected_variate_embed_shape = (self.config.n_variates, self.config.variate_embedding_dim or self.config.d_model)
+        if self.variate_embeddings.shape != expected_variate_embed_shape:
+            raise RuntimeError(f"Variate embedding shape mismatch: expected {expected_variate_embed_shape}, "
+                             f"got {self.variate_embeddings.shape}. Model architecture is inconsistent.")
         
         # Input projection: [batch_size, seq_len, n_variates] -> [batch_size, seq_len, n_variates, d_model]
         x_expanded = x.unsqueeze(-1)  # [batch_size, seq_len, n_variates, 1]
@@ -743,7 +750,49 @@ class iTransformerPredictor(MLAnalyzerBase):
                            'calculated_at', 'data_source', 'granularity', 'created_at', 'updated_at',
                            'collection_timestamp']
             numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-            available_features = [c for c in numeric_cols if c not in metadata_cols][:20]  # Limit to 20 variates
+            available_features = [c for c in numeric_cols if c not in metadata_cols]
+        
+        # Intelligent feature selection based on current model configuration
+        original_n_variates = self.model_config.n_variates
+        
+        # If we have more features than configured variates, select the most important ones
+        if len(available_features) > original_n_variates:
+            self.logger.info("Too many features for current model configuration",
+                           available_features=len(available_features),
+                           configured_variates=original_n_variates,
+                           action="selecting_top_features")
+            
+            # Priority order: price features first, then volume, then technical indicators
+            feature_priority = [
+                'close', 'open', 'high', 'low', 'volume',  # Core OHLCV
+                'rsi_14', 'macd', 'bb_position',  # Key technical indicators
+                'volatility_score', 'volume_score',  # ML-generated scores
+                'momentum_10', 'trend_strength', 'market_regime'  # Additional features
+            ]
+            
+            # Select features in priority order, up to configured limit
+            prioritized_features = []
+            for feature in feature_priority:
+                if feature in available_features and len(prioritized_features) < original_n_variates:
+                    prioritized_features.append(feature)
+            
+            # Fill remaining slots with other available features
+            remaining_features = [f for f in available_features if f not in prioritized_features]
+            while len(prioritized_features) < original_n_variates and remaining_features:
+                prioritized_features.append(remaining_features.pop(0))
+            
+            available_features = prioritized_features
+            
+            self.logger.info("Feature selection completed",
+                           selected_features=available_features,
+                           feature_count=len(available_features))
+        
+        # If we still have fewer features than configured, pad or adjust
+        elif len(available_features) < original_n_variates:
+            self.logger.warning("Fewer features available than configured variates",
+                              available_features=len(available_features),
+                              configured_variates=original_n_variates,
+                              action="will_recreate_model")
         
         # Ensure we have essential columns
         if 'close' not in data.columns:
@@ -795,7 +844,15 @@ class iTransformerPredictor(MLAnalyzerBase):
         feature_names = list(feature_data.columns)
         
         # Update model config with actual number of variates
+        original_n_variates = self.model_config.n_variates
         self.model_config.n_variates = len(feature_names)
+        
+        # Recreate model if n_variates changed to prevent tensor dimension mismatch
+        if original_n_variates != self.model_config.n_variates:
+            self.logger.info("Recreating iTransformer model due to n_variates change",
+                           original_n_variates=original_n_variates,
+                           new_n_variates=self.model_config.n_variates)
+            self._recreate_model_with_new_variates()
         
         self.logger.info("iTransformer corpus data prepared",
                         sequences=len(X),
@@ -805,6 +862,54 @@ class iTransformerPredictor(MLAnalyzerBase):
                         horizons=prediction_horizons)
         
         return X, y, feature_names
+    
+    def _recreate_model_with_new_variates(self):
+        """
+        Recreate the iTransformer model with updated n_variates to prevent tensor dimension mismatch
+        
+        This is necessary when corpus data has a different number of features than initially configured.
+        The variate embeddings and related layers need to be resized to match the actual data.
+        """
+        try:
+            # Store current training state
+            was_trained = self._is_trained
+            
+            # Store optimizer state if available
+            optimizer_state = None
+            if self.optimizer is not None:
+                optimizer_state = self.optimizer.state_dict()
+            
+            # Update required features list to match new variate count
+            self.required_features = self._get_required_features()
+            self.n_variates = self.model_config.n_variates
+            
+            # Recreate the model with new configuration
+            self.model = iTransformerNetwork(self.model_config)
+            self.model.to(self.device)
+            
+            # Recreate optimizer with new model parameters
+            self._setup_training()
+            
+            # Restore optimizer state if we had one (though parameters may not match)
+            if optimizer_state is not None and was_trained:
+                try:
+                    self.optimizer.load_state_dict(optimizer_state)
+                    self.logger.info("Restored optimizer state after model recreation")
+                except Exception as e:
+                    self.logger.warning("Could not restore optimizer state after model recreation",
+                                      error=str(e))
+            
+            # Reset training state - model needs to be retrained with new architecture
+            self._is_trained = False
+            
+            self.logger.info("iTransformer model recreated successfully",
+                           new_n_variates=self.model_config.n_variates,
+                           device=str(self.device),
+                           requires_retraining=True)
+                           
+        except Exception as e:
+            self.logger.error("Failed to recreate iTransformer model", error=str(e))
+            raise RuntimeError(f"Model recreation failed: {str(e)}")
     
     def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
