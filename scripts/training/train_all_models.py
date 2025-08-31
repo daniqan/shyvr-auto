@@ -589,8 +589,8 @@ class UnifiedTrainingPipeline:
                 optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.05)  # Increased weight decay
                 criterion = nn.MSELoss()
                 
-                # Add learning rate scheduler
-                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+                # Add learning rate scheduler (without verbose parameter for compatibility)
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
                 
                 # Training loop
                 training_start_time = datetime.now()
