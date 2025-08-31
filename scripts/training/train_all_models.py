@@ -427,13 +427,13 @@ class UnifiedTrainingPipeline:
         model_configs = {
             'transformer': {
                 'sequence_length': 192,
-                'd_model': 512,  # Increased from 256 to 512
-                'n_heads': 16,  # Increased from 8 to 16
-                'n_layers': 8,  # Increased from 4 to 8
-                'dropout': 0.3,  # Increased from 0.1 to 0.3 for better regularization
-                'num_epochs': 50,  # Increased from 10 to 50
-                'batch_size': 64,  # Increased from 32 to 64
-                'learning_rate': 0.005  # Increased from 0.001 to 0.005
+                'd_model': 384,  # Reduced from 512 to 384 (still larger than baseline)
+                'n_heads': 12,  # Reduced from 16 to 12 
+                'n_layers': 6,  # Reduced from 8 to 6
+                'dropout': 0.2,  # Reduced from 0.3 to 0.2
+                'num_epochs': 100,  # Increased from 50 to 100
+                'batch_size': 32,  # Back to 32 from 64
+                'learning_rate': 0.001  # Back to baseline learning rate
             },
             'itransformer': {
                 'sequence_length': 96,
@@ -586,11 +586,13 @@ class UnifiedTrainingPipeline:
                 
                 # Initialize optimizer and loss function
                 learning_rate = config.get('learning_rate', 0.001)
-                optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.05)  # Increased weight decay
+                optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.01)  # Reduced weight decay
                 criterion = nn.MSELoss()
                 
-                # Add learning rate scheduler (without verbose parameter for compatibility)
-                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+                # Add learning rate scheduler with warmup
+                warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=10)
+                plateau_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.7, patience=8)
+                scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, plateau_scheduler], milestones=[10])
                 
                 # Training loop
                 training_start_time = datetime.now()
@@ -655,8 +657,11 @@ class UnifiedTrainingPipeline:
                     if (epoch + 1) % max(1, num_epochs // 10) == 0:
                         logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
                     
-                    # Step scheduler with average loss
-                    scheduler.step(avg_loss)
+                    # Step scheduler - different approach for SequentialLR
+                    if epoch < 10:
+                        scheduler.step()  # Warmup phase - step without loss
+                    else:
+                        plateau_scheduler.step(avg_loss)  # Plateau phase - step with loss
                     
                     # Early stopping check
                     if avg_loss < best_loss:
