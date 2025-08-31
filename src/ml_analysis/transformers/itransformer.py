@@ -871,8 +871,9 @@ class iTransformerPredictor(MLAnalyzerBase):
         The variate embeddings and related layers need to be resized to match the actual data.
         """
         try:
-            # Store current training state
+            # Store current training state and model parameters
             was_trained = self._is_trained
+            old_state_dict = self.model.state_dict() if hasattr(self, 'model') else None
             
             # Store optimizer state if available
             optimizer_state = None
@@ -884,8 +885,13 @@ class iTransformerPredictor(MLAnalyzerBase):
             self.n_variates = self.model_config.n_variates
             
             # Recreate the model with new configuration
+            old_model = self.model if hasattr(self, 'model') else None
             self.model = iTransformerNetwork(self.model_config)
             self.model.to(self.device)
+            
+            # Try to transfer compatible parameters from old model
+            if old_state_dict is not None and was_trained:
+                self._transfer_compatible_parameters(old_state_dict, self.model.state_dict())
             
             # Recreate optimizer with new model parameters
             self._setup_training()
@@ -899,17 +905,71 @@ class iTransformerPredictor(MLAnalyzerBase):
                     self.logger.warning("Could not restore optimizer state after model recreation",
                                       error=str(e))
             
-            # Reset training state - model needs to be retrained with new architecture
-            self._is_trained = False
+            # Mark as partially trained if we transferred some parameters
+            if old_state_dict is not None and was_trained:
+                # Model structure changed, so it needs retraining, but we transferred what we could
+                self._is_trained = False
+                self.logger.info("Model recreated with partial parameter transfer - retraining recommended")
+            else:
+                self._is_trained = False
             
             self.logger.info("iTransformer model recreated successfully",
                            new_n_variates=self.model_config.n_variates,
                            device=str(self.device),
-                           requires_retraining=True)
+                           requires_retraining=not was_trained or old_state_dict is None,
+                           partial_transfer=old_state_dict is not None and was_trained)
                            
         except Exception as e:
             self.logger.error("Failed to recreate iTransformer model", error=str(e))
             raise RuntimeError(f"Model recreation failed: {str(e)}")
+    
+    def _transfer_compatible_parameters(self, old_state_dict: dict, new_state_dict: dict):
+        """
+        Transfer compatible parameters from old model to new model after n_variates change
+        
+        This helps preserve training progress for layers that don't depend on variate count,
+        such as attention mechanisms, feed-forward layers, and prediction heads.
+        """
+        transferred_count = 0
+        skipped_count = 0
+        
+        try:
+            for param_name, old_param in old_state_dict.items():
+                if param_name in new_state_dict:
+                    new_param = new_state_dict[param_name]
+                    
+                    # Only transfer if shapes match exactly
+                    if old_param.shape == new_param.shape:
+                        new_state_dict[param_name] = old_param.clone()
+                        transferred_count += 1
+                        
+                        # Log important layer transfers
+                        if any(layer in param_name.lower() for layer in ['attention', 'feed_forward', 'prediction']):
+                            self.logger.debug("Transferred compatible parameter", 
+                                           parameter=param_name, 
+                                           shape=list(old_param.shape))
+                    else:
+                        skipped_count += 1
+                        # Log skipped variate-dependent parameters
+                        if 'variate' in param_name.lower():
+                            self.logger.debug("Skipped variate-dependent parameter", 
+                                           parameter=param_name,
+                                           old_shape=list(old_param.shape),
+                                           new_shape=list(new_param.shape))
+                else:
+                    skipped_count += 1
+            
+            # Load the updated state dict into the new model
+            self.model.load_state_dict(new_state_dict)
+            
+            self.logger.info("Parameter transfer completed",
+                           transferred=transferred_count,
+                           skipped=skipped_count,
+                           transfer_ratio=transferred_count / (transferred_count + skipped_count) if (transferred_count + skipped_count) > 0 else 0.0)
+                           
+        except Exception as e:
+            self.logger.warning("Parameter transfer failed, starting with fresh parameters",
+                              error=str(e))
     
     def _prepare_training_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
