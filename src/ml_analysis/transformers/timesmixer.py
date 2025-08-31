@@ -909,6 +909,10 @@ class TimesMixerPredictor(MLAnalyzerBase):
         if not selected_features:
             selected_features = available_features[:n_features]
         
+        # Validate we have minimum required features for TimesMixer
+        if len(selected_features) < 3:
+            raise ValueError(f"TimesMixer requires at least 3 features for decomposition, got {len(selected_features)}")
+        
         # Select feature columns
         feature_data = data[selected_features].copy()
         
