@@ -130,10 +130,22 @@ class InvertedMultiHeadAttention(nn.Module):
             attention_weights: Attention weights [batch_size, n_variates, n_heads, seq_len, seq_len]
         """
         batch_size, seq_len, n_variates, d_model = x.shape
+        logger.debug("InvertedMultiHeadAttention forward", 
+                    input_shape=x.shape,
+                    expected_n_variates=self.n_variates,
+                    batch_size=batch_size, seq_len=seq_len, n_variates=n_variates, d_model=d_model)
+        
+        # Check that the input variates match the expected variates
+        if n_variates != self.n_variates:
+            raise RuntimeError(f"Input variates mismatch: expected {self.n_variates}, got {n_variates}. "
+                             f"This indicates the model was initialized with different n_variates than the data.")
         
         # Reshape for inverted attention: process each variate separately
         # [batch_size * n_variates, seq_len, d_model]
         x_reshaped = x.view(batch_size * n_variates, seq_len, d_model)
+        logger.debug("Reshaped for attention", 
+                    x_reshaped_shape=x_reshaped.shape,
+                    expected_shape=(batch_size * n_variates, seq_len, d_model))
         
         # Expand attention mask for all variates if provided
         if attention_mask is not None:
@@ -154,7 +166,14 @@ class InvertedMultiHeadAttention(nn.Module):
         # Reshape back to original dimensions
         # [batch_size * n_variates, seq_len, d_model] -> [batch_size, seq_len, n_variates, d_model]
         attended_output = attended_output.view(batch_size, n_variates, seq_len, d_model)
+        logger.debug("Reshaped attended output intermediate", 
+                    shape=attended_output.shape,
+                    expected_shape=(batch_size, n_variates, seq_len, d_model))
+        
         attended_output = attended_output.transpose(1, 2)  # [batch_size, seq_len, n_variates, d_model]
+        logger.debug("Final attended output after transpose", 
+                    shape=attended_output.shape,
+                    expected_shape=(batch_size, seq_len, n_variates, d_model))
         
         # Reshape attention weights
         # [batch_size * n_variates, n_heads, seq_len, seq_len] -> [batch_size, n_variates, n_heads, seq_len, seq_len]
@@ -304,6 +323,10 @@ class iTransformerNetwork(TransformerBase):
             Dictionary with predictions and attention weights
         """
         batch_size, seq_len, n_variates = x.shape
+        logger.debug("iTransformer forward pass started", 
+                    input_shape=x.shape, 
+                    expected_n_variates=self.config.n_variates,
+                    batch_size=batch_size, seq_len=seq_len, n_variates=n_variates)
         
         if n_variates != self.config.n_variates:
             raise ValueError(f"Input tensor has {n_variates} variates but model expects {self.config.n_variates}. "
@@ -320,18 +343,39 @@ class iTransformerNetwork(TransformerBase):
         
         # Input projection: [batch_size, seq_len, n_variates] -> [batch_size, seq_len, n_variates, d_model]
         x_expanded = x.unsqueeze(-1)  # [batch_size, seq_len, n_variates, 1]
+        logger.debug("Input expansion completed", x_expanded_shape=x_expanded.shape)
+        
         x_projected = self.input_projection(x_expanded)  # [batch_size, seq_len, n_variates, d_model]
+        logger.debug("Input projection completed", x_projected_shape=x_projected.shape)
         
         # Add variate embeddings
         variate_embeds = self.variate_embeddings.unsqueeze(0).unsqueeze(0)  # [1, 1, n_variates, d_model]
+        logger.debug("Variate embeddings prepared", 
+                    variate_embeds_shape=variate_embeds.shape,
+                    x_projected_shape=x_projected.shape)
+        
+        # Check for dimension mismatch before addition
+        if variate_embeds.shape[2] != x_projected.shape[2]:
+            raise RuntimeError(f"Variate dimension mismatch: variate_embeds has {variate_embeds.shape[2]} variates, "
+                             f"but input has {x_projected.shape[2]} variates. "
+                             f"Expected: {self.config.n_variates}, Got: {n_variates}")
+        
         x_embedded = x_projected + variate_embeds
+        logger.debug("Variate embeddings added", x_embedded_shape=x_embedded.shape)
         
         # Add positional encoding for time dimension
         # Reshape to apply positional encoding: [batch_size * n_variates, seq_len, d_model]
         x_pos_input = x_embedded.view(batch_size * n_variates, seq_len, self.config.d_model)
+        logger.debug("Reshaping for positional encoding", 
+                    x_pos_input_shape=x_pos_input.shape,
+                    expected_shape=(batch_size * n_variates, seq_len, self.config.d_model))
+        
         x_pos_encoded = self.pos_encoding(x_pos_input)
+        logger.debug("Positional encoding applied", x_pos_encoded_shape=x_pos_encoded.shape)
+        
         # Reshape back: [batch_size, seq_len, n_variates, d_model]
         x_encoded = x_pos_encoded.view(batch_size, seq_len, n_variates, self.config.d_model)
+        logger.debug("Reshaped back after positional encoding", x_encoded_shape=x_encoded.shape)
         
         # Store attention weights for interpretability
         attention_weights = []
@@ -377,17 +421,35 @@ class iTransformerNetwork(TransformerBase):
         outputs = {}
         
         # Multi-horizon price predictions
+        logger.debug("Generating predictions", global_repr_shape=global_repr.shape)
         for horizon, head in self.prediction_heads.items():
-            outputs[f'price_{horizon}'] = head(global_repr)  # [batch_size, n_variates]
+            pred_output = head(global_repr)  # [batch_size, n_variates]
+            logger.debug(f"Prediction head {horizon}", 
+                        input_shape=global_repr.shape,
+                        output_shape=pred_output.shape)
+            outputs[f'price_{horizon}'] = pred_output
         
         # Confidence estimation
         outputs['confidence'] = torch.sigmoid(self.confidence_head(global_repr))  # [batch_size, 1]
         
         # Direction predictions for each variate
         direction_logits = self.direction_head(global_repr)  # [batch_size, n_variates * 5]
+        logger.debug("Direction head output", 
+                    direction_logits_shape=direction_logits.shape,
+                    expected_shape=(batch_size, self.config.n_variates * 5))
+        
+        # Check dimensions before reshape
+        expected_size = self.config.n_variates * 5
+        if direction_logits.shape[1] != expected_size:
+            raise RuntimeError(f"Direction head output size mismatch: expected {expected_size}, "
+                             f"got {direction_logits.shape[1]}. Config n_variates: {self.config.n_variates}, "
+                             f"Input n_variates: {n_variates}")
+        
         direction_logits = direction_logits.view(batch_size, self.config.n_variates, 5)
         outputs['direction_logits'] = direction_logits
         outputs['direction_probs'] = torch.softmax(direction_logits, dim=-1)
+        logger.debug("Direction predictions completed", 
+                    direction_logits_shape=direction_logits.shape)
         
         # Store attention weights for interpretability
         outputs['attention_weights'] = torch.stack(attention_weights, dim=0)  # [n_layers, batch_size, n_variates, n_heads, seq_len, seq_len]

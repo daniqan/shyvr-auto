@@ -53,8 +53,19 @@ from src.ml_analysis.base import ModelType
 from src.ml_analysis.training_report_generator import TrainingReportGenerator
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Also set structlog level to debug to see iTransformer debugging
+import structlog
+structlog_logger = structlog.get_logger()
+structlog.configure(
+    processors=[
+        structlog.dev.ConsoleRenderer()
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
 
 
 class UnifiedTrainingPipelineError(Exception):
