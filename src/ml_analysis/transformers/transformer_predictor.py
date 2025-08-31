@@ -44,9 +44,8 @@ class TransformerNetwork(TransformerBase):
         }
         super().__init__(ModelType.TRANSFORMER, config_dict)
         
-        # Input projection - use a reasonable input size for now
-        input_dim = getattr(config, 'input_dim', 20)
-        self.input_projection = nn.Linear(input_dim, config.d_model)
+        # Input projection - use input_dim from config
+        self.input_projection = nn.Linear(config.input_dim, config.d_model)
         
         # Positional encoding
         from .positional_encodings import PositionalEncodingConfig
@@ -193,7 +192,8 @@ class TransformerPredictor(MLAnalyzerBase):
             d_ff=config.get('dim_feedforward', config.get('d_ff', 512)),
             dropout=config.get('dropout', 0.1),
             activation=config.get('activation', 'gelu'),
-            max_seq_length=config.get('max_seq_length', 100)
+            max_seq_length=config.get('max_seq_length', 100),
+            input_dim=config.get('input_dim', 90)  # Default to 90 for financial corpus data
         )
     
     def _setup_training(self):
@@ -385,11 +385,12 @@ class TransformerPredictor(MLAnalyzerBase):
             
             # Update input dimension based on actual data
             input_dim = sequences.shape[2]
-            # Set input_dim as attribute for the TransformerNetwork
-            setattr(self.model_config, 'input_dim', input_dim)
-            self.model = TransformerNetwork(self.model_config)
-            self.model.to(self.device)
-            self._setup_training()
+            if input_dim != self.model_config.input_dim:
+                # Recreate config with correct input_dim
+                self.model_config.input_dim = input_dim
+                self.model = TransformerNetwork(self.model_config)
+                self.model.to(self.device)
+                self._setup_training()
             
             # Convert to tensors
             X_train = torch.FloatTensor(sequences).to(self.device)
@@ -595,8 +596,7 @@ class TransformerPredictor(MLAnalyzerBase):
                 return False
             
             # Quick forward pass test
-            input_dim = getattr(self.model_config, 'input_dim', 20)
-            dummy_input = torch.randn(1, self.sequence_length, input_dim).to(self.device)
+            dummy_input = torch.randn(1, self.sequence_length, self.model_config.input_dim).to(self.device)
             self.model.eval()
             with torch.no_grad():
                 outputs = self.model(dummy_input)
