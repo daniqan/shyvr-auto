@@ -54,6 +54,7 @@ class TransformerConfig:
     d_ff: int = 2048             # Feed-forward dimension
     dropout: float = 0.1         # Dropout rate
     max_seq_length: int = 1000   # Maximum sequence length (memory constraint)
+    input_dim: int = 90          # Input feature dimension (typical for financial corpus)
     
     # Activation and normalization
     activation: str = "gelu"     # Activation function
