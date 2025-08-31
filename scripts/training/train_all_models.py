@@ -589,13 +589,13 @@ class UnifiedTrainingPipeline:
                 optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.01)  # Reduced weight decay
                 criterion = nn.MSELoss()
                 
-                # Add cosine annealing scheduler for better convergence
-                scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
-                
-                # Training loop
+                # Training loop setup
                 training_start_time = datetime.now()
                 model.model.train()
                 num_epochs = config.get('num_epochs', 30)
+                
+                # Add cosine annealing scheduler for better convergence
+                scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
                 training_losses = []
                 
                 # Early stopping variables
