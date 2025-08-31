@@ -427,13 +427,13 @@ class UnifiedTrainingPipeline:
         model_configs = {
             'transformer': {
                 'sequence_length': 192,
-                'd_model': 320,  # Optimal size from best run
+                'd_model': 256,  # Back to proven size
                 'n_heads': 8,  # Keep balanced
-                'n_layers': 5,  # One more layer than baseline
-                'dropout': 0.08,  # Very light regularization
-                'num_epochs': 200,  # More training
-                'batch_size': 16,  # Smaller batch for better gradients
-                'learning_rate': 0.0006  # Slightly higher than best run
+                'n_layers': 4,  # Back to baseline layers
+                'dropout': 0.12,  # Slightly higher than our best
+                'num_epochs': 120,  # More than our best run
+                'batch_size': 16,  # Keep small batch size
+                'learning_rate': 0.0007  # Slightly higher learning rate
             },
             'itransformer': {
                 'sequence_length': 96,
