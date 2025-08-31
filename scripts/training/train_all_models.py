@@ -495,19 +495,34 @@ class UnifiedTrainingPipeline:
                 model_class = model_classes[model_name]
                 config = model_configs[model_name]
                 
-                # Initialize model (prevent auto-initialization for transformer)
-                if model_name == 'transformer':
+                # Prepare training data first to determine actual feature count
+                logger.info(f"Preparing training data to determine feature count for {model_name}")
+                
+                # Create a temporary model instance to prepare data
+                if model_name == 'itransformer':
+                    # For iTransformer, we need to know the actual number of features first
+                    # Create a temporary model with a placeholder n_variates to analyze the data
+                    temp_config = config.copy()
+                    temp_config['n_variates'] = 5  # Temporary placeholder
+                    temp_model = model_class(temp_config)
+                    X, y, feature_names = temp_model.prepare_training_from_corpus(training_data)
+                    
+                    # Now create the actual model with the correct n_variates
+                    logger.info(f"Actual feature count: {X.shape[2]}, creating iTransformer with n_variates={X.shape[2]}")
+                    config['n_variates'] = X.shape[2]  # Update config with actual feature count
+                    model = model_class(config)  # This will create the model with correct n_variates
+                    
+                elif model_name == 'transformer':
                     # For transformer, we need to set input_dim before model initialization
                     model = model_class(config)
                     # The model is auto-initialized in __init__, so we need to recreate it
                     model.model = None  # Clear the auto-initialized model
+                    X, y, feature_names = model.prepare_training_from_corpus(training_data)
                 else:
                     model = model_class(config)
+                    X, y, feature_names = model.prepare_training_from_corpus(training_data)
                 
-                # Prepare training data
-                X, y, feature_names = model.prepare_training_from_corpus(training_data)
-                
-                logger.info(f"{model_name} training data: X{X.shape}, y{y.shape}, {len(feature_names)} features")
+                logger.info(f"{model_name} training data prepared: X{X.shape}, y{y.shape}, {len(feature_names)} features")
                 
                 # Normalize the data
                 from sklearn.preprocessing import StandardScaler
@@ -549,15 +564,21 @@ class UnifiedTrainingPipeline:
                         transformer_config.output_dim = 3  # 3 prediction horizons
                         model.model = TransformerNetwork(transformer_config).to(device)
                     elif model_name == 'itransformer':
-                        from src.ml_analysis.transformers.itransformer import iTransformerNetwork, InvertedAttentionConfig
-                        itrans_config = InvertedAttentionConfig(
-                            d_model=config.get('d_model', 256),
-                            n_heads=config.get('n_heads', 8),
-                            n_layers=config.get('n_layers', 3),
-                            n_variates=X.shape[2],  # Number of features
-                            max_seq_length=config.get('sequence_length', 96)
-                        )
-                        model.model = iTransformerNetwork(itrans_config).to(device)
+                        # iTransformer model should already be correctly initialized with proper n_variates
+                        # from our earlier fix, so we just need to move it to device
+                        if hasattr(model, 'model') and model.model is not None:
+                            model.model = model.model.to(device)
+                        else:
+                            # Fallback: create with correct n_variates if somehow missing
+                            from src.ml_analysis.transformers.itransformer import iTransformerNetwork, InvertedAttentionConfig
+                            itrans_config = InvertedAttentionConfig(
+                                d_model=config.get('d_model', 256),
+                                n_heads=config.get('n_heads', 8),
+                                n_layers=config.get('n_layers', 3),
+                                n_variates=X.shape[2],  # Number of features
+                                max_seq_length=config.get('sequence_length', 96)
+                            )
+                            model.model = iTransformerNetwork(itrans_config).to(device)
                     elif model_name == 'patchtst':
                         from src.ml_analysis.transformers.patchtst import PatchTSTNetwork, PatchTSTConfig
                         patch_config = PatchTSTConfig(
