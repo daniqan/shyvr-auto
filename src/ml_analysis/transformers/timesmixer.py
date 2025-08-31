@@ -565,6 +565,7 @@ class TimesMixerPredictor(MLAnalyzerBase):
         self.seq_len = self.model_config.seq_len
         self.pred_len = self.model_config.pred_len
         self.n_features = 20  # Default number of features for corpus training
+        self._original_n_features = self.n_features  # Store for debugging
         self.required_features = self._get_required_features()
         
         logger.info("TimesMixerPredictor initialized",
@@ -958,6 +959,10 @@ class TimesMixerPredictor(MLAnalyzerBase):
         
         # Update model config with actual dimensions
         self.n_features = len(feature_names)
+        
+        logger.debug("Updated n_features based on corpus data",
+                    old_n_features=getattr(self, '_original_n_features', 'not set'),
+                    new_n_features=self.n_features)
         
         self.logger.info("TimesMixer corpus data prepared",
                         sequences=len(X),
