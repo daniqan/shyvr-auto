@@ -803,10 +803,13 @@ class UnifiedTrainingPipeline:
                 logger.info(f"{model_name} training completed: duration={training_duration:.1f}s")
                 
             except Exception as e:
+                import traceback
                 logger.error(f"{model_name} model training failed: {e}")
+                logger.error(f"{model_name} full traceback:\n{traceback.format_exc()}")
                 results[model_name] = {
                     'success': False,
                     'error': str(e),
+                    'traceback': traceback.format_exc(),
                     'model_type': model_name
                 }
         
