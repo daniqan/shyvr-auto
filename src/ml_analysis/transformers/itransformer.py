@@ -241,9 +241,9 @@ class iTransformerNetwork(TransformerBase):
         else:
             self.temporal_fusion = None
         
-        # Multi-horizon prediction heads
+        # Multi-horizon prediction heads (single value output for price prediction)
         self.prediction_heads = nn.ModuleDict({
-            horizon: nn.Linear(config.d_model, config.n_variates)
+            horizon: nn.Linear(config.d_model, 1)  # Single price prediction per horizon
             for horizon in config.prediction_horizons
         })
         
