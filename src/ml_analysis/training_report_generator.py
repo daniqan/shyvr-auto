@@ -132,9 +132,9 @@ class TrainingReportGenerator:
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration"""
         return {
-            'output_dir': '/tmp/training_reports',
+            'output_dir': './reports',
             'gcs_bucket': 'shyvr-models-prod',
-            'gcs_prefix': 'trained-models',
+            'gcs_prefix': 'training-reports',
             'figure_size': (12, 8),
             'dpi': 300,
             'font_size': 10,

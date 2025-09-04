@@ -100,7 +100,7 @@ class UnifiedTrainingPipeline:
                  gcs_bucket: str = "shyvr-models-prod",
                  model_save_bucket: str = "shyvr-models-prod",
                  model_save_prefix: str = "trained-models",
-                 cache_dir: str = "/tmp/training_cache",
+                 cache_dir: str = "./tmp",
                  cache_ttl_hours: int = 24):
         """
         Initialize UnifiedTrainingPipeline
