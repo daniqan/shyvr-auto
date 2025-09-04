@@ -696,6 +696,16 @@ class UnifiedTrainingPipeline:
                             # Direct tensor output
                             predictions = outputs
                         
+                        # Validate prediction shape matches target shape
+                        if predictions.shape != batch_y.shape:
+                            logger.error(f"{model_name} shape mismatch: predictions={predictions.shape}, targets={batch_y.shape}")
+                            # Attempt to reshape if possible
+                            if predictions.numel() == batch_y.numel():
+                                predictions = predictions.view(batch_y.shape)
+                                logger.info(f"{model_name} reshaped predictions to match targets: {predictions.shape}")
+                            else:
+                                raise ValueError(f"{model_name} cannot reshape predictions {predictions.shape} to match targets {batch_y.shape}")
+                        
                         # Calculate loss
                         loss = criterion(predictions, batch_y)
                         
