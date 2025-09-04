@@ -660,6 +660,16 @@ class UnifiedTrainingPipeline:
                         # Forward pass based on model type
                         outputs = model.model(batch_X)
                         
+                        # Log first forward pass output for debugging
+                        if epoch == 0 and num_batches == 0:
+                            if isinstance(outputs, dict):
+                                logger.debug(f"{model_name} first forward pass output keys: {list(outputs.keys())}")
+                                for key, val in outputs.items():
+                                    if isinstance(val, torch.Tensor):
+                                        logger.debug(f"  {key}: shape={val.shape}, dtype={val.dtype}")
+                            elif isinstance(outputs, torch.Tensor):
+                                logger.debug(f"{model_name} first forward pass output: shape={outputs.shape}, dtype={outputs.dtype}")
+                        
                         # Handle different output formats
                         if isinstance(outputs, dict):
                             # Some models return dict with 'predictions' key
