@@ -626,6 +626,17 @@ class UnifiedTrainingPipeline:
                 model.model.train()
                 num_epochs = config.get('num_epochs', 30)
                 
+                # Log training configuration
+                logger.info(f"{model_name} training config: epochs={num_epochs}, batch_size={batch_size}, "
+                           f"learning_rate={learning_rate}, data_shape=X{X_scaled.shape}, y{y_scaled.shape}")
+                logger.info(f"{model_name} data loader: total_batches={len(train_loader)}, "
+                           f"samples={len(train_dataset)}")
+                
+                # Verify data loader has data
+                if len(train_loader) == 0:
+                    logger.error(f"{model_name} ERROR: Data loader is empty! Cannot train.")
+                    raise ValueError(f"Empty data loader for {model_name}")
+                
                 # Add cosine annealing scheduler for better convergence
                 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
                 training_losses = []
@@ -634,6 +645,10 @@ class UnifiedTrainingPipeline:
                 best_loss = float('inf')
                 patience = 10
                 patience_counter = 0
+                
+                # Test first batch to verify shapes
+                first_batch = next(iter(train_loader))
+                logger.info(f"{model_name} first batch shapes: X={first_batch[0].shape}, y={first_batch[1].shape}")
                 
                 for epoch in range(num_epochs):
                     epoch_loss = 0.0
