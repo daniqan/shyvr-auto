@@ -467,7 +467,7 @@ class UnifiedTrainingPipeline:
                 'learning_rate': 0.001
             },
             'timesmixer': {
-                'seq_len': 336,
+                'seq_len': min(336, len(training_data) - 24 if len(training_data) > 24 else 100),  # Adjust to available data
                 'd_model': 128,
                 'top_k': 5,
                 'num_epochs': 10,  # Reduced for testing
