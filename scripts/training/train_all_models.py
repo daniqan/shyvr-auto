@@ -1036,7 +1036,7 @@ class UnifiedTrainingPipeline:
                     pipeline=self
                 )
                 
-                logger.info(f"Training report generated: {report_results.get('pdf_report')}")
+                logger.info(f"Training report generated: {report_results.get('html_report', report_results.get('pdf_report'))}")
                 if report_results.get('gcs_folder'):
                     logger.info(f"Report and images uploaded to GCS folder: {report_results.get('gcs_folder')}")
                 elif report_results.get('gcs_upload_path'):
