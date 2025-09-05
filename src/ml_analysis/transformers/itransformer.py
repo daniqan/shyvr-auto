@@ -39,7 +39,7 @@ class InvertedAttentionConfig(TransformerConfig):
     """Configuration for iTransformer with inverted attention mechanism"""
     
     # iTransformer specific parameters
-    n_variates: int = 5              # Number of features/variates (D)
+    n_variates: int = 20             # Number of features/variates (D) - increased for better accuracy
     use_inverted_attention: bool = True  # Use inverted attention mechanism
     variate_embedding_dim: int = None    # Embedding dimension for variates (default: d_model)
     
@@ -506,7 +506,7 @@ class iTransformerPredictor(MLAnalyzerBase):
             dropout=config.get('dropout', 0.1),
             activation=config.get('activation', 'gelu'),
             max_seq_length=config.get('max_seq_length', 100),
-            n_variates=config.get('n_variates', 5),
+            n_variates=config.get('n_variates', 20),
             variate_embedding_dim=config.get('variate_embedding_dim'),
             prediction_horizons=config.get('prediction_horizons', ['1h', '4h', '24h']),
             use_variate_tokens=config.get('use_variate_tokens', True),
