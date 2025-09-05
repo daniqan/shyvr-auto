@@ -443,7 +443,7 @@ class UnifiedTrainingPipeline:
                 'n_layers': 6,  # Deeper network for better representation
                 'd_ff': 2048,  # Larger feed-forward dimension
                 'dropout': 0.1,  # Standard dropout rate
-                'num_epochs': 150,  # More training epochs
+                'num_epochs': 20,  # Reduced for faster iteration (was 150)
                 'batch_size': 32,  # Larger batch for stability
                 'learning_rate': 0.0005,  # Lower learning rate for stability
                 'warmup_epochs': 10  # Warmup for 10 epochs
@@ -672,11 +672,23 @@ class UnifiedTrainingPipeline:
                     epoch_loss = 0.0
                     num_batches = 0
                     
-                    for batch_X, batch_y in train_loader:
+                    # Add progress tracking for long-running models
+                    if model_name == 'transformer' and epoch % 5 == 0:
+                        logger.info(f"{model_name} Starting epoch {epoch+1}/{num_epochs}")
+                    
+                    for batch_idx, (batch_X, batch_y) in enumerate(train_loader):
+                        # Log batch progress for slow models
+                        if model_name == 'transformer' and batch_idx % 50 == 0 and batch_idx > 0:
+                            logger.info(f"{model_name} Epoch {epoch+1} - Batch {batch_idx}/{len(train_loader)}, Current loss: {epoch_loss/max(1, batch_idx):.6f}")
                         optimizer.zero_grad()
                         
                         # Forward pass based on model type
+                        import time
+                        start_time = time.time()
                         outputs = model.model(batch_X)
+                        forward_time = time.time() - start_time
+                        if forward_time > 5:  # Log if forward pass takes more than 5 seconds
+                            logger.warning(f"{model_name} forward pass took {forward_time:.2f} seconds")
                         
                         # Log first forward pass output for debugging
                         if epoch == 0 and num_batches == 0:
