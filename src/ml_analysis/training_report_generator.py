@@ -1,7 +1,7 @@
 """
 TrainingReportGenerator
 
-Generates comprehensive PDF training reports with visualizations for ML model training.
+Generates comprehensive HTML training reports with visualizations for ML model training.
 Includes training metrics, plots, model architecture summaries, and feature importance.
 
 Features:
@@ -12,7 +12,7 @@ Features:
 - Model architecture summaries and hyperparameter tables
 - Data distribution analysis
 - Baseline model comparisons
-- PDF generation with reportlab
+- HTML generation with embedded charts
 - Automatic GCS upload to trained-models/{model_type}/{timestamp}/reports/
 
 Integration:
@@ -1094,6 +1094,316 @@ class TrainingReportGenerator:
         
         story.append(Spacer(1, 0.3*inch))
     
+    def generate_html_report(self,
+                           training_metrics: Dict[str, Dict[str, Any]],
+                           report_title: str,
+                           save_path: Path,
+                           feature_importance: Optional[Dict[str, Any]] = None,
+                           training_data: Optional[pd.DataFrame] = None) -> Path:
+        """
+        Generate comprehensive HTML training report
+        
+        Args:
+            training_metrics: All model training metrics
+            report_title: Title for the report
+            save_path: Path to save HTML file
+            feature_importance: Optional feature importance data
+            training_data: Optional training data for analysis
+            
+        Returns:
+            Path to generated HTML report
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Generate plots
+            plots = {}
+            for model_name, metrics in training_metrics.items():
+                if metrics.get('success', False):
+                    # Generate accuracy comparison plot
+                    plot_path = self.create_model_accuracy_plot([{
+                        'model': model_name,
+                        'accuracy': metrics.get('model_accuracy', 0)
+                    }])
+                    if plot_path:
+                        plots[model_name] = self._encode_image_base64(plot_path)
+            
+            # Create HTML content
+            html_content = self._generate_html_content(
+                report_title=report_title,
+                training_metrics=training_metrics,
+                plots=plots,
+                timestamp=timestamp,
+                feature_importance=feature_importance,
+                training_data=training_data
+            )
+            
+            # Save HTML file
+            save_path = save_path.with_suffix('.html')
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            
+            logger.info(f"HTML report generated: {save_path}")
+            return save_path
+            
+        except Exception as e:
+            logger.error(f"Failed to generate HTML report: {e}")
+            raise
+    
+    def _encode_image_base64(self, image_path: Path) -> str:
+        """Encode image as base64 for embedding in HTML"""
+        import base64
+        with open(image_path, 'rb') as f:
+            return base64.b64encode(f.read()).decode('utf-8')
+    
+    def _generate_html_content(self,
+                              report_title: str,
+                              training_metrics: Dict[str, Dict[str, Any]],
+                              plots: Dict[str, str],
+                              timestamp: str,
+                              feature_importance: Optional[Dict[str, Any]] = None,
+                              training_data: Optional[pd.DataFrame] = None) -> str:
+        """Generate HTML content with embedded CSS and charts"""
+        
+        # Calculate summary statistics
+        successful_models = [m for m in training_metrics.values() if m.get('success', False)]
+        total_training_time = sum(m.get('training_duration_seconds', 0) for m in successful_models)
+        
+        # Find best model
+        best_model = None
+        best_accuracy = 0
+        for model_name, metrics in training_metrics.items():
+            if metrics.get('model_accuracy', 0) > best_accuracy:
+                best_accuracy = metrics.get('model_accuracy', 0)
+                best_model = model_name
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{report_title}</title>
+            <style>
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                }}
+                .container {{
+                    background: white;
+                    border-radius: 10px;
+                    padding: 30px;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                }}
+                h1 {{
+                    color: #2c3e50;
+                    border-bottom: 3px solid #667eea;
+                    padding-bottom: 10px;
+                    margin-bottom: 30px;
+                }}
+                h2 {{
+                    color: #34495e;
+                    margin-top: 30px;
+                    border-left: 4px solid #667eea;
+                    padding-left: 10px;
+                }}
+                .summary-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }}
+                .summary-card {{
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    text-align: center;
+                }}
+                .summary-card h3 {{
+                    margin: 0 0 10px 0;
+                    font-size: 1.2em;
+                }}
+                .summary-card .value {{
+                    font-size: 2em;
+                    font-weight: bold;
+                }}
+                .model-table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                .model-table th {{
+                    background: #667eea;
+                    color: white;
+                    padding: 12px;
+                    text-align: left;
+                }}
+                .model-table td {{
+                    padding: 10px;
+                    border-bottom: 1px solid #ddd;
+                }}
+                .model-table tr:hover {{
+                    background: #f5f5f5;
+                }}
+                .success {{
+                    color: #27ae60;
+                    font-weight: bold;
+                }}
+                .failed {{
+                    color: #e74c3c;
+                    font-weight: bold;
+                }}
+                .plot-container {{
+                    margin: 20px 0;
+                    text-align: center;
+                }}
+                .plot-container img {{
+                    max-width: 100%;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                }}
+                .footer {{
+                    margin-top: 40px;
+                    padding-top: 20px;
+                    border-top: 1px solid #ddd;
+                    text-align: center;
+                    color: #7f8c8d;
+                }}
+                .timestamp {{
+                    color: #95a5a6;
+                    font-size: 0.9em;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>{report_title}</h1>
+                <p class="timestamp">Generated: {timestamp}</p>
+                
+                <h2>📊 Training Summary</h2>
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <h3>Total Models</h3>
+                        <div class="value">{len(training_metrics)}</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Successful</h3>
+                        <div class="value">{len(successful_models)}</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Best Accuracy</h3>
+                        <div class="value">{best_accuracy:.2%}</div>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Training Time</h3>
+                        <div class="value">{total_training_time/60:.1f} min</div>
+                    </div>
+                </div>
+                
+                <h2>🤖 Model Performance</h2>
+                <table class="model-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Status</th>
+                            <th>Accuracy (R²)</th>
+                            <th>Training Time</th>
+                            <th>Features</th>
+                            <th>Samples</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        """
+        
+        # Add model rows
+        for model_name, metrics in training_metrics.items():
+            status = '<span class="success">✓ Success</span>' if metrics.get('success', False) else '<span class="failed">✗ Failed</span>'
+            accuracy = f"{metrics.get('model_accuracy', 0):.2%}" if metrics.get('success', False) else "N/A"
+            duration = f"{metrics.get('training_duration_seconds', 0):.1f}s" if metrics.get('training_duration_seconds') else "N/A"
+            features = metrics.get('feature_count', 'N/A')
+            samples = metrics.get('training_samples', 'N/A')
+            
+            # Highlight best model
+            row_style = ' style="background: #f0f9ff;"' if model_name == best_model else ''
+            
+            html += f"""
+                        <tr{row_style}>
+                            <td><strong>{model_name}</strong></td>
+                            <td>{status}</td>
+                            <td>{accuracy}</td>
+                            <td>{duration}</td>
+                            <td>{features}</td>
+                            <td>{samples}</td>
+                        </tr>
+            """
+        
+        html += """
+                    </tbody>
+                </table>
+        """
+        
+        # Add plots if available
+        if plots:
+            html += "<h2>📈 Visualizations</h2>"
+            for model_name, plot_base64 in plots.items():
+                html += f"""
+                <div class="plot-container">
+                    <h3>{model_name} Performance</h3>
+                    <img src="data:image/png;base64,{plot_base64}" alt="{model_name} plot">
+                </div>
+                """
+        
+        # Add configuration details
+        html += """
+                <h2>⚙️ Configuration Details</h2>
+                <table class="model-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Key Parameters</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        """
+        
+        for model_name, metrics in training_metrics.items():
+            if metrics.get('success', False) and metrics.get('config'):
+                config = metrics['config']
+                # Format key parameters
+                params = []
+                for key, value in config.items():
+                    if key in ['sequence_length', 'd_model', 'n_heads', 'n_layers', 'num_epochs', 'batch_size', 'learning_rate']:
+                        params.append(f"{key}: {value}")
+                
+                params_str = ", ".join(params[:5])  # Show first 5 params
+                html += f"""
+                        <tr>
+                            <td><strong>{model_name}</strong></td>
+                            <td>{params_str}</td>
+                        </tr>
+                """
+        
+        html += """
+                    </tbody>
+                </table>
+                
+                <div class="footer">
+                    <p>Generated by RLTE Training Pipeline</p>
+                    <p>© 2025 Shyvr AI Trading System</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
     async def upload_to_gcs(self, local_path: Path, model_type: str, timestamp: str) -> str:
         """
         Upload report to GCS
@@ -1160,13 +1470,13 @@ class TrainingReportGenerator:
             
             # Generate comprehensive report
             report_title = f"Training Report - Session {session_id[:8]}"
-            pdf_path = self.output_dir / f"training_report_{timestamp}.pdf"
+            html_path = self.output_dir / f"training_report_{timestamp}.html"
             
-            # Generate PDF report
-            generated_pdf = self.generate_pdf_report(
+            # Generate HTML report
+            generated_html = self.generate_html_report(
                 training_metrics=training_metrics,
                 report_title=report_title,
-                save_path=pdf_path
+                save_path=html_path
             )
             
             # Upload to GCS if configured
@@ -1175,7 +1485,7 @@ class TrainingReportGenerator:
             if self.gcs_bucket:
                 # Model type is deprecated but kept for backward compatibility
                 # Pass 'session' as placeholder since path is now model-agnostic
-                gcs_path = await self.upload_to_gcs(generated_pdf, 'session', timestamp)
+                gcs_path = await self.upload_to_gcs(generated_html, 'session', timestamp)
                 
                 # Also upload any associated images from the report folder
                 image_files = list(self.output_dir.glob(f"*_{timestamp}*.png"))
@@ -1186,7 +1496,8 @@ class TrainingReportGenerator:
                     gcs_image_paths.append(image_gcs_path)
             
             return {
-                'pdf_report': str(generated_pdf),
+                'html_report': str(generated_html),
+                'pdf_report': str(generated_html),  # Keep for backward compatibility
                 'gcs_upload_path': gcs_path,
                 'gcs_image_paths': gcs_image_paths,
                 'session_id': session_id,
