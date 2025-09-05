@@ -1012,7 +1012,9 @@ class UnifiedTrainingPipeline:
                 )
                 
                 logger.info(f"Training report generated: {report_results.get('pdf_report')}")
-                if report_results.get('gcs_upload_path'):
+                if report_results.get('gcs_folder'):
+                    logger.info(f"Report and images uploaded to GCS folder: {report_results.get('gcs_folder')}")
+                elif report_results.get('gcs_upload_path'):
                     logger.info(f"Report uploaded to GCS: {report_results.get('gcs_upload_path')}")
                     
             except Exception as e:
@@ -1071,7 +1073,9 @@ async def main():
         if results.get('report_results'):
             report_info = results['report_results']
             print(f"Training report: {report_info.get('pdf_report', 'Not generated')}")
-            if report_info.get('gcs_upload_path'):
+            if report_info.get('gcs_folder'):
+                print(f"Report uploaded to: {report_info['gcs_folder']}")
+            elif report_info.get('gcs_upload_path'):
                 print(f"Report uploaded to: {report_info['gcs_upload_path']}")
             else:
                 print("Report not uploaded to GCS")
