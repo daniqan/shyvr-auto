@@ -518,8 +518,8 @@ class TimesMixerNetwork(TransformerBase):
         outputs['direction_logits'] = direction_logits
         outputs['direction_probs'] = torch.softmax(direction_logits, dim=-1)
         
-        # Future predictions for analysis
-        outputs['predictions'] = future_predictions
+        # Future predictions for analysis (rename to avoid confusion with training)
+        outputs['future_representations'] = future_predictions
         
         # Mixing weights from FMM
         mixing_weights = self.fmm_layer.compute_mixing_weights(combined_hidden)
