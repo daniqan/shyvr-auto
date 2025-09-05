@@ -1100,7 +1100,7 @@ class TrainingReportGenerator:
         
         Args:
             local_path: Path to local file
-            model_type: Type of model (for path organization)
+            model_type: Type of model (for path organization) - DEPRECATED, kept for compatibility
             timestamp: Timestamp for unique path
             
         Returns:
@@ -1113,8 +1113,9 @@ class TrainingReportGenerator:
             raise ValueError("GCS bucket not configured")
         
         try:
-            # Create GCS path
-            gcs_path = f"{self.config['gcs_prefix']}/{model_type}/{timestamp}/reports/{local_path.name}"
+            # Create model-agnostic GCS path
+            # Using training-reports prefix directly instead of the configured prefix
+            gcs_path = f"training-reports/training_report_{timestamp}/{local_path.name}"
             
             # Upload file
             blob = self.gcs_bucket.blob(gcs_path)
