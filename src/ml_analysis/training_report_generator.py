@@ -73,9 +73,9 @@ class PDFGenerationError(TrainingReportGeneratorError):
 
 class TrainingReportGenerator:
     """
-    Generates comprehensive training reports with visualizations and PDF output
+    Generates comprehensive training reports with visualizations and HTML output
     
-    Creates visual PDF reports containing:
+    Creates visual HTML reports containing:
     - Training/validation loss and accuracy curves
     - Learning rate schedules
     - Model comparison charts
