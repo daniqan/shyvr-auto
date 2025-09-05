@@ -1171,16 +1171,27 @@ class TrainingReportGenerator:
             
             # Upload to GCS if configured
             gcs_path = None
+            gcs_image_paths = []
             if self.gcs_bucket:
                 # Model type is deprecated but kept for backward compatibility
                 # Pass 'session' as placeholder since path is now model-agnostic
                 gcs_path = await self.upload_to_gcs(generated_pdf, 'session', timestamp)
+                
+                # Also upload any associated images from the report folder
+                image_files = list(self.output_dir.glob(f"*_{timestamp}*.png"))
+                image_files.extend(list(self.output_dir.glob(f"*_{timestamp}*.jpg")))
+                
+                for image_file in image_files:
+                    image_gcs_path = await self.upload_to_gcs(image_file, 'session', timestamp)
+                    gcs_image_paths.append(image_gcs_path)
             
             return {
                 'pdf_report': str(generated_pdf),
                 'gcs_upload_path': gcs_path,
+                'gcs_image_paths': gcs_image_paths,
                 'session_id': session_id,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'gcs_folder': f"gs://{self.gcs_bucket.name}/training-reports/training_report_{timestamp}/" if gcs_path else None
             }
             
         except Exception as e:
