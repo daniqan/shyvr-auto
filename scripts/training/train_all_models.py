@@ -446,7 +446,7 @@ class UnifiedTrainingPipeline:
                 'num_epochs': 150,  # More training epochs
                 'batch_size': 32,  # Larger batch for stability
                 'learning_rate': 0.0005,  # Lower learning rate for stability
-                'warmup_steps': 1000  # Add warmup for better convergence
+                'warmup_epochs': 10  # Warmup for 10 epochs
             },
             'itransformer': {
                 'sequence_length': 96,
@@ -640,19 +640,19 @@ class UnifiedTrainingPipeline:
                     raise ValueError(f"Empty data loader for {model_name}")
                 
                 # Add learning rate scheduler with warmup for transformers
-                warmup_steps = config.get('warmup_steps', 0)
-                if warmup_steps > 0 and model_name == 'transformer':
+                warmup_epochs = config.get('warmup_epochs', 0)
+                if warmup_epochs > 0 and model_name == 'transformer':
                     # Use linear warmup followed by cosine annealing
                     from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
                     
-                    def warmup_lambda(current_step):
-                        if current_step < warmup_steps:
-                            return float(current_step) / float(max(1, warmup_steps))
+                    def warmup_lambda(epoch):
+                        if epoch < warmup_epochs:
+                            return float(epoch) / float(max(1, warmup_epochs))
                         return 1.0
                     
                     warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
-                    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_steps//len(train_loader), eta_min=learning_rate*0.01)
-                    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
+                    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=learning_rate*0.01)
+                    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
                     step_count = 0
                 else:
                     # Default cosine annealing scheduler
@@ -740,15 +740,8 @@ class UnifiedTrainingPipeline:
                     if (epoch + 1) % max(1, num_epochs // 10) == 0:
                         logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
                     
-                    # Step scheduler (handles warmup if applicable)
-                    if warmup_steps > 0 and model_name == 'transformer':
-                        # Step per batch for warmup
-                        for _ in range(num_batches):
-                            scheduler.step()
-                            step_count += 1
-                    else:
-                        # Step per epoch for standard scheduler
-                        scheduler.step()
+                    # Step scheduler (only step once per epoch for SequentialLR)
+                    scheduler.step()
                     
                     # Early stopping check
                     if avg_loss < best_loss:
@@ -1084,8 +1077,8 @@ async def main():
         
         results = await pipeline.train_all_models(
             corpus_version=None,  # Use latest
-            timeframe="daily",
-            token="WBTC",  # Train on Wrapped Bitcoin data (corpus uses WBTC not BTC)
+            timeframe="hour",
+            token=None,  # Train on Wrapped Bitcoin data (corpus uses WBTC not BTC)
             models=['lstm', 'transformer', 'itransformer', 'patchtst', 'timesmixer']  # Train all models
         )
         
