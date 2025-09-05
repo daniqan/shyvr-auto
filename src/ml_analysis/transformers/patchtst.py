@@ -42,7 +42,7 @@ class PatchTSTConfig(TransformerConfig):
     # PatchTST specific parameters
     patch_length: int = 16              # Length of each patch
     stride: int = 8                     # Stride between patches
-    n_channels: int = 1                 # Number of channels/features
+    n_channels: int = 15                # Number of channels/features - increased for multi-channel support
     channel_independence: bool = True    # Process channels independently
     
     # Patch-specific model parameters
@@ -409,7 +409,7 @@ class PatchTSTPredictor(MLAnalyzerBase):
             max_seq_length=config.get('max_seq_length', 1000),
             patch_length=config.get('patch_length', 16),
             stride=config.get('stride', 8),
-            n_channels=config.get('n_channels', 1),
+            n_channels=config.get('n_channels', 15),
             channel_independence=config.get('channel_independence', True),
             prediction_horizons=config.get('prediction_horizons', ['1h', '4h', '24h'])
         )
