@@ -1172,11 +1172,9 @@ class TrainingReportGenerator:
             # Upload to GCS if configured
             gcs_path = None
             if self.gcs_bucket:
-                # Use the best model type for organization
-                best_model = max(training_metrics.items(), 
-                               key=lambda x: x[1].get('model_accuracy', 0))[0]
-                
-                gcs_path = await self.upload_to_gcs(generated_pdf, best_model, timestamp)
+                # Model type is deprecated but kept for backward compatibility
+                # Pass 'session' as placeholder since path is now model-agnostic
+                gcs_path = await self.upload_to_gcs(generated_pdf, 'session', timestamp)
             
             return {
                 'pdf_report': str(generated_pdf),
