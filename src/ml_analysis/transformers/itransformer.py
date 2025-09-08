@@ -33,6 +33,13 @@ from src.discovery.base import DiscoveredToken
 
 logger = structlog.get_logger()
 
+# Control verbosity - set to INFO level by default to reduce debug spam
+import logging
+import os
+if os.getenv('ITRANSFORMER_DEBUG', 'false').lower() != 'true':
+    # Suppress debug messages unless explicitly enabled
+    logging.getLogger('src.ml_analysis.transformers.itransformer').setLevel(logging.INFO)
+
 
 @dataclass
 class InvertedAttentionConfig(TransformerConfig):
@@ -113,8 +120,9 @@ class InvertedMultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
         
-        logger.debug("InvertedMultiHeadAttention initialized",
-                    d_model=d_model, n_heads=n_heads, n_variates=n_variates)
+        if hasattr(self, 'verbose') and self.verbose:
+            logger.debug("InvertedMultiHeadAttention initialized",
+                        d_model=d_model, n_heads=n_heads, n_variates=n_variates)
     
     def forward(self, x: torch.Tensor, 
                 attention_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -196,7 +204,7 @@ class iTransformerNetwork(TransformerBase):
     4. Multi-horizon prediction heads
     """
     
-    def __init__(self, config: InvertedAttentionConfig):
+    def __init__(self, config: InvertedAttentionConfig, verbose: bool = False):
         # Convert config to base format for parent class
         base_config = {
             'd_model': config.d_model,
@@ -210,6 +218,7 @@ class iTransformerNetwork(TransformerBase):
         super().__init__(ModelType.ITRANSFORMER, base_config)
         
         self.config = config
+        self.verbose = verbose  # Control debug logging
         
         # Variate embedding layer - each feature gets its own embedding
         self.variate_embeddings = nn.Parameter(
@@ -323,10 +332,11 @@ class iTransformerNetwork(TransformerBase):
             Dictionary with predictions and attention weights
         """
         batch_size, seq_len, n_variates = x.shape
-        logger.debug("iTransformer forward pass started", 
-                    input_shape=x.shape, 
-                    expected_n_variates=self.config.n_variates,
-                    batch_size=batch_size, seq_len=seq_len, n_variates=n_variates)
+        if self.verbose:
+            logger.debug("iTransformer forward pass started", 
+                        input_shape=x.shape, 
+                        expected_n_variates=self.config.n_variates,
+                        batch_size=batch_size, seq_len=seq_len, n_variates=n_variates)
         
         if n_variates != self.config.n_variates:
             raise ValueError(f"Input tensor has {n_variates} variates but model expects {self.config.n_variates}. "

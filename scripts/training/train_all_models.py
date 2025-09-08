@@ -673,12 +673,12 @@ class UnifiedTrainingPipeline:
                     num_batches = 0
                     
                     # Add progress tracking for long-running models
-                    if model_name == 'transformer' and epoch % 5 == 0:
+                    if model_name in ['transformer', 'itransformer', 'timesmixer'] and epoch % 5 == 0:
                         logger.info(f"{model_name} Starting epoch {epoch+1}/{num_epochs}")
                     
                     for batch_idx, (batch_X, batch_y) in enumerate(train_loader):
                         # Log batch progress for slow models
-                        if model_name == 'transformer' and batch_idx % 50 == 0 and batch_idx > 0:
+                        if model_name in ['transformer', 'itransformer', 'timesmixer'] and batch_idx % 50 == 0 and batch_idx > 0:
                             logger.info(f"{model_name} Epoch {epoch+1} - Batch {batch_idx}/{len(train_loader)}, Current loss: {epoch_loss/max(1, batch_idx):.6f}")
                         optimizer.zero_grad()
                         
