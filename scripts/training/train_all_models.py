@@ -766,33 +766,43 @@ class UnifiedTrainingPipeline:
                         logger.info(f"{model_name} Early stopping at epoch {epoch+1}")
                         break
                 
-                # Calculate accuracy metric
+                # Calculate accuracy metric with batched evaluation
                 model.model.eval()
                 with torch.no_grad():
-                    all_X = torch.FloatTensor(X_scaled).to(device)
+                    # Process evaluation in batches to avoid memory issues
+                    eval_batch_size = 256  # Smaller batch size for evaluation
+                    all_predictions = []
                     
-                    # Forward pass for evaluation
-                    outputs = model.model(all_X)
-                    
-                    # Handle different output formats
-                    if isinstance(outputs, dict):
-                        if 'predictions' in outputs:
-                            all_predictions = outputs['predictions']
-                        elif 'output' in outputs:
-                            all_predictions = outputs['output']
-                        elif 'price_1h' in outputs:
-                            all_predictions = torch.stack([
-                                outputs['price_1h'].squeeze(-1) if outputs['price_1h'].dim() > 1 else outputs['price_1h'],
-                                outputs['price_4h'].squeeze(-1) if outputs['price_4h'].dim() > 1 else outputs['price_4h'],
-                                outputs['price_24h'].squeeze(-1) if outputs['price_24h'].dim() > 1 else outputs['price_24h']
-                            ], dim=-1)
+                    for i in range(0, len(X_scaled), eval_batch_size):
+                        batch_X = torch.FloatTensor(X_scaled[i:i+eval_batch_size]).to(device)
+                        
+                        # Forward pass for evaluation batch
+                        outputs = model.model(batch_X)
+                        
+                        # Handle different output formats
+                        if isinstance(outputs, dict):
+                            if 'predictions' in outputs:
+                                batch_predictions = outputs['predictions']
+                            elif 'output' in outputs:
+                                batch_predictions = outputs['output']
+                            elif 'price_1h' in outputs:
+                                batch_predictions = torch.stack([
+                                    outputs['price_1h'].squeeze(-1) if outputs['price_1h'].dim() > 1 else outputs['price_1h'],
+                                    outputs['price_4h'].squeeze(-1) if outputs['price_4h'].dim() > 1 else outputs['price_4h'],
+                                    outputs['price_24h'].squeeze(-1) if outputs['price_24h'].dim() > 1 else outputs['price_24h']
+                                ], dim=-1)
+                            else:
+                                tensor_values = [v for v in outputs.values() if isinstance(v, torch.Tensor)]
+                                batch_predictions = tensor_values[0] if tensor_values else outputs
+                        elif isinstance(outputs, tuple):
+                            batch_predictions = outputs[0]
                         else:
-                            tensor_values = [v for v in outputs.values() if isinstance(v, torch.Tensor)]
-                            all_predictions = tensor_values[0] if tensor_values else outputs
-                    elif isinstance(outputs, tuple):
-                        all_predictions = outputs[0]
-                    else:
-                        all_predictions = outputs
+                            batch_predictions = outputs
+                        
+                        all_predictions.append(batch_predictions)
+                    
+                    # Concatenate all batch predictions
+                    all_predictions = torch.cat(all_predictions, dim=0)
                     
                     y_tensor = torch.FloatTensor(y_scaled).to(device)
                     mse = criterion(all_predictions, y_tensor)
