@@ -23,6 +23,13 @@ from .temporal_embeddings import FinancialTemporalEmbedding
 
 logger = structlog.get_logger()
 
+# Control verbosity - set to INFO level by default to reduce debug spam
+import logging
+import os
+if os.getenv('TRANSFORMER_DEBUG', 'false').lower() != 'true':
+    # Suppress debug messages unless explicitly enabled
+    logging.getLogger('src.ml_analysis.transformers.transformer_predictor').setLevel(logging.INFO)
+
 
 class TransformerNetwork(TransformerBase):
     """

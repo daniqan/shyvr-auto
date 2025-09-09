@@ -34,6 +34,13 @@ from src.discovery.base import DiscoveredToken
 
 logger = structlog.get_logger()
 
+# Control verbosity - set to INFO level by default to reduce debug spam
+import logging
+import os
+if os.getenv('PATCHTST_DEBUG', 'false').lower() != 'true':
+    # Suppress debug messages unless explicitly enabled
+    logging.getLogger('src.ml_analysis.transformers.patchtst').setLevel(logging.INFO)
+
 
 @dataclass
 class PatchTSTConfig(TransformerConfig):

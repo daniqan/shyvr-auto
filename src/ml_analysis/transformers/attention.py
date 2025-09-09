@@ -14,6 +14,13 @@ from dataclasses import dataclass
 
 logger = structlog.get_logger()
 
+# Control verbosity - set to INFO level by default to reduce debug spam
+import logging
+import os
+if os.getenv('ATTENTION_DEBUG', 'false').lower() != 'true':
+    # Suppress debug messages unless explicitly enabled
+    logging.getLogger('src.ml_analysis.transformers.attention').setLevel(logging.INFO)
+
 
 class MultiHeadAttention(nn.Module):
     """
