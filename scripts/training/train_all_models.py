@@ -450,13 +450,33 @@ class UnifiedTrainingPipeline:
             },
             'itransformer': {
                 'sequence_length': 96,
-                'n_variates': 20,  # Selected key features
+                'n_variates': 40,  # Increased from 20 for better feature coverage
                 'd_model': 256,
                 'n_heads': 8,
                 'n_layers': 3,
-                'num_epochs': 10,  # Reduced for testing
+                'num_epochs': 100,  # Increased for better training
                 'batch_size': 32,
-                'learning_rate': 0.001
+                'learning_rate': 1e-4,  # Optimized learning rate
+                'selected_features': [
+                    # Core price features
+                    'close', 'open', 'high', 'low', 'volume',
+                    # Technical indicators
+                    'rsi_14', 'rsi_7', 'rsi_21', 'macd', 'macd_signal',
+                    'bb_upper', 'bb_lower', 'bb_position', 'atr', 'adx',
+                    # Momentum indicators
+                    'momentum_5', 'momentum_10', 'momentum_20',
+                    'stoch_k', 'stoch_d', 'williams_r',
+                    # Returns and volatility
+                    'returns_1h', 'returns_24h', 'returns_7d',
+                    'volatility', 'volatility_24h', 'realized_volatility',
+                    # Moving averages
+                    'ema_12', 'ema_26', 'sma_20', 'sma_50',
+                    # Volume indicators
+                    'obv', 'volume_sma_20', 'volume_ema',
+                    # ML scores
+                    'trend_strength', 'market_regime', 
+                    'volatility_score', 'volume_score'
+                ]  # 40 features total
             },
             'patchtst': {
                 'patch_length': 16,
