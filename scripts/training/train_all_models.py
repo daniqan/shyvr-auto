@@ -493,9 +493,10 @@ class UnifiedTrainingPipeline:
                 'seq_len': min(336, len(training_data) - 24 if len(training_data) > 24 else 100),  # Adjust to available data
                 'd_model': 128,
                 'top_k': 5,
-                'num_epochs': 10,  # Reduced for testing
+                'decomposition_layers': 2,  # Reduced from 3 for performance
+                'num_epochs': 80,  # Increased but less than others due to complexity
                 'batch_size': 32,
-                'learning_rate': 0.001
+                'learning_rate': 5e-4  # Optimized learning rate
             }
         }
         
