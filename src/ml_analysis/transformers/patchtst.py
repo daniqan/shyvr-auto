@@ -309,16 +309,12 @@ class PatchTSTNetwork(TransformerBase):
             
             # Generate predictions for each channel
             for horizon, head in self.prediction_heads.items():
-                # Apply head to each channel representation
-                channel_preds = []
-                for channel_idx in range(n_channels):
-                    channel_pred = head(all_channel_repr[:, channel_idx, :])
-                    if channel_pred.dim() == 2 and channel_pred.size(1) > 1:
-                        # If head outputs multiple values, take the channel-specific one
-                        channel_pred = channel_pred[:, channel_idx:channel_idx+1]
-                    channel_preds.append(channel_pred)
-                
-                outputs[f'price_{horizon}'] = torch.cat(channel_preds, dim=-1)
+                # Average channel representations for unified prediction
+                # Shape: [batch_size, d_model]
+                avg_repr = torch.mean(all_channel_repr, dim=1)
+                # Generate single prediction per horizon
+                # Shape: [batch_size, 1]
+                outputs[f'price_{horizon}'] = head(avg_repr)
             
             # Aggregate for confidence and direction
             global_repr = torch.mean(all_channel_repr, dim=1)  # [batch_size, d_model]
@@ -736,7 +732,7 @@ class PatchTSTPredictor(MLAnalyzerBase):
         feature_data = data[selected_features].copy()
         
         # Handle missing values
-        feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        feature_data = feature_data.ffill().bfill().fillna(0)
         
         # Normalize features for patch processing
         from sklearn.preprocessing import StandardScaler
