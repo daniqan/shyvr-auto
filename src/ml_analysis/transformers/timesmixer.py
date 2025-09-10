@@ -314,21 +314,24 @@ class FutureMultipredictorMixing(nn.Module):
                     seq_len=seq_len, pred_len=pred_len, d_model=d_model, top_k=top_k)
     
     def generate_multi_predictions(self, x: torch.Tensor) -> torch.Tensor:
-        """Generate multiple diverse predictions"""
+        """Generate multiple diverse predictions - optimized version"""
         batch_size, seq_len, d_model = x.shape
         
+        # Vectorized approach: process all features at once
         predictions = []
         for predictor in self.multi_predictors:
-            # Apply predictor to each feature dimension
-            pred_outputs = []
-            for d in range(d_model):
-                feature_seq = x[:, :, d]  # [batch_size, seq_len]
-                pred = predictor(feature_seq)  # [batch_size, pred_len]
-                pred_outputs.append(pred)
+            # Reshape to process all features in parallel
+            x_reshaped = x.permute(0, 2, 1)  # [batch_size, d_model, seq_len]
+            x_flat = x_reshaped.reshape(batch_size * d_model, seq_len)  # [batch_size * d_model, seq_len]
             
-            # Stack predictions for all features
-            pred_stack = torch.stack(pred_outputs, dim=-1)  # [batch_size, pred_len, d_model]
-            predictions.append(pred_stack)
+            # Apply predictor to all features at once
+            pred_flat = predictor(x_flat)  # [batch_size * d_model, pred_len]
+            
+            # Reshape back to separate batch and features
+            pred = pred_flat.reshape(batch_size, d_model, self.pred_len)  # [batch_size, d_model, pred_len]
+            pred = pred.permute(0, 2, 1)  # [batch_size, pred_len, d_model]
+            
+            predictions.append(pred)
         
         # Stack all predictor outputs
         multi_predictions = torch.stack(predictions, dim=1)  # [batch_size, top_k, pred_len, d_model]
