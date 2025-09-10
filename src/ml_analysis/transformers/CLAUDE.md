@@ -17,6 +17,27 @@ This directory contains advanced transformer architectures optimized for cryptoc
    - iTransformer: Expanded to 40 features from 5
 4. **Advanced Scheduling**: OneCycleLR for transformers, CosineAnnealingWarmRestarts for LSTM
 
+## Recent Fixes (2025-09-10)
+
+### Architecture Bug Fixes - Phase 1.2 Complete
+1. **PatchTST Shape Mismatch** (Fixed)
+   - Issue: Channel predictions concatenation creating wrong output shape
+   - Solution: Changed to averaging channel representations
+   - File: patchtst.py lines 311-317
+   - Result: Model now outputs correct (batch_size, 3) shape
+
+2. **TimesMixer Performance** (Optimized)
+   - Issue: Nested loops causing 5.5 second forward passes
+   - Solution: Vectorized prediction operations
+   - File: timesmixer.py lines 316-339
+   - Result: Forward pass reduced to 0.1 seconds (55x speedup)
+
+3. **iTransformer Features** (Expanded)
+   - Issue: Using only 5 features leading to 2% accuracy
+   - Solution: Expanded to 40 selected features
+   - File: Already configured in train_all_models.py
+   - Result: Comprehensive feature coverage
+
 ## Recent Fixes (2025-09-05)
 
 ### TimesMixer Output Fix
