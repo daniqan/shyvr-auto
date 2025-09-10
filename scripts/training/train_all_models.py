@@ -262,12 +262,12 @@ class UnifiedTrainingPipeline:
             # Default LSTM configuration
             default_config = {
                 'sequence_length': 50,
-                'hidden_size': 128,
-                'num_layers': 2,
+                'hidden_size': 256,  # Increased from 128 for better capacity
+                'num_layers': 3,  # Increased from 2 for deeper representation
                 'dropout': 0.2,
                 'learning_rate': 0.001,
                 'batch_size': 32,
-                'num_epochs': 10  # Reduced for testing
+                'num_epochs': 100  # Increased from 10 for better convergence
             }
             
             if config:
