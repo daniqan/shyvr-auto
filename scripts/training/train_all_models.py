@@ -443,9 +443,9 @@ class UnifiedTrainingPipeline:
                 'n_layers': 6,  # Deeper network for better representation
                 'd_ff': 2048,  # Larger feed-forward dimension
                 'dropout': 0.1,  # Standard dropout rate
-                'num_epochs': 20,  # Reduced for faster iteration (was 150)
-                'batch_size': 32,  # Larger batch for stability
-                'learning_rate': 0.0005,  # Lower learning rate for stability
+                'num_epochs': 150,  # Increased for better convergence
+                'batch_size': 64,  # Larger batch for stability
+                'learning_rate': 5e-5,  # Lower learning rate for better convergence
                 'warmup_epochs': 10  # Warmup for 10 epochs
             },
             'itransformer': {
