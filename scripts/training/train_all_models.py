@@ -661,24 +661,35 @@ class UnifiedTrainingPipeline:
                     logger.error(f"{model_name} ERROR: Data loader is empty! Cannot train.")
                     raise ValueError(f"Empty data loader for {model_name}")
                 
-                # Add learning rate scheduler with warmup for transformers
-                warmup_epochs = config.get('warmup_epochs', 0)
-                if warmup_epochs > 0 and model_name == 'transformer':
-                    # Use linear warmup followed by cosine annealing
-                    from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
-                    
-                    def warmup_lambda(epoch):
-                        if epoch < warmup_epochs:
-                            return float(epoch) / float(max(1, warmup_epochs))
-                        return 1.0
-                    
-                    warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
-                    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=learning_rate*0.01)
-                    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
-                    step_count = 0
+                # Add advanced learning rate scheduling for all models
+                from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingWarmRestarts, LambdaLR, SequentialLR, CosineAnnealingLR
+                
+                if model_name in ['transformer', 'itransformer', 'patchtst', 'timesmixer']:
+                    # Use OneCycleLR for transformer models - proven effective for convergence
+                    scheduler = OneCycleLR(
+                        optimizer,
+                        max_lr=learning_rate * 10,  # Peak at 10x base LR
+                        epochs=num_epochs,
+                        steps_per_epoch=len(train_loader),
+                        pct_start=0.1,  # 10% of training for warmup
+                        anneal_strategy='cos',
+                        div_factor=25,  # Start at max_lr/25
+                        final_div_factor=1000  # End at max_lr/1000
+                    )
+                    scheduler_per_batch = True  # OneCycleLR steps per batch
+                elif model_name == 'lstm':
+                    # Use cosine annealing with warm restarts for LSTM
+                    scheduler = CosineAnnealingWarmRestarts(
+                        optimizer,
+                        T_0=20,  # First restart after 20 epochs
+                        T_mult=2,  # Double the period after each restart
+                        eta_min=learning_rate * 0.001
+                    )
+                    scheduler_per_batch = False
                 else:
                     # Default cosine annealing scheduler
-                    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
+                    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
+                    scheduler_per_batch = False
                 training_losses = []
                 
                 # Early stopping variables
@@ -765,6 +776,10 @@ class UnifiedTrainingPipeline:
                         torch.nn.utils.clip_grad_norm_(model.model.parameters(), max_norm=1.0)
                         optimizer.step()
                         
+                        # Step scheduler per batch if using OneCycleLR
+                        if scheduler_per_batch:
+                            scheduler.step()
+                        
                         epoch_loss += loss.item()
                         num_batches += 1
                     
@@ -774,8 +789,9 @@ class UnifiedTrainingPipeline:
                     if (epoch + 1) % max(1, num_epochs // 10) == 0:
                         logger.info(f"{model_name} Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, LR: {optimizer.param_groups[0]['lr']:.6f}")
                     
-                    # Step scheduler (only step once per epoch for SequentialLR)
-                    scheduler.step()
+                    # Step scheduler per epoch if not stepping per batch
+                    if not scheduler_per_batch:
+                        scheduler.step()
                     
                     # Early stopping check
                     if avg_loss < best_loss:
