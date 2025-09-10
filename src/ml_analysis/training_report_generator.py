@@ -422,6 +422,56 @@ class TrainingReportGenerator:
             logger.error(f"Failed to create model comparison plot: {e}")
             raise VisualizationError(f"Failed to create model comparison plot: {e}")
     
+    def create_model_accuracy_plot(self, model_data: List[Dict[str, Any]]) -> Optional[Path]:
+        """
+        Create model accuracy visualization plot for individual models
+        
+        Args:
+            model_data: List of dictionaries with model and accuracy data
+                       Each dict should have 'model' and 'accuracy' keys
+            
+        Returns:
+            Path to saved plot or None if failed
+        """
+        try:
+            if not model_data:
+                return None
+                
+            # Generate unique filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = self.output_dir / f"model_accuracy_{timestamp}.png"
+            
+            fig, ax = plt.subplots(figsize=self.config['figure_size'])
+            
+            models = [item['model'] for item in model_data]
+            accuracies = [item['accuracy'] for item in model_data]
+            
+            # Create bar chart
+            bars = ax.bar(models, accuracies, alpha=0.7, color=['#667eea', '#764ba2', '#f093fb', '#f5576c'])
+            
+            ax.set_xlabel('Model')
+            ax.set_ylabel('Accuracy (R²)')
+            ax.set_title('Model Accuracy Performance')
+            ax.set_ylim(0, 1.0)
+            
+            # Add value labels on bars
+            for bar, acc in zip(bars, accuracies):
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                       f'{acc:.3f}', ha='center', va='bottom', fontweight='bold')
+            
+            # Add grid for better readability
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=self.config['dpi'], bbox_inches='tight')
+            plt.close()
+            
+            return save_path
+            
+        except Exception as e:
+            logger.error(f"Failed to create model accuracy plot: {e}")
+            return None
+    
     def create_resource_usage_plot(self, training_metrics: Dict[str, Dict[str, Any]], save_path: Path) -> Path:
         """
         Create resource usage and training statistics visualization
