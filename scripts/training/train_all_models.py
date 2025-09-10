@@ -484,9 +484,10 @@ class UnifiedTrainingPipeline:
                 'd_model': 128,
                 'n_heads': 4,
                 'n_layers': 3,
-                'num_epochs': 10,  # Reduced for testing
+                'n_channels': 15,  # Use multiple channels for better performance
+                'num_epochs': 100,  # Increased for better training
                 'batch_size': 32,
-                'learning_rate': 0.001
+                'learning_rate': 5e-4  # Optimized learning rate
             },
             'timesmixer': {
                 'seq_len': min(336, len(training_data) - 24 if len(training_data) > 24 else 100),  # Adjust to available data
