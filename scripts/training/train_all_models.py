@@ -48,7 +48,6 @@ from src.ml_analysis.transformers.transformer_predictor import TransformerPredic
 from src.ml_analysis.transformers.itransformer import iTransformerPredictor
 from src.ml_analysis.transformers.patchtst import PatchTSTPredictor
 from src.ml_analysis.transformers.timesmixer import TimesMixerPredictor
-from src.data_pipeline.token_normalizer import TokenNormalizer, TokenNormalizationConfig
 from src.ml_analysis.model_manager import ModelManager
 from src.ml_analysis.base import ModelType
 from src.ml_analysis.training_report_generator import TrainingReportGenerator
@@ -130,12 +129,6 @@ class UnifiedTrainingPipeline:
         self.gcs_client = storage.Client()
         self.save_bucket = self.gcs_client.bucket(model_save_bucket)
         
-        # Initialize token normalizer
-        self.token_normalizer = TokenNormalizer(
-            config=TokenNormalizationConfig(),
-            scaler_dir=Path(cache_dir) / "scalers"
-        )
-        
         # Training session metadata
         self.session_id = str(uuid.uuid4())
         self.session_timestamp = datetime.now()
@@ -192,72 +185,6 @@ class UnifiedTrainingPipeline:
         except Exception as e:
             logger.error(f"Failed to load corpus data: {e}")
             raise DataLoadingError(f"Failed to load corpus data: {e}")
-    
-    def apply_token_normalization(self, data: pd.DataFrame, 
-                                  token_column: str = 'token_symbol',
-                                  fit: bool = True) -> pd.DataFrame:
-        """
-        Apply token-specific normalization to data.
-        
-        Args:
-            data: Input DataFrame with cryptocurrency data
-            token_column: Column identifying the token
-            fit: Whether to fit the normalizer (True for training, False for inference)
-        
-        Returns:
-            Normalized DataFrame
-        """
-        try:
-            # If data contains multiple tokens
-            if token_column in data.columns:
-                tokens = data[token_column].unique()
-                logger.info(f"Applying token-specific normalization for {len(tokens)} tokens")
-                
-                result_dfs = []
-                for token in tokens:
-                    token_data = data[data[token_column] == token].copy()
-                    
-                    if fit:
-                        # Fit and transform for training data
-                        normalized = self.token_normalizer.fit_transform(token_data, token)
-                        # Save fitted scalers for later use
-                        self.token_normalizer.save_scalers(token)
-                    else:
-                        # Just transform for validation/test data
-                        normalized = self.token_normalizer.transform(token_data, token)
-                    
-                    result_dfs.append(normalized)
-                
-                return pd.concat(result_dfs, ignore_index=True)
-            
-            else:
-                # Single token data - try to infer from data
-                # Look for WBTC-like prices (>10000) vs PEPE-like (<0.01)
-                if 'close' in data.columns:
-                    avg_price = data['close'].mean()
-                    if avg_price > 10000:
-                        token = 'WBTC'
-                    elif avg_price > 1000:
-                        token = 'ETH'
-                    elif avg_price < 0.001:
-                        token = 'PEPE'
-                    else:
-                        token = 'UNKNOWN'
-                    
-                    logger.info(f"Inferred token '{token}' from average price {avg_price:.8f}")
-                    
-                    if fit:
-                        return self.token_normalizer.fit_transform(data, token)
-                    else:
-                        return self.token_normalizer.transform(data, token)
-                else:
-                    logger.warning("No token column or price data found, skipping normalization")
-                    return data
-        
-        except Exception as e:
-            logger.error(f"Failed to apply token normalization: {e}")
-            logger.warning("Falling back to no normalization")
-            return data
     
     def prepare_train_val_test_split(self, 
                                    data: pd.DataFrame,
@@ -1133,11 +1060,36 @@ class UnifiedTrainingPipeline:
             # Split data for training
             train_data, val_data, test_data = self.prepare_train_val_test_split(data)
             
-            # Apply token-specific normalization
+            # Initialize FeatureEngineer for advanced features
+            from src.ml_analysis.feature_engineer import FeatureEngineer
+            feature_engineer = FeatureEngineer(
+                enable_token_normalization=True,
+                enable_advanced_features=True
+            )
+            
+            # Apply advanced feature engineering
+            logger.info("Engineering advanced features...")
+            train_data = feature_engineer.calculate_advanced_features(train_data)
+            train_data = feature_engineer.handle_missing_values(train_data)
+            
+            val_data = feature_engineer.calculate_advanced_features(val_data)
+            val_data = feature_engineer.handle_missing_values(val_data)
+            
+            test_data = feature_engineer.calculate_advanced_features(test_data)
+            test_data = feature_engineer.handle_missing_values(test_data)
+            
+            # Apply token-specific normalization using FeatureEngineer
             logger.info("Applying token-specific normalization...")
-            train_data_normalized = self.apply_token_normalization(train_data, fit=True)
-            val_data_normalized = self.apply_token_normalization(val_data, fit=False)
-            test_data_normalized = self.apply_token_normalization(test_data, fit=False)
+            train_data_normalized = feature_engineer.normalize_features_by_token(train_data)
+            val_data_normalized = feature_engineer.normalize_features_by_token(val_data)
+            test_data_normalized = feature_engineer.normalize_features_by_token(test_data)
+            
+            # Apply data augmentation to training data
+            logger.info("Applying data augmentation...")
+            train_data_normalized = feature_engineer.augment_training_data(
+                train_data_normalized, 
+                augmentation_factor=0.2  # 20% augmentation
+            )
             
             # Train LSTM model
             logger.info("Training LSTM model...")

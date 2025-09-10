@@ -25,12 +25,28 @@ class FeatureEngineer:
     def __init__(self, 
                  cache_ttl_minutes: int = 30,
                  coingecko_api_key: Optional[str] = None,
-                 enable_live_data: bool = True):
+                 enable_live_data: bool = True,
+                 enable_token_normalization: bool = True,
+                 enable_advanced_features: bool = True):
         self.cache_ttl_minutes = cache_ttl_minutes
         self.enable_live_data = enable_live_data
+        self.enable_token_normalization = enable_token_normalization
+        self.enable_advanced_features = enable_advanced_features
         self._indicator_cache: Dict[str, Tuple[datetime, TechnicalIndicators]] = {}
         self._market_cache: Optional[Tuple[datetime, MarketFeatures]] = None
         self.logger = structlog.get_logger().bind(component="FeatureEngineer")
+        
+        # Token-specific normalization scalers
+        self._token_scalers: Dict[str, Dict[str, Any]] = {}
+        self._token_price_ranges: Dict[str, Tuple[float, float]] = {
+            'BTC': (10000, 100000),
+            'ETH': (500, 10000),
+            'WBTC': (10000, 100000),
+            'SOL': (1, 500),
+            'PEPE': (0.000001, 0.001),
+            'SHIB': (0.000001, 0.001),
+            'DOGE': (0.01, 1.0),
+        }
         
         # Initialize market data aggregator for live data
         if self.enable_live_data:
@@ -169,6 +185,192 @@ class FeatureEngineer:
             self.logger.error("Market feature calculation failed", error=str(e))
             # Always raise the error - no fallback to placeholder data
             raise FeatureEngineeringError(f"Failed to calculate market features: {str(e)}")
+    
+    def normalize_features_by_token(self, df: pd.DataFrame, token_symbol: Optional[str] = None) -> pd.DataFrame:
+        """
+        Apply token-specific normalization to features.
+        
+        Args:
+            df: DataFrame with features to normalize
+            token_symbol: Token symbol for specific normalization
+        
+        Returns:
+            Normalized DataFrame
+        """
+        if not self.enable_token_normalization:
+            return df
+        
+        # Infer token from price if not provided
+        if token_symbol is None and 'close' in df.columns:
+            avg_price = df['close'].mean()
+            if avg_price > 10000:
+                token_symbol = 'WBTC'
+            elif avg_price > 1000:
+                token_symbol = 'ETH'
+            elif avg_price < 0.001:
+                token_symbol = 'PEPE'
+            else:
+                token_symbol = 'UNKNOWN'
+            
+            self.logger.info(f"Inferred token '{token_symbol}' from avg price {avg_price:.8f}")
+        
+        # Apply normalization based on token
+        if token_symbol and token_symbol in self._token_price_ranges:
+            min_price, max_price = self._token_price_ranges[token_symbol]
+            
+            # Normalize price features
+            price_cols = ['close', 'open', 'high', 'low', 'sma_20', 'sma_50', 
+                         'ema_12', 'ema_26', 'bollinger_upper', 'bollinger_lower']
+            
+            for col in price_cols:
+                if col in df.columns:
+                    df[col] = (df[col] - min_price) / (max_price - min_price)
+            
+            # Log-normalize volume
+            if 'volume' in df.columns:
+                df['volume'] = np.log1p(df['volume'])
+        
+        return df
+    
+    def calculate_advanced_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate advanced features including microstructure and regime detection.
+        
+        Args:
+            df: DataFrame with OHLCV data
+        
+        Returns:
+            DataFrame with additional advanced features
+        """
+        if not self.enable_advanced_features:
+            return df
+        
+        result = df.copy()
+        
+        # Microstructure features
+        if all(col in df.columns for col in ['close', 'volume']):
+            # Kyle's Lambda (price impact)
+            returns = df['close'].pct_change()
+            signed_volume = df['volume'] * np.sign(returns)
+            result['kyle_lambda'] = (returns.rolling(20).std() / 
+                                    (signed_volume.rolling(20).std() + 1e-8)).fillna(0)
+            
+            # Amihud illiquidity
+            returns_abs = returns.abs()
+            dollar_volume = df['close'] * df['volume']
+            result['amihud_illiquidity'] = (returns_abs / (dollar_volume + 1e-8)).rolling(20).mean().fillna(0)
+        
+        # Volatility regime features
+        if 'close' in df.columns:
+            returns = df['close'].pct_change()
+            
+            # GARCH-like volatility
+            result['volatility_regime'] = returns.rolling(20).std().fillna(0)
+            
+            # Volatility of volatility
+            result['vol_of_vol'] = result['volatility_regime'].rolling(20).std().fillna(0)
+            
+            # Trend strength
+            result['trend_strength'] = df['close'].rolling(20).apply(
+                lambda x: np.polyfit(np.arange(len(x)), x, 1)[0] / (x.mean() + 1e-8)
+            ).fillna(0)
+        
+        # Support/Resistance levels
+        if 'close' in df.columns:
+            result['resistance_20'] = df['close'].rolling(20).max()
+            result['support_20'] = df['close'].rolling(20).min()
+            result['price_position'] = ((df['close'] - result['support_20']) / 
+                                       (result['resistance_20'] - result['support_20'] + 1e-8)).fillna(0.5)
+        
+        # Order flow imbalance
+        if all(col in df.columns for col in ['high', 'low', 'close']):
+            mid_price = (df['high'] + df['low']) / 2
+            result['order_flow_imbalance'] = ((df['close'] - mid_price) / 
+                                             (df['high'] - df['low'] + 1e-8)).fillna(0)
+        
+        return result
+    
+    def augment_training_data(self, df: pd.DataFrame, augmentation_factor: float = 0.3) -> pd.DataFrame:
+        """
+        Apply data augmentation techniques for training.
+        
+        Args:
+            df: DataFrame with training data
+            augmentation_factor: Fraction of data to augment (0.3 = 30% more data)
+        
+        Returns:
+            Augmented DataFrame
+        """
+        if augmentation_factor <= 0:
+            return df
+        
+        n_augment = int(len(df) * augmentation_factor)
+        augmented_rows = []
+        
+        for _ in range(n_augment):
+            # Random row selection
+            idx = np.random.randint(0, len(df))
+            row = df.iloc[idx].copy()
+            
+            # Add small noise to numeric features
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols:
+                if col not in ['timestamp', 'hour', 'day_of_week', 'month']:
+                    noise = np.random.normal(0, 0.01 * row[col] if row[col] != 0 else 0.01)
+                    row[col] += noise
+            
+            # Ensure price relationships are maintained
+            if all(col in row.index for col in ['high', 'low', 'open', 'close']):
+                row['high'] = max(row['high'], row['open'], row['close'])
+                row['low'] = min(row['low'], row['open'], row['close'])
+            
+            augmented_rows.append(row)
+        
+        if augmented_rows:
+            augmented_df = pd.DataFrame(augmented_rows)
+            result = pd.concat([df, augmented_df], ignore_index=True)
+            self.logger.info(f"Augmented data from {len(df)} to {len(result)} samples")
+            return result
+        
+        return df
+    
+    def handle_missing_values(self, df: pd.DataFrame, method: str = 'interpolate') -> pd.DataFrame:
+        """
+        Improved missing value handling with multiple strategies.
+        
+        Args:
+            df: DataFrame with potential missing values
+            method: 'interpolate', 'forward_fill', 'mean', or 'drop'
+        
+        Returns:
+            DataFrame with handled missing values
+        """
+        result = df.copy()
+        
+        if method == 'interpolate':
+            # Time-aware interpolation for time series
+            numeric_cols = result.select_dtypes(include=[np.number]).columns
+            result[numeric_cols] = result[numeric_cols].interpolate(method='time', limit_direction='both')
+        
+        elif method == 'forward_fill':
+            # Forward fill then backward fill
+            result = result.fillna(method='ffill').fillna(method='bfill')
+        
+        elif method == 'mean':
+            # Fill with rolling mean
+            numeric_cols = result.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols:
+                rolling_mean = result[col].rolling(window=10, min_periods=1).mean()
+                result[col] = result[col].fillna(rolling_mean)
+        
+        elif method == 'drop':
+            # Drop rows with any missing values
+            result = result.dropna()
+        
+        # Final safety fill with zeros for any remaining NaN
+        result = result.fillna(0)
+        
+        return result
     
     def _create_default_indicators(self) -> TechnicalIndicators:
         """Create default indicators when calculation fails"""
