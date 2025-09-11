@@ -1,0 +1,125 @@
+# Hyperparameter Configuration for ML Models
+# Can be overridden by optimization results or environment variables
+
+# Default hyperparameters (baseline)
+default:
+  lstm:
+    hidden_size: 256
+    num_layers: 3
+    dropout: 0.2
+    learning_rate: 0.001
+    batch_size: 32
+    epochs: 100
+    
+  transformer:
+    d_model: 128
+    n_heads: 4
+    n_layers: 2
+    d_ff: 512
+    dropout: 0.1
+    learning_rate: 0.0005
+    batch_size: 64
+    epochs: 150
+    
+  itransformer:
+    n_variates: 40
+    d_model: 128
+    n_heads: 8
+    n_layers: 2
+    d_ff: 256
+    dropout: 0.1
+    learning_rate: 0.0005
+    batch_size: 32
+    epochs: 100
+    
+  patchtst:
+    n_channels: 15
+    patch_length: 16
+    stride: 8
+    d_model: 64
+    n_heads: 4
+    n_layers: 2
+    dropout: 0.1
+    learning_rate: 0.0005
+    batch_size: 32
+    epochs: 100
+    
+  timesmixer:
+    seq_len: 336
+    pred_len: 24
+    d_model: 128
+    n_heads: 4
+    n_layers: 2
+    d_ff: 128
+    top_k: 5
+    num_kernels: 3
+    dropout: 0.1
+    learning_rate: 0.0005
+    batch_size: 32
+    epochs: 80
+
+# Optimized hyperparameters (from Bayesian optimization)
+optimized:
+  # Will be populated by hyperparameter_search.py
+  lstm: {}
+  transformer: {}
+  itransformer: {}
+  patchtst: {}
+  timesmixer: {}
+
+# Environment-specific overrides
+environments:
+  development:
+    # Faster training for development
+    all:
+      epochs: 10
+      batch_size: 16
+    
+  staging:
+    # Moderate settings for staging
+    all:
+      epochs: 50
+      
+  production:
+    # Full training for production
+    all:
+      epochs: 150
+      
+# Feature engineering settings
+feature_engineering:
+  enable_token_normalization: true
+  enable_advanced_features: true
+  augmentation_factor: 0.2
+  missing_value_method: interpolate
+  
+# Training pipeline settings
+training:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  early_stopping_patience: 10
+  save_best_only: true
+  use_mixed_precision: false
+  gradient_clip_value: 1.0
+  
+# Hyperparameter optimization settings
+optimization:
+  n_trials: 20
+  n_initial: 5
+  acquisition_function: ei  # Expected Improvement
+  xi: 0.01  # Exploration parameter
+  kappa: 2.576  # UCB parameter
+  
+# Model selection criteria
+model_selection:
+  primary_metric: validation_loss
+  secondary_metrics:
+    - accuracy
+    - mae
+    - r2_score
+  ensemble_weights:
+    lstm: 0.3
+    transformer: 0.2
+    itransformer: 0.2
+    patchtst: 0.15
+    timesmixer: 0.15
