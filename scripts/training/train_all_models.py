@@ -34,6 +34,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 import pandas as pd
 import numpy as np
 import torch
+import yaml
 from google.cloud import storage
 
 # Database imports
@@ -133,6 +134,9 @@ class UnifiedTrainingPipeline:
         self.session_id = str(uuid.uuid4())
         self.session_timestamp = datetime.now()
         
+        # Load hyperparameter configuration
+        self.hyperparams = self._load_hyperparameters()
+        
         # Initialize TrainingReportGenerator
         self.report_generator = TrainingReportGenerator({
             'output_dir': f'{cache_dir}/reports',
@@ -145,6 +149,103 @@ class UnifiedTrainingPipeline:
             f"gcs_bucket: {gcs_bucket}, model_save_bucket: {model_save_bucket}, "
             f"cache_dir: {cache_dir}"
         )
+    
+    def _load_hyperparameters(self) -> Dict[str, Any]:
+        """
+        Load hyperparameter configuration from file or use defaults.
+        
+        Returns:
+            Dictionary of hyperparameters for each model
+        """
+        config_path = Path("config/hyperparameters.yaml")
+        
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            # Check for optimized parameters first, fall back to defaults
+            hyperparams = {}
+            for model in ['lstm', 'transformer', 'itransformer', 'patchtst', 'timesmixer']:
+                if config.get('optimized', {}).get(model):
+                    hyperparams[model] = config['optimized'][model]
+                    logger.info(f"Using optimized hyperparameters for {model}")
+                else:
+                    hyperparams[model] = config.get('default', {}).get(model, {})
+                    logger.info(f"Using default hyperparameters for {model}")
+            
+            # Apply environment-specific overrides
+            env = os.getenv('ENVIRONMENT', 'development')
+            if env in config.get('environments', {}):
+                env_config = config['environments'][env]
+                if 'all' in env_config:
+                    for model in hyperparams:
+                        hyperparams[model].update(env_config['all'])
+            
+            return hyperparams
+        else:
+            # Use hardcoded defaults if config file not found
+            logger.warning("Hyperparameter config not found, using hardcoded defaults")
+            return self._get_default_hyperparameters()
+    
+    def _get_default_hyperparameters(self) -> Dict[str, Any]:
+        """Get default hyperparameters if config file not found."""
+        return {
+            'lstm': {
+                'hidden_size': 256,
+                'num_layers': 3,
+                'dropout': 0.2,
+                'learning_rate': 0.001,
+                'batch_size': 32,
+                'epochs': 100
+            },
+            'transformer': {
+                'd_model': 128,
+                'n_heads': 4,
+                'n_layers': 2,
+                'd_ff': 512,
+                'dropout': 0.1,
+                'learning_rate': 0.0005,
+                'batch_size': 64,
+                'epochs': 150
+            },
+            'itransformer': {
+                'n_variates': 40,
+                'd_model': 128,
+                'n_heads': 8,
+                'n_layers': 2,
+                'd_ff': 256,
+                'dropout': 0.1,
+                'learning_rate': 0.0005,
+                'batch_size': 32,
+                'epochs': 100
+            },
+            'patchtst': {
+                'n_channels': 15,
+                'patch_length': 16,
+                'stride': 8,
+                'd_model': 64,
+                'n_heads': 4,
+                'n_layers': 2,
+                'dropout': 0.1,
+                'learning_rate': 0.0005,
+                'batch_size': 32,
+                'epochs': 100
+            },
+            'timesmixer': {
+                'seq_len': 336,
+                'pred_len': 24,
+                'd_model': 128,
+                'n_heads': 4,
+                'n_layers': 2,
+                'd_ff': 128,
+                'top_k': 5,
+                'num_kernels': 3,
+                'dropout': 0.1,
+                'learning_rate': 0.0005,
+                'batch_size': 32,
+                'epochs': 80
+            }
+        }
     
     async def load_corpus_data(self,
                              corpus_version: Optional[str] = None,
@@ -434,29 +535,29 @@ class UnifiedTrainingPipeline:
         
         results = {}
         
-        # Model configurations
+        # Use loaded hyperparameters
         model_configs = {
             'transformer': {
                 'sequence_length': 192,
-                'd_model': 512,  # Increase model capacity
-                'n_heads': 16,  # More attention heads for complex patterns
-                'n_layers': 6,  # Deeper network for better representation
-                'd_ff': 2048,  # Larger feed-forward dimension
-                'dropout': 0.1,  # Standard dropout rate
-                'num_epochs': 150,  # Increased for better convergence
-                'batch_size': 64,  # Larger batch for stability
-                'learning_rate': 5e-5,  # Lower learning rate for better convergence
+                'd_model': self.hyperparams['transformer'].get('d_model', 128),
+                'n_heads': self.hyperparams['transformer'].get('n_heads', 4),
+                'n_layers': self.hyperparams['transformer'].get('n_layers', 2),
+                'd_ff': self.hyperparams['transformer'].get('d_ff', 512),
+                'dropout': self.hyperparams['transformer'].get('dropout', 0.1),
+                'num_epochs': self.hyperparams['transformer'].get('epochs', 150),
+                'batch_size': self.hyperparams['transformer'].get('batch_size', 64),
+                'learning_rate': self.hyperparams['transformer'].get('learning_rate', 5e-4),
                 'warmup_epochs': 10  # Warmup for 10 epochs
             },
             'itransformer': {
                 'sequence_length': 96,
-                'n_variates': 40,  # Increased from 20 for better feature coverage
-                'd_model': 256,
-                'n_heads': 8,
-                'n_layers': 3,
-                'num_epochs': 100,  # Increased for better training
-                'batch_size': 32,
-                'learning_rate': 1e-4,  # Optimized learning rate
+                'n_variates': self.hyperparams['itransformer'].get('n_variates', 40),
+                'd_model': self.hyperparams['itransformer'].get('d_model', 128),
+                'n_heads': self.hyperparams['itransformer'].get('n_heads', 8),
+                'n_layers': self.hyperparams['itransformer'].get('n_layers', 2),
+                'num_epochs': self.hyperparams['itransformer'].get('epochs', 100),
+                'batch_size': self.hyperparams['itransformer'].get('batch_size', 32),
+                'learning_rate': self.hyperparams['itransformer'].get('learning_rate', 5e-4),
                 'selected_features': [
                     # Core price features
                     'close', 'open', 'high', 'low', 'volume',
@@ -479,24 +580,26 @@ class UnifiedTrainingPipeline:
                 ]  # 40 features total
             },
             'patchtst': {
-                'patch_length': 16,
-                'stride': 8,
-                'd_model': 128,
-                'n_heads': 4,
-                'n_layers': 3,
-                'n_channels': 15,  # Use multiple channels for better performance
-                'num_epochs': 100,  # Increased for better training
-                'batch_size': 32,
-                'learning_rate': 5e-4  # Optimized learning rate
+                'patch_length': self.hyperparams['patchtst'].get('patch_length', 16),
+                'stride': self.hyperparams['patchtst'].get('stride', 8),
+                'd_model': self.hyperparams['patchtst'].get('d_model', 64),
+                'n_heads': self.hyperparams['patchtst'].get('n_heads', 4),
+                'n_layers': self.hyperparams['patchtst'].get('n_layers', 2),
+                'n_channels': self.hyperparams['patchtst'].get('n_channels', 15),
+                'num_epochs': self.hyperparams['patchtst'].get('epochs', 100),
+                'batch_size': self.hyperparams['patchtst'].get('batch_size', 32),
+                'learning_rate': self.hyperparams['patchtst'].get('learning_rate', 5e-4)
             },
             'timesmixer': {
-                'seq_len': min(336, len(training_data) - 24 if len(training_data) > 24 else 100),  # Adjust to available data
-                'd_model': 128,
-                'top_k': 5,
-                'decomposition_layers': 2,  # Reduced from 3 for performance
-                'num_epochs': 80,  # Increased but less than others due to complexity
-                'batch_size': 32,
-                'learning_rate': 5e-4  # Optimized learning rate
+                'seq_len': min(self.hyperparams['timesmixer'].get('seq_len', 336), 
+                              len(training_data) - 24 if len(training_data) > 24 else 100),
+                'd_model': self.hyperparams['timesmixer'].get('d_model', 128),
+                'top_k': self.hyperparams['timesmixer'].get('top_k', 5),
+                'num_kernels': self.hyperparams['timesmixer'].get('num_kernels', 3),
+                'n_layers': self.hyperparams['timesmixer'].get('n_layers', 2),
+                'num_epochs': self.hyperparams['timesmixer'].get('epochs', 80),
+                'batch_size': self.hyperparams['timesmixer'].get('batch_size', 32),
+                'learning_rate': self.hyperparams['timesmixer'].get('learning_rate', 5e-4)
             }
         }
         
