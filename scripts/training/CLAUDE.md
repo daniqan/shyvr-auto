@@ -1,42 +1,72 @@
-# Training Pipeline - Phase 3 Complete
+# Training Pipeline - Phase 2 & 3 Complete
 
 **Last Updated**: 2025-09-10
-**Status**: Phase 3 Advanced Training Techniques - INTEGRATED
+**Status**: Phase 2 (Hyperparameter Optimization) & Phase 3 (Advanced Training) - INTEGRATED
 
 ## Current Training Pipeline Flow
 
 1. **Data Loading**: GCS corpus data via GCSCorpusLoader
 2. **Train/Val/Test Split**: Time-series aware splitting (80/10/10)
-3. **Feature Engineering** (NEW):
+3. **Feature Engineering**:
    - Advanced features (microstructure, volatility regime)
    - Missing value handling (interpolation)
-4. **Token Normalization** (NEW):
+4. **Token Normalization**:
    - Automatic token detection from price ranges
    - Token-specific scaling
-5. **Data Augmentation** (NEW):
+5. **Data Augmentation**:
    - 20% augmentation of training data
    - Maintains financial constraints
-6. **Model Training**: LSTM + Transformer variants
-7. **Report Generation**: Training metrics and visualizations
+6. **Hyperparameter Loading** (NEW):
+   - Loads from config/hyperparameters.yaml
+   - Priority: Optimized > Default > Environment
+7. **Model Training**: LSTM + Transformer variants with optimal params
+8. **Report Generation**: Training metrics and visualizations
 
-## Phase 3 Enhancements
+## Phase 2: Hyperparameter Optimization ✅
 
-### Integration with FeatureEngineer
+### Key Components
+1. **Bayesian Optimizer**: `src/ml_analysis/hyperparameter_optimizer.py`
+   - Gaussian Process surrogate model
+   - Expected Improvement acquisition function
+   - Automatic parameter type conversion
+
+2. **Search Script**: `scripts/training/hyperparameter_search.py`
+   - Automated search for all models
+   - Quick evaluation (5-10 epochs)
+   - Saves results and best parameters
+
+3. **Configuration**: `config/hyperparameters.yaml`
+   - Default parameters
+   - Optimized parameters (populated by search)
+   - Environment-specific overrides
+
+### Usage
+
+#### Run Hyperparameter Search
+```bash
+# Search for optimal parameters (20 trials per model)
+python scripts/training/hyperparameter_search.py \
+    --n-trials 20 \
+    --timeframe daily \
+    --token WBTC \
+    --save-dir ./hyperparameters
+```
+
+#### Train with Optimized Parameters
+```bash
+# Automatically uses optimized params if available
+python scripts/training/train_all_models.py
+
+# Or specify environment
+ENVIRONMENT=production python scripts/training/train_all_models.py
+```
+
+## Phase 3: Advanced Training Techniques ✅
+
+### Enhancements in FeatureEngineer
 All Phase 3 enhancements are integrated into the existing `FeatureEngineer` class:
-- No separate modules created
-- Seamless integration with existing pipeline
-- Maintains backward compatibility
-
-### Key Improvements
-1. **Token-aware normalization**: Different scales for WBTC vs PEPE
-2. **Advanced features**: +8 microstructure and regime features
-3. **Data augmentation**: 20% more training samples
-4. **Robust missing values**: Multiple handling strategies
-
-## Usage
 
 ```python
-# Automatic in train_all_models.py
 feature_engineer = FeatureEngineer(
     enable_token_normalization=True,
     enable_advanced_features=True
@@ -51,11 +81,12 @@ train_data = feature_engineer.augment_training_data(train_data, 0.2)
 
 ## Performance Expectations
 
-With Phase 3 complete, expect:
-- Better handling of different token price scales
-- More robust training with augmented data
-- Improved feature representation with microstructure features
-- Reduced training failures from missing values
+With Phase 2 & 3 complete:
+- **Optimal Hyperparameters**: Better model performance
+- **Token Normalization**: Handles different price scales
+- **Data Augmentation**: More robust training
+- **Advanced Features**: Better market representation
+- **Automated Tuning**: No manual parameter selection
 
 ## Completed Phases
 
@@ -63,17 +94,41 @@ With Phase 3 complete, expect:
 - Increased epochs (100-150)
 - Fixed iTransformer features (5→40)
 - Advanced learning rate scheduling
-- Architecture bug fixes
+- Architecture bug fixes (PatchTST, TimesMixer)
 
-### ✅ Phase 1.2: Architecture Bugs
-- PatchTST shape mismatch fixed
-- TimesMixer performance optimized (55x speedup)
+### ✅ Phase 2: Dynamic Hyperparameter System
+- Bayesian optimization implementation
+- Automated search script
+- Configuration management
+- Training pipeline integration
 
 ### ✅ Phase 3: Advanced Training Techniques
 - Token-specific normalization
 - Data augmentation
 - Advanced feature engineering
 - Improved missing value handling
+
+## Configuration Structure
+
+```yaml
+# config/hyperparameters.yaml
+default:
+  lstm:
+    hidden_size: 256
+    num_layers: 3
+    learning_rate: 0.001
+    
+optimized:  # Populated by search
+  lstm:
+    hidden_size: 384
+    num_layers: 2
+    learning_rate: 0.0005
+    
+environments:
+  production:
+    all:
+      epochs: 150
+```
 
 ## Remaining Phases
 
@@ -87,3 +142,18 @@ With Phase 3 complete, expect:
 - Sharpe ratio calculation
 - Risk-adjusted metrics
 - Cross-validation implementation
+
+## Files Modified
+
+### Phase 2 Files Created
+- `src/ml_analysis/hyperparameter_optimizer.py`
+- `scripts/training/hyperparameter_search.py`
+- `config/hyperparameters.yaml`
+
+### Phase 3 Files Enhanced
+- `src/ml_analysis/feature_engineer.py`
+- `scripts/training/train_all_models.py`
+
+### Documentation Updated
+- `src/ml_analysis/CLAUDE.md`
+- `scripts/training/CLAUDE.md`
