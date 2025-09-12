@@ -219,6 +219,14 @@ uv run python scripts/training/train_all_models.py
 | PatchTST | 5% | 🔴 Fixing | Multi-channel support |
 | TimesMixer | 59% | 🟡 Optimizing | 55x speedup achieved |
 
+### Training Reports
+The training pipeline automatically generates comprehensive HTML reports including:
+- **Performance Metrics**: R², MAE, RMSE for each model and prediction horizon
+- **Training Curves**: Loss progression, learning rate schedules
+- **Visualizations**: Embedded charts and graphs for easy analysis
+- **Model Comparisons**: Side-by-side performance analysis
+- **GCS Integration**: Reports automatically uploaded to cloud storage
+
 ## 🏗️ Architecture
 
 ### System Architecture Overview
