@@ -1,159 +1,159 @@
-# Training Pipeline - Phase 2 & 3 Complete
+# Training Scripts
 
-**Last Updated**: 2025-09-10
-**Status**: Phase 2 (Hyperparameter Optimization) & Phase 3 (Advanced Training) - INTEGRATED
+**Status**: Fully Integrated Pipeline with Phases 1-3 Complete
 
-## Current Training Pipeline Flow
+## Overview
 
-1. **Data Loading**: GCS corpus data via GCSCorpusLoader
-2. **Train/Val/Test Split**: Time-series aware splitting (80/10/10)
-3. **Feature Engineering**:
-   - Advanced features (microstructure, volatility regime)
-   - Missing value handling (interpolation)
-4. **Token Normalization**:
-   - Automatic token detection from price ranges
-   - Token-specific scaling
-5. **Data Augmentation**:
-   - 20% augmentation of training data
-   - Maintains financial constraints
-6. **Hyperparameter Loading** (NEW):
-   - Loads from config/hyperparameters.yaml
-   - Priority: Optimized > Default > Environment
-7. **Model Training**: LSTM + Transformer variants with optimal params
-8. **Report Generation**: Training metrics and visualizations
+Comprehensive training pipeline for cryptocurrency price prediction models with automated hyperparameter optimization, advanced feature engineering, and multi-model support.
 
-## Phase 2: Hyperparameter Optimization ✅
+## Main Scripts
 
-### Key Components
-1. **Bayesian Optimizer**: `src/ml_analysis/hyperparameter_optimizer.py`
-   - Gaussian Process surrogate model
-   - Expected Improvement acquisition function
-   - Automatic parameter type conversion
+### train_all_models.py
+**Purpose**: Unified training pipeline for all models  
+**Features**:
+- Loads GCS corpus data
+- Applies advanced feature engineering
+- Token-specific normalization
+- Data augmentation (20%)
+- Hyperparameter auto-loading
+- Multi-model training (LSTM + 4 Transformers)
 
-2. **Search Script**: `scripts/training/hyperparameter_search.py`
-   - Automated search for all models
-   - Quick evaluation (5-10 epochs)
-   - Saves results and best parameters
-
-3. **Configuration**: `config/hyperparameters.yaml`
-   - Default parameters
-   - Optimized parameters (populated by search)
-   - Environment-specific overrides
-
-### Usage
-
-#### Run Hyperparameter Search
+**Usage**:
 ```bash
-# Search for optimal parameters (20 trials per model)
-python scripts/training/hyperparameter_search.py \
-    --n-trials 20 \
-    --timeframe daily \
-    --token WBTC \
-    --save-dir ./hyperparameters
-```
-
-#### Train with Optimized Parameters
-```bash
-# Automatically uses optimized params if available
 python scripts/training/train_all_models.py
-
-# Or specify environment
 ENVIRONMENT=production python scripts/training/train_all_models.py
 ```
 
-## Phase 3: Advanced Training Techniques ✅
+### hyperparameter_search.py
+**Purpose**: Automated Bayesian optimization for hyperparameters  
+**Features**:
+- Gaussian Process optimization
+- 20 trials per model
+- Quick evaluation (5-10 epochs)
+- Saves best parameters
 
-### Enhancements in FeatureEngineer
-All Phase 3 enhancements are integrated into the existing `FeatureEngineer` class:
-
-```python
-feature_engineer = FeatureEngineer(
-    enable_token_normalization=True,
-    enable_advanced_features=True
-)
-
-# Applied automatically in pipeline
-train_data = feature_engineer.calculate_advanced_features(train_data)
-train_data = feature_engineer.handle_missing_values(train_data)
-train_data = feature_engineer.normalize_features_by_token(train_data)
-train_data = feature_engineer.augment_training_data(train_data, 0.2)
+**Usage**:
+```bash
+python scripts/training/hyperparameter_search.py \
+    --n-trials 20 \
+    --timeframe daily \
+    --token WBTC
 ```
 
-## Performance Expectations
+### train_transformers.py
+**Purpose**: Dedicated transformer training  
+**Features**:
+- Environment-based configuration
+- LSTM baseline + 4 transformer variants
+- Progress tracking
+- GCS model storage
 
-With Phase 2 & 3 complete:
-- **Optimal Hyperparameters**: Better model performance
-- **Token Normalization**: Handles different price scales
-- **Data Augmentation**: More robust training
-- **Advanced Features**: Better market representation
-- **Automated Tuning**: No manual parameter selection
+**Usage**:
+```bash
+python scripts/training/train_transformers.py --environment production
+```
 
-## Completed Phases
+## Training Pipeline Flow
 
-### ✅ Phase 1: Critical Fixes
-- Increased epochs (100-150)
-- Fixed iTransformer features (5→40)
-- Advanced learning rate scheduling
-- Architecture bug fixes (PatchTST, TimesMixer)
+```
+1. Load Corpus (GCS) 
+2. Split Data (80/10/10)
+3. Feature Engineering
+   - Advanced features (microstructure, volatility)
+   - Missing value handling
+4. Token Normalization
+   - Auto-detect token from price
+   - Scale appropriately
+5. Data Augmentation
+   - 20% synthetic samples
+   - Maintain constraints
+6. Load Hyperparameters
+   - Check optimized → default → environment
+7. Train Models
+   - LSTM with CosineAnnealingWarmRestarts
+   - Transformers with OneCycleLR
+8. Generate Report
+   - HTML format
+   - Performance metrics
+   - Training curves
+```
 
-### ✅ Phase 2: Dynamic Hyperparameter System
-- Bayesian optimization implementation
-- Automated search script
-- Configuration management
-- Training pipeline integration
+## Configuration
 
-### ✅ Phase 3: Advanced Training Techniques
-- Token-specific normalization
-- Data augmentation
-- Advanced feature engineering
-- Improved missing value handling
-
-## Configuration Structure
-
+### hyperparameters.yaml Structure
 ```yaml
-# config/hyperparameters.yaml
-default:
-  lstm:
-    hidden_size: 256
-    num_layers: 3
-    learning_rate: 0.001
-    
-optimized:  # Populated by search
-  lstm:
-    hidden_size: 384
-    num_layers: 2
-    learning_rate: 0.0005
-    
-environments:
+default:           # Baseline parameters
+  lstm: {...}
+  transformer: {...}
+  
+optimized:         # From Bayesian search
+  lstm: {...}
+  
+environments:      # Environment overrides
   production:
     all:
       epochs: 150
 ```
 
-## Remaining Phases
+### Environment Variables
+```bash
+ENVIRONMENT=development|staging|production
+GCS_BUCKET=shyvr-models-prod
+CUDA_VISIBLE_DEVICES=0
+```
 
-### Phase 4: Model-Specific Optimizations
-- Relative positional encoding
-- Cross-variate attention improvements
-- Patch embedding optimization
-- JIT compilation
+## Model Configurations
 
-### Phase 5: Validation & Metrics
-- Sharpe ratio calculation
-- Risk-adjusted metrics
-- Cross-validation implementation
+| Model | Epochs | Batch Size | Learning Rate | Special Features |
+|-------|--------|------------|---------------|------------------|
+| LSTM | 100 | 32 | 1e-3 | 3 layers, 256 hidden |
+| Transformer | 150 | 64 | 5e-4 | OneCycleLR |
+| iTransformer | 100 | 32 | 5e-4 | 40 features |
+| PatchTST | 100 | 32 | 5e-4 | Fixed aggregation |
+| TimesMixer | 80 | 32 | 5e-4 | Vectorized ops |
 
-## Files Modified
+## Recent Improvements
 
-### Phase 2 Files Created
-- `src/ml_analysis/hyperparameter_optimizer.py`
-- `scripts/training/hyperparameter_search.py`
-- `config/hyperparameters.yaml`
+### Phase 1: Architecture Fixes
+- PatchTST: Fixed channel aggregation bug
+- TimesMixer: 55x performance improvement
+- iTransformer: Expanded to 40 features
 
-### Phase 3 Files Enhanced
-- `src/ml_analysis/feature_engineer.py`
-- `scripts/training/train_all_models.py`
+### Phase 2: Hyperparameter System
+- Bayesian optimization implementation
+- Automated search script
+- YAML configuration management
+- Pipeline integration
 
-### Documentation Updated
-- `src/ml_analysis/CLAUDE.md`
-- `scripts/training/CLAUDE.md`
+### Phase 3: Training Enhancements
+- Token-specific normalization
+- Data augmentation (20%)
+- Advanced features (+8 microstructure)
+- Improved missing value handling
+
+## Performance Tracking
+
+Current vs Target:
+- LSTM: 68% → 90%
+- Transformer: 38% → 90%
+- iTransformer: 3% → 90%
+- PatchTST: 5% → 90%
+- TimesMixer: 59% → 90%
+
+## Files
+
+```
+scripts/training/
+├── train_all_models.py         # Main pipeline
+├── hyperparameter_search.py    # Optimization
+├── train_transformers.py       # Transformer focus
+├── CLAUDE.md                   # This file
+└── (test files)
+```
+
+## Next Steps
+
+1. Run hyperparameter search for optimal parameters
+2. Train with optimized parameters
+3. Evaluate on test set
+4. Implement Phase 4 optimizations if needed
