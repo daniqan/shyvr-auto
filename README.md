@@ -53,11 +53,16 @@ AI-augmented cryptocurrency trading bot with machine learning, reinforcement lea
 
 ## 🎯 Recent Achievements
 
-- **✅ Phase 4.1 Corpus Collection Complete**: Successfully collected 547 days of market data (150% of target)
-- **📈 2.7+ Million Data Points**: Comprehensive multi-granularity corpus across 7 major tokens
-- **🔄 Dynamic Pagination System**: Bypassed API limitations with intelligent chunking
-- **💾 38,820 Records Stored**: Dual storage in PostgreSQL and Google Cloud Storage
-- **🎯 100% Validation Pass Rate**: All 21 token/timeframe combinations validated
+### Training Optimization (Phases 1-3 Complete)
+- **✅ Architecture Fixes**: PatchTST shape mismatch resolved, TimesMixer 55x speedup
+- **🚀 Hyperparameter Optimization**: Bayesian optimization with automated search
+- **📊 Advanced Features**: +8 microstructure features, token normalization, data augmentation
+- **🎯 Target**: Working toward 90%+ accuracy across all models
+
+### Data Infrastructure
+- **📈 2.7+ Million Data Points**: Comprehensive multi-granularity corpus
+- **💾 38,820 Records**: Stored in PostgreSQL and Google Cloud Storage
+- **🔄 Dynamic Collection**: 547 days of market data across 7 major tokens
 
 ## 🚀 Quick Start
 
@@ -183,6 +188,36 @@ ALTER TABLE crypto_ohlcv
 - **Parquet Format**: Columnar storage for efficient analytics
 - **Organized Structure**: `corpus/{token}/{timeframe}/data.parquet`
 - **Backup Strategy**: Automated daily backups with 7-day retention
+
+## 🚀 Training Pipeline
+
+### Hyperparameter Optimization
+```bash
+# Run Bayesian optimization for all models
+uv run python scripts/training/hyperparameter_search.py --n-trials 20
+
+# Optimize specific model
+uv run python scripts/training/hyperparameter_search.py --model lstm --n-trials 30
+
+# Use optimized parameters for training
+uv run python scripts/training/train_all_models.py
+```
+
+### Training Features
+- **Bayesian Optimization**: Gaussian Process with Expected Improvement acquisition
+- **Advanced Features**: 130+ features including microstructure metrics
+- **Token Normalization**: Handles vastly different price scales (WBTC vs PEPE)
+- **Data Augmentation**: 20% synthetic samples with financial constraints
+- **Smart Scheduling**: OneCycleLR for transformers, CosineAnnealingWarmRestarts for LSTM
+
+### Model Performance (Target: 90%+ Accuracy)
+| Model | Current R² | Status | Key Improvements |
+|-------|------------|--------|------------------|
+| LSTM | 68% | 🟡 Optimizing | 3 layers, 256 hidden units |
+| Transformer | 38% | 🟡 Optimizing | Warmup, 512d model |
+| iTransformer | 3% | 🔴 Fixing | Expanded to 40 features |
+| PatchTST | 5% | 🔴 Fixing | Multi-channel support |
+| TimesMixer | 59% | 🟡 Optimizing | 55x speedup achieved |
 
 ## 🏗️ Architecture
 
