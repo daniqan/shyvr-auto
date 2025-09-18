@@ -348,9 +348,29 @@ class FeatureEngineer:
         result = df.copy()
         
         if method == 'interpolate':
-            # Time-aware interpolation for time series
+            # Check if we need to set timestamp as index for time interpolation
+            needs_reset = False
+            
+            # Handle timestamp column if present
+            if 'timestamp' in result.columns and not isinstance(result.index, pd.DatetimeIndex):
+                # Convert timestamp to datetime if needed
+                if not pd.api.types.is_datetime64_any_dtype(result['timestamp']):
+                    result['timestamp'] = pd.to_datetime(result['timestamp'])
+                result = result.set_index('timestamp')
+                needs_reset = True
+            
+            # Perform interpolation based on index type
             numeric_cols = result.select_dtypes(include=[np.number]).columns
-            result[numeric_cols] = result[numeric_cols].interpolate(method='time', limit_direction='both')
+            if isinstance(result.index, pd.DatetimeIndex):
+                # Use time-weighted interpolation with DatetimeIndex
+                result[numeric_cols] = result[numeric_cols].interpolate(method='time', limit_direction='both')
+            else:
+                # Fall back to linear interpolation if no DatetimeIndex
+                result[numeric_cols] = result[numeric_cols].interpolate(method='linear', limit_direction='both')
+            
+            # Reset index if we set it temporarily
+            if needs_reset:
+                result = result.reset_index()
         
         elif method == 'forward_fill':
             # Forward fill then backward fill
