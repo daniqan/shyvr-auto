@@ -316,7 +316,8 @@ class FeatureEngineer:
             numeric_cols = df.select_dtypes(include=[np.number]).columns
             for col in numeric_cols:
                 if col not in ['timestamp', 'hour', 'day_of_week', 'month']:
-                    noise = np.random.normal(0, 0.01 * row[col] if row[col] != 0 else 0.01)
+                    # Use absolute value to ensure positive scale for normal distribution
+                    noise = np.random.normal(0, 0.01 * abs(row[col]) if row[col] != 0 else 0.01)
                     row[col] += noise
             
             # Ensure price relationships are maintained
