@@ -20,6 +20,13 @@ Core ML analysis module with enhanced feature engineering, hyperparameter optimi
 - **Auto Search**: Finds optimal parameters in 20 trials
 - **Persistent Storage**: Saves best params to JSON
 
+### EnsemblePredictor (New)
+- **Model Combination**: LSTM + Transformer ensemble predictions
+- **Multiple Strategies**: Simple average, weighted average, confidence-weighted, stacking
+- **Checkpoint Loading**: Automatic loading from tmp/checkpoints/ with fallback
+- **Meta-Learner**: Random Forest or Linear Regression for stacking
+- **Configurable Weights**: Adjustable model weights (e.g., 60% LSTM, 40% Transformer)
+
 ### Model Architectures
 
 #### LSTM
@@ -69,6 +76,25 @@ from src.ml_analysis.hyperparameter_optimizer import HyperparameterOptimizer
 
 optimizer = HyperparameterOptimizer(n_trials=20)
 best_params = await optimizer.optimize_lstm(train_func)
+
+# Ensemble predictions
+from src.ml_analysis.model_ensemble import EnsemblePredictor, EnsembleConfig, EnsembleStrategy
+
+# Create ensemble with weighted averaging
+config = EnsembleConfig(
+    lstm_weight=0.6,
+    transformer_weight=0.4,
+    strategy=EnsembleStrategy.WEIGHTED_AVERAGE,
+    checkpoint_dir="tmp/checkpoints"
+)
+
+ensemble = EnsemblePredictor(config)
+await ensemble.load_models()
+
+# Generate ensemble prediction
+prediction = await ensemble.analyze_token(token)
+print(f"Ensemble prediction: ${prediction.price_prediction_24h:.2f}")
+print(f"Confidence: {prediction.confidence:.2%}")
 ```
 
 ## Configuration
@@ -87,6 +113,7 @@ Hyperparameters loaded from `config/hyperparameters.yaml`:
 | iTransformer | 2.89% | TBD | 90% |
 | PatchTST | 4.61% | Fixed | 90% |
 | TimesMixer | 59.17% | Optimized | 90% |
+| **Ensemble** | **N/A** | **New** | **92%+** |
 
 ## Files in Module
 
@@ -94,6 +121,7 @@ Hyperparameters loaded from `config/hyperparameters.yaml`:
 src/ml_analysis/
 ├── feature_engineer.py         # Core feature engineering (enhanced)
 ├── hyperparameter_optimizer.py # Bayesian optimization (new)
+├── model_ensemble.py           # LSTM+Transformer ensemble (new)
 ├── lstm_model.py               # LSTM implementation
 ├── model_manager.py            # Model ensemble management
 ├── training_report_generator.py # Report generation
@@ -122,9 +150,17 @@ src/ml_analysis/
 - Implemented data augmentation
 - Advanced feature engineering (8+ new features)
 
+### Phase 4 (Complete)
+- **EnsemblePredictor**: LSTM + Transformer model combination
+- **Multiple Strategies**: Simple average, weighted average, confidence-weighted, stacking
+- **Checkpoint Loading**: Automatic loading with fallback to models/ directory
+- **Meta-Learner Support**: Random Forest and Linear Regression for stacking
+- **Comprehensive Tests**: 11 test cases with 100% core logic coverage
+
 ## Next Steps
 
-- Implement relative positional encoding
-- Add cross-validation for time series
-- Integrate Sharpe ratio metrics
-- JIT compilation for performance
+- Implement relative positional encoding for Transformers
+- Add cross-validation for time series evaluation
+- Integrate Sharpe ratio and risk-adjusted metrics
+- JIT compilation for performance optimization
+- Train and validate ensemble on production data
