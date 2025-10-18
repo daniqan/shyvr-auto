@@ -312,9 +312,13 @@ class PatchTSTNetwork(TransformerBase):
                 # Average channel representations for unified prediction
                 # Shape: [batch_size, d_model]
                 avg_repr = torch.mean(all_channel_repr, dim=1)
-                # Generate single prediction per horizon
-                # Shape: [batch_size, 1]
-                outputs[f'price_{horizon}'] = head(avg_repr)
+                # Generate prediction per horizon
+                pred = head(avg_repr)
+                # For channel independence mode, average across channel predictions
+                if self.config.channel_independence and pred.shape[-1] > 1:
+                    # Average channel predictions to single value
+                    pred = torch.mean(pred, dim=-1, keepdim=True)
+                outputs[f'price_{horizon}'] = pred
             
             # Aggregate for confidence and direction
             global_repr = torch.mean(all_channel_repr, dim=1)  # [batch_size, d_model]
