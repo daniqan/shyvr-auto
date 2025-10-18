@@ -102,22 +102,25 @@ class UnifiedTrainingPipeline:
                  model_save_bucket: str = "shyvr-models-prod",
                  model_save_prefix: str = "trained-models",
                  cache_dir: str = "./tmp",
-                 cache_ttl_hours: int = 24):
+                 cache_ttl_hours: int = 24,
+                 checkpoint_dir: str = "./tmp/checkpoints"):
         """
         Initialize UnifiedTrainingPipeline
-        
+
         Args:
             gcs_bucket: GCS bucket containing corpus data
             model_save_bucket: GCS bucket for saving trained models
             model_save_prefix: Prefix for model storage path
             cache_dir: Local directory for caching corpus data
             cache_ttl_hours: Hours before cached data expires
+            checkpoint_dir: Directory for saving training checkpoints
         """
         self.gcs_bucket = gcs_bucket
         self.model_save_bucket = model_save_bucket
         self.model_save_prefix = model_save_prefix
         self.cache_dir = cache_dir
         self.cache_ttl_hours = cache_ttl_hours
+        self.checkpoint_dir = checkpoint_dir
         
         # Initialize GCS corpus loader
         self.corpus_loader = GCSCorpusLoader(
@@ -345,7 +348,108 @@ class UnifiedTrainingPipeline:
         except Exception as e:
             logger.error(f"Failed to split data: {e}")
             raise DataLoadingError(f"Failed to split data: {e}")
-    
+
+    def save_checkpoint(self,
+                       model: Any,
+                       optimizer: Any,
+                       scheduler: Any,
+                       epoch: int,
+                       loss: float,
+                       model_name: str,
+                       is_best: bool = False) -> str:
+        """
+        Save model checkpoint during training
+
+        Args:
+            model: PyTorch model to save
+            optimizer: Optimizer state
+            scheduler: Learning rate scheduler state
+            epoch: Current epoch number
+            loss: Current loss value
+            model_name: Name of the model (transformer, itransformer, etc.)
+            is_best: Whether this is the best model so far
+
+        Returns:
+            Path to saved checkpoint file
+        """
+        try:
+            # Create checkpoint directory if it doesn't exist
+            model_checkpoint_dir = Path(self.checkpoint_dir) / model_name
+            model_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+            # Prepare checkpoint data
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                'loss': loss,
+                'model_name': model_name,
+                'session_id': self.session_id,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            # Save regular checkpoint
+            if epoch % 10 == 0:  # Save every 10 epochs
+                checkpoint_path = model_checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
+                torch.save(checkpoint, checkpoint_path)
+                logger.info(f"Saved checkpoint for {model_name} at epoch {epoch}: {checkpoint_path}")
+
+            # Save best model checkpoint
+            if is_best:
+                best_checkpoint_path = model_checkpoint_dir / "best_model.pt"
+                torch.save(checkpoint, best_checkpoint_path)
+                logger.info(f"Saved best model for {model_name} at epoch {epoch}: {best_checkpoint_path}")
+                return str(best_checkpoint_path)
+
+            return str(checkpoint_path) if epoch % 10 == 0 else ""
+
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint for {model_name}: {e}")
+            return ""
+
+    def load_checkpoint(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Load the latest checkpoint for a model
+
+        Args:
+            model_name: Name of the model to load checkpoint for
+
+        Returns:
+            Checkpoint dictionary if found, None otherwise
+        """
+        try:
+            model_checkpoint_dir = Path(self.checkpoint_dir) / model_name
+
+            if not model_checkpoint_dir.exists():
+                logger.info(f"No checkpoint directory found for {model_name}")
+                return None
+
+            # Look for best model first, then latest checkpoint
+            best_checkpoint_path = model_checkpoint_dir / "best_model.pt"
+            if best_checkpoint_path.exists():
+                checkpoint = torch.load(best_checkpoint_path, map_location='cpu')
+                logger.info(f"Loaded best model checkpoint for {model_name} from epoch {checkpoint['epoch']}")
+                return checkpoint
+
+            # Find the latest checkpoint by epoch number
+            checkpoint_files = list(model_checkpoint_dir.glob("checkpoint_epoch_*.pt"))
+            if not checkpoint_files:
+                logger.info(f"No checkpoint files found for {model_name}")
+                return None
+
+            # Sort by epoch number and get the latest
+            latest_checkpoint = max(checkpoint_files,
+                                  key=lambda x: int(x.stem.split('_')[-1]))
+
+            checkpoint = torch.load(latest_checkpoint, map_location='cpu')
+            logger.info(f"Loaded checkpoint for {model_name} from epoch {checkpoint['epoch']}")
+            return checkpoint
+
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint for {model_name}: {e}")
+            return None
+
     async def train_lstm_model(self,
                              training_data: pd.DataFrame,
                              config: Optional[Dict] = None) -> Dict[str, Any]:
@@ -748,6 +852,19 @@ class UnifiedTrainingPipeline:
                 optimizer = optim.Adam(model.model.parameters(), lr=learning_rate, weight_decay=0.01)  # Reduced weight decay
                 criterion = nn.MSELoss()
                 
+                # Check for existing checkpoint and load if available
+                start_epoch = 0
+                best_val_loss = float('inf')
+                checkpoint = self.load_checkpoint(model_name)
+                if checkpoint:
+                    model.model.load_state_dict(checkpoint['model_state_dict'])
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    if checkpoint.get('scheduler_state_dict') and scheduler:
+                        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                    start_epoch = checkpoint['epoch'] + 1
+                    best_val_loss = checkpoint.get('loss', float('inf'))
+                    logger.info(f"Resumed {model_name} training from epoch {start_epoch}, best loss: {best_val_loss:.6f}")
+
                 # Training loop setup
                 training_start_time = datetime.now()
                 model.model.train()
@@ -796,7 +913,6 @@ class UnifiedTrainingPipeline:
                 training_losses = []
                 
                 # Early stopping variables
-                best_loss = float('inf')
                 patience = 10
                 patience_counter = 0
                 
@@ -804,7 +920,7 @@ class UnifiedTrainingPipeline:
                 first_batch = next(iter(train_loader))
                 logger.info(f"{model_name} first batch shapes: X={first_batch[0].shape}, y={first_batch[1].shape}")
                 
-                for epoch in range(num_epochs):
+                for epoch in range(start_epoch, num_epochs):
                     epoch_loss = 0.0
                     num_batches = 0
                     
@@ -896,13 +1012,36 @@ class UnifiedTrainingPipeline:
                     if not scheduler_per_batch:
                         scheduler.step()
                     
-                    # Early stopping check
-                    if avg_loss < best_loss:
-                        best_loss = avg_loss
+                    # Early stopping and checkpoint saving
+                    is_best_model = avg_loss < best_val_loss
+                    if is_best_model:
+                        best_val_loss = avg_loss
                         patience_counter = 0
+                        # Save best model checkpoint
+                        self.save_checkpoint(
+                            model=model.model,
+                            optimizer=optimizer,
+                            scheduler=scheduler,
+                            epoch=epoch,
+                            loss=avg_loss,
+                            model_name=model_name,
+                            is_best=True
+                        )
                     else:
                         patience_counter += 1
-                        
+
+                    # Save regular checkpoint every 10 epochs
+                    if (epoch + 1) % 10 == 0:
+                        self.save_checkpoint(
+                            model=model.model,
+                            optimizer=optimizer,
+                            scheduler=scheduler,
+                            epoch=epoch,
+                            loss=avg_loss,
+                            model_name=model_name,
+                            is_best=False
+                        )
+
                     if patience_counter >= patience:
                         logger.info(f"{model_name} Early stopping at epoch {epoch+1}")
                         break
