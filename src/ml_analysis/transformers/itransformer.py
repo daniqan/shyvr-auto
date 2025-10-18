@@ -46,7 +46,7 @@ class InvertedAttentionConfig(TransformerConfig):
     """Configuration for iTransformer with inverted attention mechanism"""
     
     # iTransformer specific parameters
-    n_variates: int = 20             # Number of features/variates (D) - increased for better accuracy
+    n_variates: int = 40             # Number of features/variates (D) - expanded to 40 for comprehensive coverage
     use_inverted_attention: bool = True  # Use inverted attention mechanism
     variate_embedding_dim: int = None    # Embedding dimension for variates (default: d_model)
     
@@ -511,12 +511,12 @@ class iTransformerPredictor(MLAnalyzerBase):
         return InvertedAttentionConfig(
             d_model=config.get('d_model', 128),
             n_heads=config.get('n_heads', 8),
-            n_layers=config.get('n_layers', 4),
+            n_layers=config.get('n_layers', 1),
             d_ff=config.get('d_ff', 512),
             dropout=config.get('dropout', 0.1),
             activation=config.get('activation', 'gelu'),
             max_seq_length=config.get('max_seq_length', 100),
-            n_variates=config.get('n_variates', 20),
+            n_variates=config.get('n_variates', 40),
             variate_embedding_dim=config.get('variate_embedding_dim'),
             prediction_horizons=config.get('prediction_horizons', ['1h', '4h', '24h']),
             use_variate_tokens=config.get('use_variate_tokens', True),
@@ -525,42 +525,64 @@ class iTransformerPredictor(MLAnalyzerBase):
         )
     
     def _setup_training(self):
-        """Setup training components"""
+        """Setup training components with optimized hyperparameters"""
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=self.config.get('learning_rate', 0.001),
+            lr=self.config.get('learning_rate', 5e-5),  # Lower learning rate for 40 features
             weight_decay=self.config.get('weight_decay', 0.01)
         )
-        
+
         self.criterion = nn.MSELoss()
         self.direction_criterion = nn.CrossEntropyLoss()
+
+        # Gradient clipping configuration
+        self.gradient_clip_value = self.config.get('gradient_clip_value', 1.0)
     
     def get_required_features(self) -> List[str]:
         """Get list of required features for multivariate iTransformer"""
         return self.required_features
     
     def _get_required_features(self) -> List[str]:
-        """Define required features for iTransformer (multivariate)"""
+        """Define required features for iTransformer (40 features for comprehensive analysis)"""
         return [
-            # Core price features (main variates)
-            'close', 'open', 'high', 'low', 'volume',
-            
-            # Derived variates for multivariate analysis
-            'returns', 'volatility', 'volume_ratio',
-            'price_momentum', 'rsi',
-            
-            # Correlation features (captured through attention)
-            'correlation_features', 'cross_asset_features',
-            
-            # Market context variates
-            'market_regime', 'volatility_regime', 'liquidity_score',
-            
-            # Temporal features (used in embeddings)
-            'hour_of_day', 'day_of_week', 'trading_session',
-            
-            # Technical indicators as variates
-            'sma_20', 'ema_12', 'macd', 'bollinger_position',
-            'atr_normalized', 'funding_rate'
+            # Core OHLCV features (5)
+            'open', 'high', 'low', 'close', 'volume',
+
+            # RSI indicators (3)
+            'rsi_7', 'rsi_14', 'rsi_21',
+
+            # Moving averages (4)
+            'sma_20', 'sma_50', 'ema_12', 'ema_26',
+
+            # MACD indicators (3)
+            'macd', 'macd_signal', 'macd_histogram',
+
+            # Bollinger bands (3)
+            'bb_upper', 'bb_lower', 'bb_middle',
+
+            # Volume indicators (3)
+            'obv', 'vwap', 'volume_ratio',
+
+            # Volatility indicators (3)
+            'atr_14', 'volatility_30d', 'volatility_7d',
+
+            # Market microstructure (3)
+            'bid_ask_spread', 'kyle_lambda', 'amihud_illiquidity',
+
+            # Price changes (3)
+            'price_change_1h', 'price_change_4h', 'price_change_24h',
+
+            # Additional momentum indicators (4)
+            'momentum_5', 'momentum_10', 'momentum_20', 'roc_14',
+
+            # More technical indicators (2)
+            'stoch_k', 'cci_14',
+
+            # Market regime and trend (3)
+            'market_regime', 'volatility_regime', 'trend_strength',
+
+            # Additional derived features (1)
+            'returns'
         ]
     
     async def analyze_token(self, token: DiscoveredToken, 
@@ -764,7 +786,7 @@ class iTransformerPredictor(MLAnalyzerBase):
                         loss += self.criterion(pred_averaged, y_train[:, i])
                 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.gradient_clip_value)
                 self.optimizer.step()
                 
                 if epoch % 10 == 0:
@@ -800,18 +822,10 @@ class iTransformerPredictor(MLAnalyzerBase):
             sequence_length = self.sequence_length
             
         # iTransformer treats each feature as a separate variate
-        # Select key features for multivariate modeling
+        # Select 40 key features for comprehensive multivariate modeling
         if selected_features is None:
-            # Default selection of important variates for iTransformer
-            selected_features = [
-                'close', 'volume', 'open', 'high', 'low',  # Core OHLCV
-                'rsi_14', 'rsi_7', 'rsi_21',  # RSI indicators
-                'macd', 'macd_signal',  # MACD
-                'bb_upper', 'bb_lower', 'bb_position',  # Bollinger Bands
-                'momentum_5', 'momentum_10', 'momentum_20',  # Momentum
-                'volatility_score', 'volume_score',  # ML scores
-                'market_regime', 'trend_strength'  # Market classification
-            ]
+            # Use the full 40-feature set defined in _get_required_features
+            selected_features = self._get_required_features()
         
         # Filter to available features
         available_features = [f for f in selected_features if f in data.columns]
@@ -834,13 +848,8 @@ class iTransformerPredictor(MLAnalyzerBase):
                            configured_variates=original_n_variates,
                            action="selecting_top_features")
             
-            # Priority order: price features first, then volume, then technical indicators
-            feature_priority = [
-                'close', 'open', 'high', 'low', 'volume',  # Core OHLCV
-                'rsi_14', 'macd', 'bb_position',  # Key technical indicators
-                'volatility_score', 'volume_score',  # ML-generated scores
-                'momentum_10', 'trend_strength', 'market_regime'  # Additional features
-            ]
+            # Priority order: use the 40-feature set in priority order
+            feature_priority = self._get_required_features()
             
             # Select features in priority order, up to configured limit
             prioritized_features = []
