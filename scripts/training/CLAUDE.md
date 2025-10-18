@@ -1,15 +1,15 @@
 # Training Scripts
 
-**Status**: Fully Integrated Pipeline with Phases 1-3 Complete
+**Status**: Fully Integrated Pipeline with Phases 1-4 Complete
 
 ## Overview
 
-Comprehensive training pipeline for cryptocurrency price prediction models with automated hyperparameter optimization, advanced feature engineering, and multi-model support.
+Comprehensive training pipeline for cryptocurrency price prediction models with automated hyperparameter optimization, advanced feature engineering, multi-model support, and automatic checkpointing for long training sessions.
 
 ## Main Scripts
 
 ### train_all_models.py
-**Purpose**: Unified training pipeline for all models  
+**Purpose**: Unified training pipeline for all models
 **Features**:
 - Loads GCS corpus data
 - Applies advanced feature engineering
@@ -17,6 +17,8 @@ Comprehensive training pipeline for cryptocurrency price prediction models with 
 - Data augmentation (20%)
 - Hyperparameter auto-loading
 - Multi-model training (LSTM + 4 Transformers)
+- Automatic checkpointing and resume training
+- Best model tracking based on validation loss
 
 **Usage**:
 ```bash
@@ -56,7 +58,7 @@ python scripts/training/train_transformers.py --environment production
 ## Training Pipeline Flow
 
 ```
-1. Load Corpus (GCS) 
+1. Load Corpus (GCS)
 2. Split Data (80/10/10)
 3. Feature Engineering
    - Advanced features (microstructure, volatility)
@@ -69,7 +71,10 @@ python scripts/training/train_transformers.py --environment production
    - Maintain constraints
 6. Load Hyperparameters
    - Check optimized → default → environment
-7. Train Models
+7. Train Models (with Checkpointing)
+   - Auto-resume from checkpoints
+   - Save best model on validation improvement
+   - Save regular checkpoints every 10 epochs
    - LSTM with CosineAnnealingWarmRestarts
    - Transformers with OneCycleLR
 8. Generate Report
@@ -130,6 +135,12 @@ CUDA_VISIBLE_DEVICES=0
 - Data augmentation (20%)
 - Advanced features (+8 microstructure)
 - Improved missing value handling
+
+### Phase 4: Model Checkpointing
+- Automatic checkpoint saving every 10 epochs
+- Best model tracking based on validation loss
+- Resume training from latest checkpoint
+- Organized checkpoint storage structure
 
 ## Performance Tracking
 
