@@ -588,21 +588,171 @@ class HyperparameterOptimizer:
         self.optimization_history[model_type] = result
 
         return result
-    
+
+    async def optimize_lstm_with_grid(self, train_func: Callable,
+                                     grid_points: Optional[int] = None,
+                                     max_combinations: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Optimize LSTM hyperparameters using grid search specifically.
+
+        Args:
+            train_func: Function that trains LSTM and returns validation score
+            grid_points: Override default grid points for this optimization
+            max_combinations: Override default max combinations threshold
+
+        Returns:
+            Best hyperparameters and optimization history
+        """
+        logger.info("Optimizing LSTM hyperparameters using grid search")
+
+        grid_points = grid_points or self.grid_points
+        max_combinations = max_combinations or self.max_combinations
+
+        optimizer = GridSearchOptimizer(
+            param_space=self.param_space.lstm_params,
+            objective_func=train_func,
+            grid_points=grid_points,
+            max_combinations=max_combinations
+        )
+
+        result = await optimizer.optimize(self.n_trials)
+
+        # Save results with grid suffix
+        self._save_results('lstm_grid', result)
+        self.optimization_history['lstm_grid'] = result
+
+        return result
+
+    async def optimize_transformer_with_grid(self, model_type: str, train_func: Callable,
+                                           grid_points: Optional[int] = None,
+                                           max_combinations: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Optimize transformer model hyperparameters using grid search specifically.
+
+        Args:
+            model_type: Type of transformer ('transformer', 'itransformer', etc.)
+            train_func: Function that trains model and returns validation score
+            grid_points: Override default grid points for this optimization
+            max_combinations: Override default max combinations threshold
+
+        Returns:
+            Best hyperparameters and optimization history
+        """
+        logger.info(f"Optimizing {model_type} hyperparameters using grid search")
+
+        grid_points = grid_points or self.grid_points
+        max_combinations = max_combinations or self.max_combinations
+
+        # Get appropriate parameter space
+        if model_type == 'transformer':
+            param_space = self.param_space.transformer_params
+        elif model_type == 'itransformer':
+            param_space = self.param_space.itransformer_params
+        elif model_type == 'patchtst':
+            param_space = self.param_space.patchtst_params
+        elif model_type == 'timesmixer':
+            param_space = self.param_space.timesmixer_params
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        optimizer = GridSearchOptimizer(
+            param_space=param_space,
+            objective_func=train_func,
+            grid_points=grid_points,
+            max_combinations=max_combinations
+        )
+
+        result = await optimizer.optimize(self.n_trials)
+
+        # Save results with grid suffix
+        model_name_grid = f"{model_type}_grid"
+        self._save_results(model_name_grid, result)
+        self.optimization_history[model_name_grid] = result
+
+        return result
+
+    async def optimize_all_with_grid(self, lstm_train_func: Optional[Callable] = None,
+                                   transformer_train_func: Optional[Callable] = None,
+                                   itransformer_train_func: Optional[Callable] = None,
+                                   patchtst_train_func: Optional[Callable] = None,
+                                   timesmixer_train_func: Optional[Callable] = None,
+                                   grid_points: Optional[int] = None,
+                                   max_combinations: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        Optimize all models using grid search.
+
+        Args:
+            lstm_train_func: Training function for LSTM
+            transformer_train_func: Training function for Transformer
+            itransformer_train_func: Training function for iTransformer
+            patchtst_train_func: Training function for PatchTST
+            timesmixer_train_func: Training function for TimesMixer
+            grid_points: Override default grid points
+            max_combinations: Override default max combinations threshold
+
+        Returns:
+            Dictionary of optimization results for each model
+        """
+        results = {}
+
+        if lstm_train_func:
+            logger.info("Running grid search optimization for LSTM")
+            results['lstm'] = await self.optimize_lstm_with_grid(
+                lstm_train_func, grid_points, max_combinations
+            )
+
+        model_funcs = {
+            'transformer': transformer_train_func,
+            'itransformer': itransformer_train_func,
+            'patchtst': patchtst_train_func,
+            'timesmixer': timesmixer_train_func
+        }
+
+        for model_type, train_func in model_funcs.items():
+            if train_func:
+                logger.info(f"Running grid search optimization for {model_type}")
+                results[model_type] = await self.optimize_transformer_with_grid(
+                    model_type, train_func, grid_points, max_combinations
+                )
+
+        return results
+
     def _save_results(self, model_name: str, result: Dict[str, Any]) -> None:
         """Save optimization results to file."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = self.save_dir / f"{model_name}_hyperparams_{timestamp}.json"
-        
+
+        # Add metadata about optimization method
+        result_with_meta = result.copy()
+        result_with_meta['optimization_method'] = getattr(result, 'sampling_strategy', self.method)
+        result_with_meta['optimizer_settings'] = {
+            'n_trials': self.n_trials,
+            'method': self.method
+        }
+
+        # Add grid-specific metadata if available
+        if 'sampling_strategy' in result:
+            result_with_meta['optimizer_settings'].update({
+                'grid_points': self.grid_points,
+                'max_combinations': self.max_combinations,
+                'total_combinations': result.get('total_combinations'),
+                'sampling_strategy': result.get('sampling_strategy')
+            })
+        else:
+            # Bayesian-specific metadata
+            result_with_meta['optimizer_settings']['n_initial'] = self.n_initial
+
         with open(filename, 'w') as f:
-            json.dump(result, f, indent=2, default=str)
-        
+            json.dump(result_with_meta, f, indent=2, default=str)
+
         # Also save best params separately
         best_params_file = self.save_dir / f"{model_name}_best_params.json"
         with open(best_params_file, 'w') as f:
             json.dump(result['best_params'], f, indent=2, default=str)
-        
+
         logger.info(f"Saved optimization results to {filename}")
+        logger.info(f"Method: {result_with_meta.get('optimization_method', 'unknown')}, "
+                   f"Best score: {result['best_score']:.4f}")
     
     def load_best_params(self, model_name: str) -> Optional[Dict[str, Any]]:
         """Load best parameters for a model."""
