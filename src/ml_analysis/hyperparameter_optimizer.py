@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import asyncio
 from datetime import datetime
+import itertools
+import random
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from scipy.stats import norm
@@ -282,8 +284,185 @@ class BayesianOptimizer:
             'n_iterations': len(self.X_observed),
             'history': {
                 'scores': self.y_observed,
-                'params': [self._params_to_dict(self._denormalize_params(x)) 
+                'params': [self._params_to_dict(self._denormalize_params(x))
                           for x in self.X_observed]
+            }
+        }
+
+
+class GridSearchOptimizer:
+    """
+    Grid search optimization for hyperparameter tuning.
+
+    Provides exhaustive or random sampling of parameter combinations
+    with intelligent fallback to random sampling for large search spaces.
+    """
+
+    def __init__(self,
+                 param_space: Dict[str, Tuple[Any, Any]],
+                 objective_func: Callable,
+                 grid_points: int = 3,
+                 max_combinations: int = 1000,
+                 random_sampling: bool = False):
+        """
+        Initialize Grid Search optimizer.
+
+        Args:
+            param_space: Dictionary of parameter names to (min, max) bounds
+            objective_func: Function to optimize (returns score to maximize)
+            grid_points: Number of grid points per parameter (3-5 recommended)
+            max_combinations: Max combinations before switching to random sampling
+            random_sampling: Force random sampling instead of exhaustive
+        """
+        self.param_space = param_space
+        self.objective_func = objective_func
+        self.grid_points = grid_points
+        self.max_combinations = max_combinations
+        self.random_sampling = random_sampling
+
+        # Parameter names and bounds
+        self.param_names = list(param_space.keys())
+        self.bounds = {name: bounds for name, bounds in param_space.items()}
+        self.n_params = len(self.param_names)
+
+        # Generate parameter grids
+        self.param_grids = self._generate_parameter_grids()
+        self.total_combinations = self._calculate_total_combinations()
+
+        # Determine sampling strategy
+        self.use_random_sampling = (
+            self.random_sampling or
+            self.total_combinations > self.max_combinations
+        )
+
+        # Optimization history
+        self.evaluated_params = []
+        self.scores = []
+        self.best_params = None
+        self.best_score = -np.inf
+
+        logger.info(f"GridSearchOptimizer initialized with {self.n_params} parameters")
+        logger.info(f"Total combinations: {self.total_combinations}")
+        logger.info(f"Using {'random' if self.use_random_sampling else 'exhaustive'} sampling")
+
+    def _generate_parameter_grids(self) -> Dict[str, List[Any]]:
+        """Generate discrete grid points for each parameter."""
+        grids = {}
+
+        for param_name, (min_val, max_val) in self.bounds.items():
+            # Integer parameters
+            if param_name in ['num_layers', 'n_heads', 'n_layers', 'hidden_size',
+                             'd_model', 'd_ff', 'batch_size', 'n_variates',
+                             'patch_length', 'stride', 'top_k', 'num_kernels']:
+                if max_val - min_val + 1 <= self.grid_points:
+                    # If range is small, use all values
+                    grids[param_name] = list(range(int(min_val), int(max_val) + 1))
+                else:
+                    # Use evenly spaced integer values
+                    grids[param_name] = [
+                        int(val) for val in np.linspace(min_val, max_val, self.grid_points)
+                    ]
+            else:
+                # Float parameters
+                grids[param_name] = list(np.linspace(min_val, max_val, self.grid_points))
+
+        return grids
+
+    def _calculate_total_combinations(self) -> int:
+        """Calculate total number of parameter combinations."""
+        total = 1
+        for grid in self.param_grids.values():
+            total *= len(grid)
+        return total
+
+    def _generate_parameter_combinations(self, n_samples: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Generate parameter combinations for evaluation.
+
+        Args:
+            n_samples: Number of samples for random sampling (None for exhaustive)
+
+        Returns:
+            List of parameter dictionaries
+        """
+        if self.use_random_sampling and n_samples is not None:
+            # Random sampling
+            combinations = []
+            for _ in range(n_samples):
+                params = {}
+                for param_name, grid in self.param_grids.items():
+                    params[param_name] = random.choice(grid)
+                combinations.append(params)
+            return combinations
+        else:
+            # Exhaustive search
+            param_names = list(self.param_grids.keys())
+            param_values = [self.param_grids[name] for name in param_names]
+
+            combinations = []
+            for combo in itertools.product(*param_values):
+                params = dict(zip(param_names, combo))
+                combinations.append(params)
+
+            return combinations
+
+    async def optimize(self, n_iterations: int = 20) -> Dict[str, Any]:
+        """
+        Run grid search optimization.
+
+        Args:
+            n_iterations: Number of combinations to evaluate (for random sampling)
+
+        Returns:
+            Dictionary with best parameters and optimization history
+        """
+        if self.use_random_sampling:
+            logger.info(f"Starting random grid search with {n_iterations} samples")
+            combinations = self._generate_parameter_combinations(n_iterations)
+        else:
+            logger.info(f"Starting exhaustive grid search with {self.total_combinations} combinations")
+            combinations = self._generate_parameter_combinations()
+            # Limit to n_iterations if specified and less than total
+            if n_iterations < len(combinations):
+                combinations = random.sample(combinations, n_iterations)
+                logger.info(f"Limited to {n_iterations} random combinations")
+
+        total_evaluations = len(combinations)
+
+        for i, params in enumerate(combinations):
+            try:
+                # Evaluate objective function
+                if asyncio.iscoroutinefunction(self.objective_func):
+                    score = await self.objective_func(params)
+                else:
+                    score = self.objective_func(params)
+
+                logger.info(f"Evaluation {i+1}/{total_evaluations}: score={score:.4f}")
+
+            except Exception as e:
+                logger.error(f"Objective function failed: {e}")
+                score = -np.inf
+
+            # Update history
+            self.evaluated_params.append(params)
+            self.scores.append(score)
+
+            # Update best
+            if score > self.best_score:
+                self.best_score = score
+                self.best_params = params.copy()
+                logger.info(f"New best score: {score:.4f}")
+                logger.info(f"Best params: {self.best_params}")
+
+        return {
+            'best_params': self.best_params,
+            'best_score': self.best_score,
+            'n_iterations': len(self.evaluated_params),
+            'total_combinations': self.total_combinations,
+            'sampling_strategy': 'random' if self.use_random_sampling else 'exhaustive',
+            'history': {
+                'scores': self.scores,
+                'params': self.evaluated_params
             }
         }
 
