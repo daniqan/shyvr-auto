@@ -14,11 +14,13 @@ Core ML analysis module with enhanced feature engineering, hyperparameter optimi
 - **Data Augmentation**: `augment_training_data()` - 20% augmentation with constraints
 - **Missing Values**: `handle_missing_values()` - Multiple strategies, time-aware
 
-### HyperparameterOptimizer (New)
-- **Bayesian Optimization**: Gaussian Process with acquisition functions
+### HyperparameterOptimizer (Enhanced)
+- **Dual Optimization Methods**: Bayesian and Grid Search with method selection
+- **Bayesian Optimization**: Gaussian Process with acquisition functions (EI, UCB, POI)
+- **Grid Search**: Exhaustive or random sampling with intelligent thresholds
 - **Parameter Spaces**: Defined for all models (LSTM, Transformers)
 - **Auto Search**: Finds optimal parameters in 20 trials
-- **Persistent Storage**: Saves best params to JSON
+- **Persistent Storage**: Saves best params to JSON with metadata
 
 ### EnsemblePredictor (New)
 - **Model Combination**: LSTM + Transformer ensemble predictions
@@ -71,11 +73,28 @@ data = fe.handle_missing_values(data)
 data = fe.normalize_features_by_token(data)
 data = fe.augment_training_data(data, augmentation_factor=0.2)
 
-# Hyperparameter optimization
+# Hyperparameter optimization with Bayesian method (default)
 from src.ml_analysis.hyperparameter_optimizer import HyperparameterOptimizer
 
-optimizer = HyperparameterOptimizer(n_trials=20)
+optimizer = HyperparameterOptimizer(n_trials=20, method='bayesian')
 best_params = await optimizer.optimize_lstm(train_func)
+
+# Grid search optimization
+grid_optimizer = HyperparameterOptimizer(
+    n_trials=50,
+    method='grid',
+    grid_points=3,
+    max_combinations=1000
+)
+best_params_grid = await grid_optimizer.optimize_lstm_with_grid(train_func)
+
+# Or use specific grid search methods
+best_params = await grid_optimizer.optimize_transformer_with_grid(
+    'itransformer',
+    train_func,
+    grid_points=4,  # Override default
+    max_combinations=500
+)
 
 # Ensemble predictions
 from src.ml_analysis.model_ensemble import EnsemblePredictor, EnsembleConfig, EnsembleStrategy
@@ -120,7 +139,7 @@ Hyperparameters loaded from `config/hyperparameters.yaml`:
 ```
 src/ml_analysis/
 ├── feature_engineer.py         # Core feature engineering (enhanced)
-├── hyperparameter_optimizer.py # Bayesian optimization (new)
+├── hyperparameter_optimizer.py # Bayesian + Grid Search optimization (enhanced)
 ├── model_ensemble.py           # LSTM+Transformer ensemble (new)
 ├── lstm_model.py               # LSTM implementation
 ├── model_manager.py            # Model ensemble management
@@ -156,6 +175,13 @@ src/ml_analysis/
 - **Checkpoint Loading**: Automatic loading with fallback to models/ directory
 - **Meta-Learner Support**: Random Forest and Linear Regression for stacking
 - **Comprehensive Tests**: 11 test cases with 100% core logic coverage
+
+### Phase 5 (Complete)
+- **GridSearchOptimizer**: Added complementary grid search optimization
+- **Dual Method Support**: HyperparameterOptimizer supports both Bayesian and Grid search
+- **Intelligent Sampling**: Automatic fallback to random sampling for large parameter spaces
+- **Model-Specific Methods**: Dedicated grid search methods for all model types
+- **Enhanced Metadata**: Optimization results include method and sampling strategy information
 
 ## Next Steps
 
