@@ -27,7 +27,7 @@ ENVIRONMENT=production python scripts/training/train_all_models.py
 ```
 
 ### hyperparameter_search.py
-**Purpose**: Automated Bayesian optimization for hyperparameters  
+**Purpose**: Automated Bayesian optimization for hyperparameters
 **Features**:
 - Gaussian Process optimization
 - 20 trials per model
@@ -40,6 +40,26 @@ python scripts/training/hyperparameter_search.py \
     --n-trials 20 \
     --timeframe daily \
     --token WBTC
+```
+
+### run_grid_search.py
+**Purpose**: Grid search hyperparameter optimization
+**Features**:
+- Exhaustive or random sampling
+- Configurable grid points per parameter
+- Comparison mode for Bayesian vs Grid
+- Quick prototyping mode
+
+**Usage**:
+```bash
+# Quick grid search (10 combinations)
+python scripts/training/run_grid_search.py --mode quick
+
+# Compare Bayesian vs Grid search
+python scripts/training/run_grid_search.py --mode comparison
+
+# Exhaustive grid search
+python scripts/training/run_grid_search.py --mode exhaustive
 ```
 
 ### train_transformers.py
@@ -156,7 +176,8 @@ Current vs Target:
 ```
 scripts/training/
 ├── train_all_models.py         # Main pipeline
-├── hyperparameter_search.py    # Optimization
+├── hyperparameter_search.py    # Bayesian optimization
+├── run_grid_search.py          # Grid search optimization
 ├── train_transformers.py       # Transformer focus
 ├── CLAUDE.md                   # This file
 └── (test files)
