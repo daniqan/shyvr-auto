@@ -470,70 +470,91 @@ class GridSearchOptimizer:
 class HyperparameterOptimizer:
     """
     Main hyperparameter optimization interface for all models.
+    Supports both Bayesian and Grid Search optimization methods.
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  save_dir: Optional[Path] = None,
                  n_trials: int = 20,
-                 n_initial: int = 5):
+                 n_initial: int = 5,
+                 method: str = 'bayesian',
+                 grid_points: int = 3,
+                 max_combinations: int = 1000):
         """
         Initialize hyperparameter optimizer.
-        
+
         Args:
             save_dir: Directory to save optimization results
             n_trials: Number of optimization trials per model
-            n_initial: Number of random initial points
+            n_initial: Number of random initial points (Bayesian only)
+            method: Optimization method ('bayesian' or 'grid')
+            grid_points: Number of grid points per parameter (Grid only)
+            max_combinations: Max combinations before random sampling (Grid only)
         """
         self.save_dir = Path(save_dir) if save_dir else Path("hyperparameters")
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.n_trials = n_trials
         self.n_initial = n_initial
-        
+        self.method = method.lower()
+        self.grid_points = grid_points
+        self.max_combinations = max_combinations
+
+        if self.method not in ['bayesian', 'grid']:
+            raise ValueError(f"Unknown optimization method: {method}. Use 'bayesian' or 'grid'")
+
         self.param_space = ParameterSpace()
         self.optimization_history = {}
-        
-        logger.info(f"HyperparameterOptimizer initialized with {n_trials} trials")
+
+        logger.info(f"HyperparameterOptimizer initialized with {n_trials} trials using {self.method} method")
     
     async def optimize_lstm(self, train_func: Callable) -> Dict[str, Any]:
         """
         Optimize LSTM hyperparameters.
-        
+
         Args:
             train_func: Function that trains LSTM and returns validation score
-        
+
         Returns:
             Best hyperparameters and optimization history
         """
-        logger.info("Optimizing LSTM hyperparameters")
-        
-        optimizer = BayesianOptimizer(
-            param_space=self.param_space.lstm_params,
-            objective_func=train_func,
-            n_initial=self.n_initial
-        )
-        
+        logger.info(f"Optimizing LSTM hyperparameters using {self.method} method")
+
+        if self.method == 'bayesian':
+            optimizer = BayesianOptimizer(
+                param_space=self.param_space.lstm_params,
+                objective_func=train_func,
+                n_initial=self.n_initial
+            )
+        else:  # grid search
+            optimizer = GridSearchOptimizer(
+                param_space=self.param_space.lstm_params,
+                objective_func=train_func,
+                grid_points=self.grid_points,
+                max_combinations=self.max_combinations
+            )
+
         result = await optimizer.optimize(self.n_trials)
-        
+
         # Save results
         self._save_results('lstm', result)
         self.optimization_history['lstm'] = result
-        
+
         return result
     
-    async def optimize_transformer(self, model_type: str, 
+    async def optimize_transformer(self, model_type: str,
                                   train_func: Callable) -> Dict[str, Any]:
         """
         Optimize transformer model hyperparameters.
-        
+
         Args:
             model_type: Type of transformer ('transformer', 'itransformer', etc.)
             train_func: Function that trains model and returns validation score
-        
+
         Returns:
             Best hyperparameters and optimization history
         """
-        logger.info(f"Optimizing {model_type} hyperparameters")
-        
+        logger.info(f"Optimizing {model_type} hyperparameters using {self.method} method")
+
         # Get appropriate parameter space
         if model_type == 'transformer':
             param_space = self.param_space.transformer_params
@@ -545,19 +566,27 @@ class HyperparameterOptimizer:
             param_space = self.param_space.timesmixer_params
         else:
             raise ValueError(f"Unknown model type: {model_type}")
-        
-        optimizer = BayesianOptimizer(
-            param_space=param_space,
-            objective_func=train_func,
-            n_initial=self.n_initial
-        )
-        
+
+        if self.method == 'bayesian':
+            optimizer = BayesianOptimizer(
+                param_space=param_space,
+                objective_func=train_func,
+                n_initial=self.n_initial
+            )
+        else:  # grid search
+            optimizer = GridSearchOptimizer(
+                param_space=param_space,
+                objective_func=train_func,
+                grid_points=self.grid_points,
+                max_combinations=self.max_combinations
+            )
+
         result = await optimizer.optimize(self.n_trials)
-        
+
         # Save results
         self._save_results(model_type, result)
         self.optimization_history[model_type] = result
-        
+
         return result
     
     def _save_results(self, model_name: str, result: Dict[str, Any]) -> None:
