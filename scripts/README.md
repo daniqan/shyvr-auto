@@ -36,12 +36,14 @@ scripts/
 | `direct_corpus_collection.py` | Direct collection without pipeline | `python direct_corpus_collection.py` |
 | `analyze_experience_growth.py` | RL experience data analysis | `python analyze_experience_growth.py` |
 
-### 🧠 Model Training
+### 🧠 Model Training & Optimization
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `training/train_all_models.py` | Unified model training pipeline | `python training/train_all_models.py` |
-| `training/train_transformers.py` | Transformer-specific training | `python training/train_transformers.py` |
+| `training/train_all_models.py` | **Unified training pipeline with Phase 1-5 optimizations** | `python training/train_all_models.py` |
+| `training/hyperparameter_search.py` | **Dual optimization (Bayesian + Grid Search)** | `python training/hyperparameter_search.py --method bayesian` |
+| `training/demonstrate_grid_search.py` | **Grid search demonstration and comparison** | `python training/demonstrate_grid_search.py` |
+| `training/train_transformers.py` | Transformer-specific training (legacy) | `python training/train_transformers.py` |
 
 ### 🧪 Testing & Validation
 
@@ -118,9 +120,11 @@ Contains specialized data collection scripts and utilities:
 - `test_coingecko_granularity.py` - CoinGecko API granularity testing
 
 ### training/
-Contains model training scripts and configurations:
-- `train_all_models.py` - Unified training pipeline for all models
-- `train_transformers.py` - Transformer-specific training
+Contains **Phase 1-5 optimized** model training scripts and configurations:
+- `train_all_models.py` - **Unified training pipeline with advanced optimizations**
+- `hyperparameter_search.py` - **Dual optimization (Bayesian + Grid Search)**
+- `demonstrate_grid_search.py` - **Grid search demonstration and capabilities**
+- `train_transformers.py` - Transformer-specific training (legacy)
 - `config.yaml` - Training configuration
 
 ## 🚀 Quick Start Workflows
@@ -147,13 +151,19 @@ python scripts/collect_multi_granularity_corpus.py --config config/corpus_collec
 ./scripts/data_collection/collect_corpus.sh production-multi
 ```
 
-### 3. Model Training
+### 3. Model Training & Optimization
 ```bash
-# Train all models using collected corpus
+# Hyperparameter optimization (Bayesian method)
+python scripts/training/hyperparameter_search.py --method bayesian --n-trials 20
+
+# Grid search optimization demonstration
+python scripts/training/demonstrate_grid_search.py
+
+# Train all models with optimized hyperparameters
 python scripts/training/train_all_models.py
 
-# Train specific transformer models
-python scripts/training/train_transformers.py --models itransformer,patchtst
+# Environment-specific training
+ENVIRONMENT=production python scripts/training/train_all_models.py
 ```
 
 ### 4. Validation & Testing
@@ -225,11 +235,15 @@ Most scripts expect Cloud SQL Proxy running on port 5433:
 - GCP monitoring integration
 - Grafana dashboard automation
 
-### Unified Training Pipeline
-- Supports LSTM and multiple Transformer variants
-- Time-series aware train/validation/test splitting
-- GCS integration for model storage
-- Comprehensive training reports
+### Advanced Training Optimization (Phase 1-5 Complete)
+- **Dual Hyperparameter Optimization**: Bayesian + Grid Search methods
+- **Model Ensemble**: LSTM + 4 Transformer variants with optimized configurations
+- **Advanced Features**: Token normalization, data augmentation (20%), microstructure features
+- **Performance Improvements**: 55x TimesMixer speedup, 40 features for iTransformer
+- **Critical Fixes**: DatetimeIndex handling, negative scale prevention, PatchTST shape fixes
+- **Checkpointing**: Automatic model checkpointing and early stopping
+- **Time-series aware train/validation/test splitting (80/10/10)**
+- **GCS integration for model storage and comprehensive training reports**
 
 ## 🐛 Troubleshooting
 
@@ -301,6 +315,14 @@ Most scripts expect Cloud SQL Proxy running on port 5433:
 ---
 
 ## 📝 Recent Updates
+
+### Training Optimization Completion (October 2025)
+- **Phase 1-5 Complete**: Comprehensive training optimization with 90%+ accuracy targets
+- **Dual Hyperparameter Optimization**: Implemented Bayesian and Grid Search methods
+- **Model Performance**: Achieved significant improvements (55x TimesMixer speedup, 40 features for iTransformer)
+- **Critical Bug Fixes**: DatetimeIndex handling, negative scale prevention, PatchTST shape mismatch
+- **Advanced Features**: Token normalization, data augmentation, microstructure features
+- **Model Checkpointing**: Automatic checkpointing and early stopping implementation
 
 ### Script Cleanup (August 2025)
 - **Removed obsolete scripts**: `collect_pepe_only.py`, `store_remaining_corpus.py`, `investigate_data_gaps.py`, `upgrade_activity_logging.sql`, and scripts from `data_collection/` subdirectory that were no longer needed
