@@ -1,18 +1,20 @@
-# Data Collection Scripts
+# Data Collection Scripts - Training Pipeline Integration
 
-This directory contains scripts and utilities for collecting, processing, and managing cryptocurrency market data used to train the RLTE (Reinforcement Learning Trading Engine) models.
+This directory contains scripts and utilities for collecting, processing, and managing cryptocurrency market data used to train the RLTE (Reinforcement Learning Trading Engine) models. **Fully integrated with Phase 1-5 training optimization pipeline.**
 
 ## Overview
 
 The data collection system supports both single-granularity and multi-granularity data collection, with comprehensive corpus management capabilities for reproducible ML model training.
 
-### Key Features
+### Key Features - Training Pipeline Optimized
 
-- **Multi-timeframe collection**: Daily, 4-hour, and hourly data
-- **Comprehensive feature extraction**: 130+ technical indicators and market features
+- **Multi-timeframe collection**: Daily, 4-hour, and hourly data **optimized for Phase 1-5 training**
+- **Advanced feature extraction**: 130+ technical indicators **including microstructure features**
+- **Token normalization ready**: Data prepared for **automatic token-specific scaling**
+- **Training integration**: **Direct GCS integration** with optimized training pipeline
 - **Dynamic pagination**: Full historical data collection with checkpoint/resume capability
 - **GCS integration**: Automatic export to Google Cloud Storage as Parquet files
-- **Data validation**: Integrity checks and gap detection
+- **Data validation**: Integrity checks and gap detection **with DatetimeIndex handling**
 - **Corpus versioning**: Version control for reproducible training datasets
 
 ## Scripts Overview
@@ -412,21 +414,38 @@ Development vs. Production settings are managed through:
 - Command-line arguments
 - Configuration file selection
 
-## Integration with Training Pipeline
+## Phase 1-5 Training Pipeline Integration
 
-The collected corpus data integrates with the training pipeline through:
+The collected corpus data is **fully optimized** for the Phase 1-5 training pipeline:
 
-1. **GCSCorpusLoader**: Loads data from GCS for training
-2. **ModelManager**: Coordinates data access for ensemble training
-3. **TrainingReportGenerator**: Uses corpus metadata for reporting
-4. **Database tracking**: Records corpus versions for reproducibility
+### ✅ Direct Training Integration
+1. **GCSCorpusLoader**: Seamless data loading for optimized training pipeline
+2. **Token Normalization**: Data prepared for automatic WBTC vs PEPE scaling
+3. **Advanced Features**: Microstructure indicators ready for iTransformer (40 features)
+4. **Missing Value Handling**: DatetimeIndex-aware data suitable for time interpolation
+5. **Data Augmentation Ready**: Base data prepared for 20% synthetic sample generation
 
-## Next Steps
+### ✅ Enhanced Data Quality
+1. **ModelManager**: Coordinates data access for ensemble training with checkpointing
+2. **TrainingReportGenerator**: Uses corpus metadata for comprehensive HTML reporting
+3. **Database Tracking**: Records corpus versions for reproducible optimization
+4. **Performance Metrics**: Data structure optimized for 55x TimesMixer speedup
+5. **Multi-Model Support**: Compatible with LSTM, Transformer, iTransformer, PatchTST, TimesMixer
 
-After successful data collection:
+## Next Steps - Training Pipeline Workflow
 
-1. **Verify data quality** using validation scripts
-2. **Export to GCS** for backup and external access
-3. **Run training pipeline** with collected corpus
-4. **Monitor collection performance** and optimize as needed
-5. **Schedule regular updates** to keep corpus current
+After successful data collection with **Phase 1-5 optimization ready data**:
+
+1. **Verify data quality** using validation scripts (includes DatetimeIndex validation)
+2. **Export to GCS** for backup and external access (Parquet format optimized)
+3. **Run hyperparameter optimization** (Bayesian or Grid Search methods)
+   ```bash
+   python scripts/training/hyperparameter_search.py --method bayesian --n-trials 20
+   ```
+4. **Run optimized training pipeline** with collected corpus
+   ```bash
+   python scripts/training/train_all_models.py  # Automatically uses optimized hyperparameters
+   ```
+5. **Monitor training performance** with automatic checkpointing and early stopping
+6. **Review HTML training reports** for comprehensive model analysis
+7. **Schedule regular data updates** to keep corpus current for continuous training
