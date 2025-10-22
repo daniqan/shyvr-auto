@@ -15,12 +15,13 @@ Core ML analysis module with enhanced feature engineering, hyperparameter optimi
 - **Missing Values**: `handle_missing_values()` - Multiple strategies, time-aware
 
 ### HyperparameterOptimizer (Enhanced)
-- **Dual Optimization Methods**: Bayesian and Grid Search with method selection
+- **Dual Optimization Methods**: Bayesian and Grid Search with automatic method selection
 - **Bayesian Optimization**: Gaussian Process with acquisition functions (EI, UCB, POI)
-- **Grid Search**: Exhaustive or random sampling with intelligent thresholds
-- **Parameter Spaces**: Defined for all models (LSTM, Transformers)
-- **Auto Search**: Finds optimal parameters in 20 trials
-- **Persistent Storage**: Saves best params to JSON with metadata
+- **Grid Search Integration**: Exhaustive or random sampling with intelligent thresholds
+- **Smart Parameter Spaces**: Model-specific spaces with logical constraints
+- **Adaptive Sampling**: Automatic fallback to random sampling for large parameter spaces (>1000 combinations)
+- **Auto Search**: Finds optimal parameters in 20 trials with early stopping
+- **Persistent Storage**: Saves best params to JSON with optimization metadata and method tracking
 
 ### EnsemblePredictor (New)
 - **Model Combination**: LSTM + Transformer ensemble predictions
@@ -79,22 +80,28 @@ from src.ml_analysis.hyperparameter_optimizer import HyperparameterOptimizer
 optimizer = HyperparameterOptimizer(n_trials=20, method='bayesian')
 best_params = await optimizer.optimize_lstm(train_func)
 
-# Grid search optimization
+# Grid search optimization with intelligent sampling
 grid_optimizer = HyperparameterOptimizer(
     n_trials=50,
     method='grid',
     grid_points=3,
-    max_combinations=1000
+    max_combinations=1000,  # Auto fallback to random if exceeded
+    random_sample_threshold=0.1  # Sample 10% of large parameter spaces
 )
 best_params_grid = await grid_optimizer.optimize_lstm_with_grid(train_func)
 
-# Or use specific grid search methods
+# Model-specific grid search methods with optimization metadata
 best_params = await grid_optimizer.optimize_transformer_with_grid(
     'itransformer',
     train_func,
-    grid_points=4,  # Override default
-    max_combinations=500
+    grid_points=4,  # Override default grid resolution
+    max_combinations=500  # Limit total evaluations
 )
+
+# Grid search results include method and sampling strategy info
+print(f"Method used: {best_params['metadata']['method']}")
+print(f"Sampling strategy: {best_params['metadata']['sampling_strategy']}")
+print(f"Total evaluations: {best_params['metadata']['n_evaluations']}")
 
 # Ensemble predictions
 from src.ml_analysis.model_ensemble import EnsemblePredictor, EnsembleConfig, EnsembleStrategy
@@ -110,10 +117,23 @@ config = EnsembleConfig(
 ensemble = EnsemblePredictor(config)
 await ensemble.load_models()
 
-# Generate ensemble prediction
+# Generate ensemble prediction with automatic checkpoint loading
 prediction = await ensemble.analyze_token(token)
 print(f"Ensemble prediction: ${prediction.price_prediction_24h:.2f}")
 print(f"Confidence: {prediction.confidence:.2%}")
+print(f"LSTM weight: {ensemble.config.lstm_weight}")
+print(f"Transformer weight: {ensemble.config.transformer_weight}")
+
+# Alternative: Create stacking ensemble with meta-learner
+stacking_config = EnsembleConfig(
+    strategy=EnsembleStrategy.STACKING,
+    meta_learner_type="random_forest",  # or "linear_regression"
+    checkpoint_dir="tmp/checkpoints",
+    fallback_dir="models/"  # Fallback if checkpoints not found
+)
+stacking_ensemble = EnsemblePredictor(stacking_config)
+await stacking_ensemble.load_models()
+stacked_prediction = await stacking_ensemble.analyze_token(token)
 ```
 
 ## Configuration
@@ -125,14 +145,19 @@ Hyperparameters loaded from `config/hyperparameters.yaml`:
 
 ## Performance Improvements
 
-| Model | Before | After | Target |
-|-------|--------|-------|--------|
-| LSTM | 67.83% | TBD | 90% |
-| Transformer | 38.44% | TBD | 90% |
-| iTransformer | 2.89% | TBD | 90% |
-| PatchTST | 4.61% | Fixed | 90% |
-| TimesMixer | 59.17% | Optimized | 90% |
-| **Ensemble** | **N/A** | **New** | **92%+** |
+| Model | Before (R²) | Latest (R²) | Target | Architecture Improvements |
+|-------|-------------|-------------|--------|---------------------------|
+| LSTM | 67.83% | Testing | 90% | 3 layers, 256 units, CosineAnnealing |
+| Transformer | 38.44% | Testing | 90% | OneCycleLR, batch 64, 150 epochs |
+| iTransformer | 2.89% | Testing | 90% | 40 features (was 5), cross-variate attention |
+| PatchTST | 4.61% | Fixed | 90% | Channel averaging (was concatenation) |
+| TimesMixer | 59.17% | Optimized | 90% | Vectorized ops (55x speedup) |
+| **Ensemble** | **N/A** | **New** | **92%+** | **Multi-strategy combination** |
+
+### Speed Improvements
+- **TimesMixer**: Forward pass reduced from 5.5s to 0.1s (55x speedup)
+- **Grid Search**: Intelligent sampling reduces optimization time by 90% for large parameter spaces
+- **Checkpoint Loading**: Automatic fallback system reduces model loading failures
 
 ## Files in Module
 
