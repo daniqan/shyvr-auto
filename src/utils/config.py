@@ -292,6 +292,36 @@ class SecurityConfig(BaseModel):
     api_key_length: int = 32
     rate_limit_storage: str = "memory"
 
+    def __init__(self, **data):
+        """Initialize SecurityConfig with secret_key from Secret Manager if needed"""
+        # Only populate from Secret Manager if secret_key not already provided or is empty
+        if not data.get('secret_key') or data.get('secret_key') == '' or data.get('secret_key') == 'NOT_SET':
+            from .system_secrets import get_system_secrets
+
+            try:
+                system_secrets = get_system_secrets()
+                secret_key = system_secrets.secret_key
+
+                if secret_key:
+                    data['secret_key'] = secret_key
+                else:
+                    # Fallback for development
+                    import os
+                    if os.environ.get('ENVIRONMENT') in ['production', 'staging']:
+                        raise ValueError("SECRET_KEY is required in production/staging but not found in Secret Manager")
+                    else:
+                        # Development fallback
+                        data['secret_key'] = 'dev_secret_key_for_development_16chars'
+            except Exception as e:
+                # Fallback for development if Secret Manager unavailable
+                import os
+                if os.environ.get('ENVIRONMENT') in ['production', 'staging']:
+                    raise ValueError(f"Failed to retrieve SECRET_KEY from Secret Manager in production: {e}")
+                else:
+                    data['secret_key'] = 'dev_secret_key_for_development_16chars'
+
+        super().__init__(**data)
+
     @model_validator(mode='after')
     def validate_security_config(self):
         """Validate security configuration"""
