@@ -343,7 +343,7 @@ RUN python -c "import sys; print(f'Python version: {sys.version}')" \
 HEALTHCHECK --interval=30s \
             --timeout=30s \
             --start-period=120s \
-            --retries=3 \
+            --retries=2 \
     CMD python -c "\
 import sys, requests, time; \
 start = time.time(); \
