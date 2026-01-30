@@ -1026,6 +1026,11 @@ shyvrai-rlte/
 │   │   └── multi_granularity_collector.py  # Multi-timeframe collection
 │   ├── dashboard/      # Real-time dashboard API
 │   ├── monitoring/     # Performance metrics and monitoring
+│   ├── dex/            # DEX integration (Jupiter, Uniswap, etc.)
+│   ├── portfolio/      # Portfolio management & P&L tracking
+│   ├── trading/        # Core trading execution logic
+│   ├── safety/         # Safety mechanisms & circuit breakers
+│   ├── activity_logging/# Structured activity logging
 │   └── utils/          # Shared utilities + database management
 ├── database/           # Database schemas and migrations
 │   ├── migrations/     # SQL migration files
@@ -1061,8 +1066,8 @@ shyvrai-rlte/
 - **Phase 10**: RL Experience Storage System ✅
 - **Phase 11**: Corpus Collection ✅ (547 days, 2.7M+ data points)
 - **Phase 12**: Training Optimization ✅ (Phases 1-5 complete: Architecture fixes, Dual hyperparameter optimization, Model ensemble, Critical fixes, Checkpointing)
-- **Phase 13**: Live Trading Integration (Current)
-- **Phase 14**: Production Deployment (Next)
+- **Phase 13**: Live Trading Integration ✅ (Completed)
+- **Phase 14**: Production Deployment (Ready)
 
 ### 🎯 Current Status: **TRAINING OPTIMIZATION PHASE 1-5 COMPLETE - WORKING TOWARD 90%+ ACCURACY**
 - **323 comprehensive tests** with **94% coverage**
@@ -1099,7 +1104,35 @@ This software is for educational purposes only. Cryptocurrency trading involves 
 The following diagram illustrates the complete end-to-end trading process flow, from token discovery through execution and continuous learning. This operational flow shows how the system processes trading opportunities, makes decisions, executes trades, and continuously improves through feedback loops.
 
 ```mermaid
-
+graph TD
+    Start([System Start]) --> ModeSel{Mode Selection}
+    ModeSel -->|Analysis/Sim/Live| Discovery[Token Discovery]
+    
+    subgraph "Analysis Pipeline"
+        Discovery --> Safety[Safety Filtering]
+        Safety --> Fund[Fundamental Analysis]
+        Fund --> ML[ML Enhancement]
+    end
+    
+    ML --> Decision[ML-RL Decision]
+    
+    subgraph "Decision Engine"
+        Decision --> Risk[Risk Assessment]
+        Risk --> Gate{Safety Gates}
+    end
+    
+    Gate -->|Pass| Exec[Trade Execution]
+    Gate -->|Fail| Skip([Skip Trade])
+    
+    subgraph "Execution & Settlement"
+        Exec --> DEX[DEX Routing]
+        DEX --> Settle[Settlement]
+        Settle --> Port[Portfolio Update]
+    end
+    
+    Port --> Exp[Experience Collection]
+    Exp --> Train[Model Training]
+    Train --> ML
 ```
 
 ### Process Flow Overview
