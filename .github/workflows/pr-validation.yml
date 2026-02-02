@@ -29,7 +29,7 @@ jobs:
       test-categories: ${{ steps.pr-analysis.outputs.test-categories }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           
@@ -121,7 +121,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -199,7 +199,7 @@ jobs:
           - 5432:5432
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install system dependencies
         run: |
@@ -320,7 +320,7 @@ jobs:
     if: contains(needs.pr-check.outputs.changed-files, '.py') || contains(needs.pr-check.outputs.changed-files, 'requirements') || contains(needs.pr-check.outputs.changed-files, 'pyproject.toml')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Run Bandit security scan
         run: |
@@ -354,7 +354,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -415,7 +415,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4

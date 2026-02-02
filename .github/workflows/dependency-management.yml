@@ -39,7 +39,7 @@ jobs:
       outdated-count: ${{ steps.audit.outputs.outdated-count }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -203,7 +203,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
@@ -325,7 +325,7 @@ jobs:
           - ${{ github.event.inputs.update_type || 'minor' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
@@ -479,7 +479,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
