@@ -4,7 +4,7 @@
 # =============================================================================
 # Transformer Builder Stage - Model pre-caching and optimization
 # =============================================================================
-FROM python:3.12-slim as transformer-builder
+FROM python:3.14-slim as transformer-builder
 
 # Set build arguments for better control
 ARG DEBIAN_FRONTEND=noninteractive
@@ -119,7 +119,7 @@ RUN python -c "import torch; from transformers import AutoModel; print('Pre-quan
 # =============================================================================
 # Build stage - Dependency installation and compilation
 # =============================================================================
-FROM python:3.12-slim as builder
+FROM python:3.14-slim as builder
 
 # Set build arguments for better control
 ARG DEBIAN_FRONTEND=noninteractive
@@ -193,7 +193,7 @@ RUN uv sync \
 # =============================================================================
 # Production stage - Optimized runtime environment
 # =============================================================================
-FROM python:3.12-slim as production
+FROM python:3.14-slim as production
 
 # Set production environment variables (security and performance optimized)
 ENV PYTHONUNBUFFERED=1 \
