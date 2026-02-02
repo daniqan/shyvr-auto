@@ -277,7 +277,7 @@ jobs:
           
       - name: Create security update PR
         if: steps.security-updates.outputs.updated-packages != '' && inputs.create_pr != false
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "security: update dependencies with security vulnerabilities"
@@ -429,7 +429,7 @@ jobs:
           
       - name: Create regular update PR
         if: steps.regular-updates.outputs.updated-packages != '' && inputs.create_pr != false
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "deps: update dependencies (${{ matrix.update-type }} updates)"
