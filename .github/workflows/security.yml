@@ -42,7 +42,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           
@@ -124,7 +124,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -238,7 +238,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -334,7 +334,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history for comprehensive scan
           
@@ -375,7 +375,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Run Checkov IaC scan
         uses: bridgecrewio/checkov-action@master
@@ -429,7 +429,7 @@ jobs:
     if: github.event.inputs.scan_type != 'container-only' && github.event.inputs.scan_type != 'code-only'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -543,7 +543,7 @@ jobs:
     if: always()
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Check security policy compliance
         run: |

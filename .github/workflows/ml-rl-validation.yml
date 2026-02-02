@@ -53,7 +53,7 @@ jobs:
     if: github.event.inputs.validation_type != 'performance-only' && github.event.inputs.validation_type != 'regression-only'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install system dependencies
         run: |
@@ -298,7 +298,7 @@ jobs:
           - 5432:5432
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install system dependencies
         run: |
@@ -547,7 +547,7 @@ jobs:
     if: github.event.inputs.validation_type != 'model-only' && github.event.inputs.validation_type != 'performance-only'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Install system dependencies
         run: |
@@ -688,7 +688,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Download all validation artifacts
         uses: actions/download-artifact@v4
