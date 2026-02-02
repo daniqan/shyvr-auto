@@ -633,7 +633,7 @@ jobs:
           
       - name: Create deployment notification
         if: needs.deploy-production.result == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const title = '🚀 Production Deployment Successful';

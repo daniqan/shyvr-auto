@@ -496,7 +496,7 @@ jobs:
           fi
           
       - name: Update PR status
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const status = '${{ steps.status.outputs.status }}';
