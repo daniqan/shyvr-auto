@@ -102,7 +102,7 @@ jobs:
           uv sync --frozen --all-extras
           
       - name: Cache analysis results
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .mypy_cache
