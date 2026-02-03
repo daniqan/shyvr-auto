@@ -73,7 +73,7 @@ async def get_rl_agent_health() -> dict[str, Any]:
     """Get RL agent health status"""
     try:
         from src.rl_agent.base import AgentConfig, ModelType
-        from src.rl_agent.dqn_agent import DQNTradingAgent
+        from src.rl_agent.factory import AgentFactory
 
         agent_config = AgentConfig(
             model_type=ModelType.DQN,
@@ -88,7 +88,7 @@ async def get_rl_agent_health() -> dict[str, Any]:
             max_daily_loss=0.05
         )
 
-        agent = DQNTradingAgent(agent_config)
+        agent = AgentFactory.create_agent(agent_config)
         health_status = await agent.health_check()
 
         return {
