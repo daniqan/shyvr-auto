@@ -1,8 +1,8 @@
 """
 Reinforcement Learning Trading Agent Module
 
-This module implements Deep Q-Network (DQN) based reinforcement learning
-for cryptocurrency trading decisions with risk-adjusted reward optimization.
+This module implements Deep Q-Network (DQN) and Proximal Policy Optimization (PPO)
+based reinforcement learning for cryptocurrency trading decisions.
 """
 
 from .base import (
@@ -10,6 +10,8 @@ from .base import (
     RewardMetrics, AgentConfig, ModelType as RLModelType
 )
 from .dqn_agent import DQNTradingAgent, DQNTrainingError
+from .ppo_agent import PPOTradingAgent
+from .factory import AgentFactory
 from .reward_engineering import (
     RiskMetrics, RewardConfig, AdvancedRewardCalculator,
     create_reward_calculator
@@ -39,6 +41,8 @@ __all__ = [
     # Implementation classes
     'DQNTradingAgent',
     'DQNTrainingError',
+    'PPOTradingAgent',
+    'AgentFactory',
     
     # Reward engineering
     'RiskMetrics',
