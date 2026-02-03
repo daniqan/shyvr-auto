@@ -30,6 +30,8 @@ class ModelType(Enum):
     DDQN = "double_dqn"  # Double DQN
     DUELING_DQN = "dueling_dqn"
     RAINBOW = "rainbow"  # Rainbow DQN with all improvements
+    PPO = "ppo"  # Proximal Policy Optimization (Continuous)
+    TRANSFORMER_PPO = "transformer_ppo"  # PPO with Transformer Backbone
 
 
 @dataclass
