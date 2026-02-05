@@ -12,8 +12,9 @@
 
 <!-- ML/AI & Trading -->
 ![PyTorch](https://img.shields.io/badge/PyTorch-Neural%20Networks-ee4c2c?style=for-the-badge&logo=pytorch&logoColor=white)
+![PPO](https://img.shields.io/badge/RL-Continuous%20PPO-purple?style=for-the-badge&logo=openai&logoColor=white)
+![Transformer Backbone](https://img.shields.io/badge/Architecture-Transformer%20Backbone-blue?style=for-the-badge&logo=target&logoColor=white)
 ![Machine Learning](https://img.shields.io/badge/ML-LSTM%20%2B%20Ensemble-ff6f00?style=for-the-badge&logo=tensorflow&logoColor=white)
-![Reinforcement Learning](https://img.shields.io/badge/RL-DQN%20Agent-purple?style=for-the-badge&logo=openai&logoColor=white)
 ![XAI](https://img.shields.io/badge/XAI-Explainable%20AI-lightblue?style=for-the-badge&logo=lightbulb&logoColor=white)
 ![Technical Analysis](https://img.shields.io/badge/TA-17%20Indicators-darkgreen?style=for-the-badge&logo=tradingview&logoColor=white)
 
@@ -54,6 +55,8 @@ AI-augmented cryptocurrency trading bot with machine learning, reinforcement lea
 ## 🎯 Recent Achievements
 
 ### Training Optimization (Phases 1-5 Complete) ✅
+- **🚀 Continuous Control Upgrade**: Implemented PPO (Proximal Policy Optimization) with Transformer Backbone for continuous action spaces.
+- **🧠 Temporal Awareness**: Transformer-based feature extraction for capturing long-range market dependencies.
 - **✅ Architecture Fixes**: PatchTST shape mismatch resolved, TimesMixer 55x speedup, iTransformer expanded to 40 features
 - **🚀 Dual Hyperparameter Optimization**: Bayesian + Grid Search with automated parameter discovery
 - **📊 Advanced Features**: +8 microstructure features, token normalization, data augmentation
@@ -272,7 +275,7 @@ graph TB
 
         subgraph "ML/AI Components"
             MLAnalysis[ML Ensemble<br/>LSTM + 4 Transformers]
-            RLAgent[RL Agent<br/>DQN]
+            RLAgent[RL Agent<br/>PPO + Transformer]
             XAI[XAI System<br/>Explainability]
             ModelPreservation[Model Preservation<br/>System]
         end
@@ -381,8 +384,10 @@ sequenceDiagram
 - **Fundamental Evaluation**: Liquidity, holder analysis, security checks
 - **ML Ensemble**: LSTM + 4 Transformer models (iTransformer, PatchTST, TimesMixer, TimesFM) with environment-based deployment
 - **Environment Configuration**: `ENVIRONMENT` variable controls deployment mode (development: LSTM only, production: full ensemble)
-- **RL Agent**: DQN-based trading decision system with database-first experience storage
-- **RL Experience Storage**: Production-ready PostgreSQL database system for experience replay
+- **RL Agent**: Hybrid architecture supporting DQN (Discrete) and **PPO (Continuous)** trading decision systems.
+  - **Continuous Control**: PPO allows for precise position sizing and allocation (-1.0 to 1.0) rather than simple discrete signals.
+  - **Transformer Backbone**: Processes historical sequences (last 60 steps) using Self-Attention to capture temporal market patterns.
+  - **Experience Storage**: Production-ready PostgreSQL database system for experience replay and trajectory storage.
 - **XAI System**: Explainable AI with LIME, Permutation, and Gradient explainers for trading decision transparency
 - **Mode Framework**: Dynamic switching between analysis, simulation, and live trading modes
 - **Wallet Integration**: Multi-chain wallet support (Ethereum + Solana) with secure key management
@@ -925,12 +930,19 @@ Live trading mode is **disabled by default** and requires:
 - ✅ <1 second ensemble inference time achieved
 
 ### Phase 4 (Completed) - RL Trading Agent & Corpus Collection
-- ✅ 125 passing RL tests with 91-97% coverage per component
-- ✅ DQN neural network with PyTorch implementation
-- ✅ Trading environment with realistic costs and slippage
-- ✅ Experience replay with prioritized sampling
-- ✅ Advanced reward engineering with risk-adjusted returns
-- ✅ Sub-second decision making achieved
+- **✅ RL Architectures**: DQN, DDQN, Dueling DQN, Rainbow, and **Continuous PPO**
+- **✅ Transformer Policy**: Actor-Critic network with Transformer feature extraction
+- **✅ Trading Environment**: Realistic costs, slippage, and continuous action mapping
+- **✅ Experience Replay**: Trajectory-based storage for PPO and prioritized sampling for DQN
+- **✅ Advanced Reward Engineering**: Risk-adjusted returns with Sharpe/Sortino optimization
+- **✅ Sub-second decision making** achieved
+
+### Phase 13 (Completed) - Continuous Control Upgrade
+- **✅ PPO Implementation**: Proximal Policy Optimization for stable continuous trading
+- **✅ Transformer Backbone**: Attention-based temporal feature extraction (60-step window)
+- **✅ Agent Factory**: Dynamic agent switching between discrete and continuous models
+- **✅ Integration**: Full integration with existing ML ensemble and safety gates
+
 
 ### Phase 4.1 (Completed) - Corpus Collection
 - ✅ 547 days of historical data collected (150% of 365-day target)
@@ -1069,8 +1081,9 @@ shyvrai-rlte/
 - **Phase 13**: Live Trading Integration ✅ (Completed)
 - **Phase 14**: Production Deployment (Ready)
 
-### 🎯 Current Status: **TRAINING OPTIMIZATION PHASE 1-5 COMPLETE - WORKING TOWARD 90%+ ACCURACY**
+### 🎯 Current Status: **CONTINUOUS CONTROL UPGRADE COMPLETE - WORKING TOWARD 90%+ ACCURACY**
 - **323 comprehensive tests** with **94% coverage**
+- **PPO + Transformer**: Advanced RL architecture for continuous position sizing and temporal awareness.
 - **2.7+ million data points** collected across 7 tokens
 - **Training Pipeline Enhanced**: Dual optimization (Bayesian + Grid Search), token normalization, data augmentation
 - **Architecture Fixes Applied**: PatchTST shape fix, TimesMixer 55x speedup, iTransformer expanded to 40 features
