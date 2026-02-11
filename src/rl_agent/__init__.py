@@ -12,6 +12,7 @@ from .base import (
 from .dqn_agent import DQNTradingAgent, DQNTrainingError
 from .ppo_agent import PPOTradingAgent
 from .factory import AgentFactory
+from .normalization import RunningMeanStd
 from .reward_engineering import (
     RiskMetrics, RewardConfig, AdvancedRewardCalculator,
     create_reward_calculator
@@ -43,6 +44,7 @@ __all__ = [
     'DQNTrainingError',
     'PPOTradingAgent',
     'AgentFactory',
+    'RunningMeanStd',
     
     # Reward engineering
     'RiskMetrics',
