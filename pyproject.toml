@@ -34,7 +34,7 @@ dependencies = [
     "uniswap-python>=0.3.4",
     # Trading & Market Data
     "backtrader>=1.9.78",
-    "ccxt>=4.4.95",
+    "ccxt>=4.5.48",
     # Web Framework & Infrastructure
     "fastapi>=0.116.1",
     "uvicorn>=0.35.0",
