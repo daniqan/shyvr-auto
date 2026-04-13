@@ -63,7 +63,7 @@ dependencies = [
     "lime>=0.2.0.1",
     "google-cloud-secret-manager>=2.24.0",
     # Monitoring and Alerting
-    "google-cloud-monitoring>=2.24.0",
+    "google-cloud-monitoring>=2.30.0",
     "google-cloud-logging>=3.10.0",
     "httpx>=0.28.1",
     "google-cloud-monitoring-dashboards>=2.18.2",
